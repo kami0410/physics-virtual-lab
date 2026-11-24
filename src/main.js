@@ -3,22 +3,40 @@ import '@fontsource/ibm-plex-mono/latin-400.css';
 import '@fontsource/ibm-plex-mono/latin-500.css';
 import '@fontsource/ibm-plex-mono/latin-600.css';
 import './styles.css';
-import { App, renderMath, tex } from './core/App.js';
-import { EXPERIMENTS } from './experiments/index.js';
+import { tex } from './core/tex.js';
+import { CATALOG as EXPERIMENTS } from './experiments/catalog.js';
 import { michelsonPattern } from './physics/interference.js';
 
 const root = document.getElementById('app');
 let current = null;
 const CN = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
 
-function route() {
+let seq = 0;
+async function route() {
   const m = location.hash.match(/^#\/exp\/(\w+)/);
+  const my = ++seq;
   if (current) { current.dispose(); current = null; }
   if (m) {
     const E = EXPERIMENTS.find((e) => e.meta.id === m[1]);
     if (E) {
       document.title = `${E.meta.title} · 大学物理实验虚拟仿真`;
-      current = new App(root, E, { onExit: () => { current = null; location.hash = '#/'; } });
+      root.innerHTML = `<div class="boot"><div class="boot-t">${E.meta.title}</div><div class="boot-s">正在载入仪器与物理模型…</div></div>`;
+      // 实验本体与三维引擎按需加载：目录页不必下载全部实验
+      let App, Exp;
+      try {
+        [{ App }, Exp] = await Promise.all([import('./core/App.js'), E.load()]);
+      } catch (err) {
+        // 网站更新后旧页面引用的分块文件已不存在：刷新一次取新版本；仍失败（如断网且未缓存）则提示
+        let tried = false;
+        try { tried = sessionStorage.getItem('lab-reload') === location.hash; sessionStorage.setItem('lab-reload', location.hash); } catch { /* 无存储时直接提示 */ tried = true; }
+        if (!tried) { location.reload(); return; }
+        if (my === seq) root.innerHTML = `<div class="boot"><div class="boot-t">${E.meta.title}</div><div class="boot-s">实验文件载入失败，请检查网络后<a href="#/">返回目录</a>重试。</div></div>`;
+        console.error(err);
+        return;
+      }
+      try { sessionStorage.removeItem('lab-reload'); } catch { /* 忽略 */ }
+      if (my !== seq) return; // 载入期间又切换了页面
+      current = new App(root, Exp, { onExit: () => { current = null; location.hash = '#/'; } });
       window.__app = current;
       return;
     }
@@ -72,7 +90,7 @@ function renderHome() {
         <li><span><b>运行环境。</b>Chrome / Edge / Firefox 等支持 WebGL 2 的浏览器；集成显卡、4 GB 内存即可流畅运行，推荐 1920×1080 分辨率。</span></li>
       </ol>
     </section>
-    <div class="colophon"><span>计算核心：矩阵光学 · 干涉与衍射数值计算 · 穆勒矩阵 · 电路改进节点法与牛顿迭代</span><span>Three.js 程序化建模与渲染</span></div>
+    <div class="colophon"><span>计算核心：矩阵光学 · 干涉与衍射数值计算 · 穆勒矩阵 · 电路改进节点法与牛顿迭代</span><span>开源组件：three.js（MIT）· KaTeX（MIT）· IBM Plex Mono（OFL-1.1）</span><span>数据：CIE 1931 色匹配函数（Wyman 等 2013 解析拟合）· SCHOTT 玻璃 Sellmeier 系数</span></div>
   </div></div>`;
   root.querySelectorAll('.toc-row').forEach((c) => {
     const go = () => (location.hash = `#/exp/${c.dataset.id}`);
@@ -82,7 +100,7 @@ function renderHome() {
   root.querySelectorAll('canvas[data-th]').forEach((cv) => {
     const E = EXPERIMENTS[+cv.dataset.th];
     const ctx = cv.getContext('2d');
-    E.thumb && E.thumb(ctx, cv.width, cv.height);
+    try { E.thumb && E.thumb(ctx, cv.width, cv.height); } catch (err) { console.error(`缩略图绘制失败：${E.meta.id}`, err); }
   });
   heroAnim();
 }
@@ -108,4 +126,8 @@ function heroAnim() {
 
 window.addEventListener('hashchange', route);
 route();
-export { renderMath };
+
+// 网站版：注册离线缓存，访问过一次后断网也能使用，并可“安装到主屏幕/桌面”。单文件版与开发模式不需要。
+if (import.meta.env.PROD && import.meta.env.MODE !== 'single' && 'serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+}

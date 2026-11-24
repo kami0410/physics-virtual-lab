@@ -1,5 +1,5 @@
 // 干涉计算核心：迈克尔逊（两虚点光源干涉）、牛顿环（空气薄膜等厚干涉，含钠双线）
-import { wavelengthToRGB } from './color.js';
+import { wavelengthToRGB, spectralRenderer, planck, encode, toGamut } from './color.js';
 
 /**
  * 迈克尔逊干涉仪：扩束后的点光源 S 经 M1、M2 形成两个虚光源 S1、S2。
@@ -9,7 +9,8 @@ import { wavelengthToRGB } from './color.js';
  * ox, oy：光束中心相对屏中心的偏移(mm)，整个图样随之平移；
  * va：两臂光强不等时的条纹可见度 2√(I₁I₂)/(I₁+I₂)
  */
-export function michelsonPattern(img, { d, lambda, R0 = 500, dx = 0, dy = 0, halfW = 40, beamW = 46, coh = 150, gain = 1, ox = 0, oy = 0, va = 1 }) {
+export function michelsonPattern(img, { d, lambda, R0 = 500, dx = 0, dy = 0, halfW = 40, beamW = 46, coh = 150, gain = 1, ox = 0, oy = 0, va = 1, white = null }) {
+  if (white) lambda = WHITE_MEAN;
   const W = img.width, H = img.height, data = img.data;
   const R2 = R0, R1 = R0 + 2 * d;
   const k = (2 * Math.PI) / lambda;
@@ -32,6 +33,15 @@ export function michelsonPattern(img, { d, lambda, R0 = 500, dx = 0, dy = 0, hal
       const spacing = lambda / (Math.hypot(gx, gy) + 1e-12);
       const Vs = Math.min(1, Math.max(0, (spacing / pix - 2.2) / 2));
       const env = Math.exp(-rho2 / (beamW * beamW));
+      if (white) {
+        // 白光：对各波长的干涉项按色匹配权重求和（等效于对光谱积分），得到线性 RGB
+        let cr2 = 0, cg2 = 0, cb2 = 0;
+        if (Vs > 0) for (let j = 0; j < white.n; j++) { const c = Math.cos(white.k[j] * diff); cr2 += white.wr[j] * c; cg2 += white.wg[j] * c; cb2 += white.wb[j] * c; }
+        const a = env * 0.5 * gain, q = 0.96 * va * Vs;
+        const [R, G, B] = toGamut(a * (1 + q * cr2), a * (1 + q * cg2), a * (1 + q * cb2));
+        data[i] = 255 * encode(R); data[i + 1] = 255 * encode(G); data[i + 2] = 255 * encode(B); data[i + 3] = 255;
+        continue;
+      }
       const I = env * (1 + 0.96 * va * Vc * Vs * Math.cos(k * diff)) * 0.5 * gain;
       const v = Math.min(1, I);
       const vv = Math.pow(v, 0.8);
@@ -42,7 +52,7 @@ export function michelsonPattern(img, { d, lambda, R0 = 500, dx = 0, dy = 0, hal
 }
 
 /** 未扩束时：屏上的激光光点（每路含两个较弱的次级反射点） */
-export function michelsonSpots(img, { spots, halfW = 40 }) {
+export function michelsonSpots(img, { spots, halfW = 40, white = false }) {
   const W = img.width, H = img.height, data = img.data;
   const pix = (2 * halfW) / W;
   let i = 0;
@@ -53,7 +63,9 @@ export function michelsonSpots(img, { spots, halfW = 40 }) {
       let I = 0;
       for (const s of spots) I += s.a * Math.exp(-((X - s.x) ** 2 + (Y - s.y) ** 2) / (s.r * s.r));
       const v = Math.min(1, I);
-      data[i] = 24 + 231 * v; data[i + 1] = 22 + 60 * v * v + 20 * v; data[i + 2] = 26 + 50 * v * v; data[i + 3] = 255;
+      if (white) { data[i] = 24 + 231 * v; data[i + 1] = 22 + 226 * v; data[i + 2] = 26 + 200 * v; } // 钨丝灯：暖白
+      else { data[i] = 24 + 231 * v; data[i + 1] = 22 + 60 * v * v + 20 * v; data[i + 2] = 26 + 50 * v * v; }
+      data[i + 3] = 255;
     }
   }
   return img;
@@ -133,20 +145,66 @@ export function michelsonUniforms({ d, lambda, R0 = 500, dx = 0, dy = 0, halfW =
   };
 }
 
+/**
+ * 白光（钨丝灯，按 2850 K 黑体）的干涉计算参数：33 个波长（380–780 nm，间隔 12.5 nm）。
+ * 光强 I(Δ) = ∫S(λ)[1 + V cos(2πΔ/λ)]dλ，显示颜色 = Σ w(λ)·[1 + V cos(2πΔ/λ)]，
+ * w(λ) 为 S(λ)·(x̄,ȳ,z̄) 换算到线性 sRGB 的权重，已按光源白点归一（Δ 很大、条纹消失时显示为白色）。
+ * 波长采样间隔对应的混叠光程差约 24 µm，远大于白光条纹可见的范围（几 µm），采样足够。
+ */
+export const WHITE_MEAN = 0.00055; // 白光平均波长 mm（只用于判断条纹是否过密）
+export const WHITE = (() => {
+  const R = spectralRenderer((nm) => planck(nm, 2850), 12.5);
+  const n = R.lambdas.length, k = new Float32Array(n), wr = new Float32Array(n), wg = new Float32Array(n), wb = new Float32Array(n);
+  R.lambdas.forEach((nm, j) => { k[j] = (2 * Math.PI) / (nm * 1e-6); [wr[j], wg[j], wb[j]] = R.weights[j]; });
+  return { n, k, wr, wg, wb };
+})();
+
+/** 迈克尔逊白光干涉（GPU 版，与 michelsonPattern 的 white 分支同一模型） */
+export const GLSL_MICHELSON_WHITE = `
+uniform float uR1, uR2, uR12, uLam, uDx, uDy, uBeamW, uGain, uHalf, uW, uOx, uOy, uVa;
+uniform float uLk[${WHITE.n}], uWr[${WHITE.n}], uWg[${WHITE.n}], uWb[${WHITE.n}];
+float enc(float c) { c = clamp(c, 0.0, 1.0); return c <= 0.0031308 ? 12.92 * c : 1.055 * pow(c, 1.0 / 2.4) - 0.055; }
+vec3 shade(vec2 L) {
+  float pix = 2.0 * uHalf / uW;
+  float X = (L.x - 0.5 * uW) * pix - uOx, Y = (0.5 * uW - L.y) * pix - uOy;
+  float rho2 = X * X + Y * Y;
+  float r1 = sqrt(rho2 + uR1 * uR1);
+  float r2 = sqrt((X - uDx) * (X - uDx) + (Y - uDy) * (Y - uDy) + uR2 * uR2);
+  float diff = (2.0 * X * uDx + 2.0 * Y * uDy - (uDx * uDx + uDy * uDy) + uR12) / (r1 + r2);
+  vec2 gr = vec2(X / r1 - (X - uDx) / r2, Y / r1 - (Y - uDy) / r2);
+  float spacing = uLam / (length(gr) + 1e-12);
+  float Vs = clamp((spacing / (uPx * pix) - 2.2) / 2.0, 0.0, 1.0);
+  vec3 c = vec3(0.0);
+  for (int j = 0; j < ${WHITE.n}; j++) { float cs = cos(uLk[j] * diff); c += vec3(uWr[j], uWg[j], uWb[j]) * cs; }
+  float a = exp(-rho2 / (uBeamW * uBeamW)) * 0.5 * uGain, q = 0.96 * uVa * Vs;
+  vec3 I = a * (1.0 + q * c);
+  float m = min(I.r, min(I.g, I.b));
+  if (m < 0.0) { float Y = max(0.0, dot(I, vec3(0.2126, 0.7152, 0.0722))); I = Y + (Y / (Y - m)) * (I - Y); } // 保持亮度降低饱和度，落入色域
+  return vec3(enc(I.r), enc(I.g), enc(I.b));
+}
+`;
+
+/** GLSL_MICHELSON_WHITE 的参数 */
+export function michelsonWhiteUniforms(p, W) {
+  const u = michelsonUniforms({ ...p, lambda: WHITE_MEAN }, W);
+  return { ...u, uLk: WHITE.k, uWr: WHITE.wr, uWg: WHITE.wg, uWb: WHITE.wb };
+}
+
 /** 未扩束光点（最多 8 个高斯斑：uSp[i] = (x, y, r, a)） */
 export const GLSL_SPOTS = `
-uniform vec4 uSp[8]; uniform float uN, uHalf, uW;
+uniform vec4 uSp[8]; uniform float uN, uHalf, uW, uWhite;
 vec3 shade(vec2 L) {
   float pix = 2.0 * uHalf / uW;
   float X = (L.x - 0.5 * uW) * pix, Y = (0.5 * uW - L.y) * pix;
   float I = 0.0;
   for (int i = 0; i < 8; i++) { if (float(i) >= uN) break; vec4 s = uSp[i]; I += s.w * exp(-((X - s.x) * (X - s.x) + (Y - s.y) * (Y - s.y)) / (s.z * s.z)); }
   float v = min(1.0, I);
+  if (uWhite > 0.5) return vec3(24.0 + 231.0 * v, 22.0 + 226.0 * v, 26.0 + 200.0 * v) / 255.0;
   return vec3(24.0 + 231.0 * v, 22.0 + 60.0 * v * v + 20.0 * v, 26.0 + 50.0 * v * v) / 255.0;
 }
 `;
-export function spotsUniforms(spots, halfW, W) {
+export function spotsUniforms(spots, halfW, W, white = false) {
   const a = new Float32Array(32);
   spots.slice(0, 8).forEach((s, i) => a.set([s.x, s.y, s.r, s.a], i * 4));
-  return { uSp: a, uN: Math.min(8, spots.length), uHalf: halfW, uW: W };
+  return { uSp: a, uN: Math.min(8, spots.length), uHalf: halfW, uW: W, uWhite: white ? 1 : 0 };
 }

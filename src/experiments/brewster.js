@@ -1,11 +1,12 @@
 // 实验：布儒斯特角与菲涅耳公式（反射光的偏振 · 用布儒斯特角测玻璃折射率）
 import * as THREE from 'three';
+import { meta, thumb, D2R } from './brewster.meta.js';
+import { fresnelR } from '../physics/polarization.js';
 import { Component } from '../core/Component.js';
 import { MAT, mesh, labTable, laserMesh, Beam, ICONS, meterBox, rotatorMesh, canvasTexture } from '../core/Models.js';
 import { mean, uA, texU, gauss, rand, relErr, pct, sig } from '../core/Stats.js';
 import { fnData } from '../core/Plot.js';
 
-const D2R = Math.PI / 180;
 const YB = 14; // 光束高度 cm
 const I0 = 1000 * 0.5 * 0.85; // 随机偏振 1 mW 激光经偏振片后 μW
 const L_BACK = 500; // 样品到激光器出光口 mm
@@ -17,39 +18,10 @@ const dir2 = (deg) => [Math.cos(deg * D2R), -Math.sin(deg * D2R)]; // 方向角�
 const wrap360 = (v) => ((v % 360) + 360) % 360;
 const angDiff = (a, b) => { let d = wrap360(a - b); if (d > 180) d -= 360; return d; };
 
-/** 菲涅耳反射率 */
-export function fresnelR(th, n) {
-  const st = Math.sin(th) / n;
-  if (Math.abs(st) >= 1) return { s: 1, p: 1 };
-  const tt = Math.asin(st);
-  if (Math.abs(th) < 1e-6) { const r = ((n - 1) / (n + 1)) ** 2; return { s: r, p: r }; }
-  return { s: (Math.sin(th - tt) / Math.sin(th + tt)) ** 2, p: (Math.tan(th - tt) / Math.tan(th + tt)) ** 2 };
-}
-
 export class BrewsterExperiment {
-  static meta = {
-    id: 'brewster',
-    title: '布儒斯特角与菲涅耳公式',
-    subtitle: '反射光的偏振 · 消光法测布儒斯特角 · 由 tan θ_B = n 求折射率 · R_p、R_s 随入射角的变化',
-    tags: ['波动光学', '偏振', '菲涅耳公式'],
-    level: '中等',
-    time: '45 min',
-    color: '#13306b',
-    formula: String.raw`\tan\theta_B=n`,
-    measure: '布儒斯特角 θ_B、玻璃折射率 n',
-    goals: ['观察反射光的偏振现象，理解布儒斯特定律', '用自准直法确定入射角零点，用消光法测布儒斯特角，求玻璃折射率', '测量 p 光、s 光的反射率随入射角的变化，与菲涅耳公式比较'],
-    questions: ['为什么在布儒斯特角下反射光只有 s 分量？', '偏振片透振方向不准时，测得的“消光角”会有什么变化？如何用布儒斯特角反过来校准偏振片？', '样品背面为什么要磨砂涂黑？'],
-  };
+  static meta = meta;
 
-  static thumb(ctx, w, h) {
-    ctx.fillStyle = '#0d1117'; ctx.fillRect(0, 0, w, h);
-    const n = 1.52, X = (t) => 10 + (t / 90) * (w - 20), Y = (r) => h - 10 - r * (h - 20) * 1.6;
-    for (const [k, c] of [['s', '#7aa7ff'], ['p', '#ff5a6e']]) {
-      ctx.strokeStyle = c; ctx.lineWidth = 2; ctx.beginPath();
-      for (let t = 0; t <= 89; t++) { const r = fresnelR(t * D2R, n)[k]; t ? ctx.lineTo(X(t), Y(Math.min(0.55, r))) : ctx.moveTo(X(t), Y(r)); }
-      ctx.stroke();
-    }
-  }
+  static thumb = thumb;
 
   constructor(app) {
     this.app = app;

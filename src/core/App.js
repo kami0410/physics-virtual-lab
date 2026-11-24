@@ -1,6 +1,7 @@
 // 实验页面外壳：布局、器材架、仪器调节面板、实验步骤引擎、数据表、一键运行、数据处理与报告
 import * as THREE from 'three';
-import katex from 'katex';
+import { tex, renderMath } from './tex.js';
+export { tex, renderMath };
 import { Stage } from './Stage.js';
 import { buildControl, h } from './Controls.js';
 import { DataTable } from './DataTable.js';
@@ -24,16 +25,6 @@ export const I = {
   tag: svg('<path d="M2.5 2.5h5l6 6-5 5-6-6z"/><circle cx="5.3" cy="5.3" r="1"/>'),
   rays: svg('<path d="M2 8h12M2 4.5 8 8l6 3.5M2 11.5 8 8l6-3.5"/>'),
 };
-
-export function tex(s, display = false) {
-  return katex.renderToString(s, { displayMode: display, throwOnError: false, strict: false });
-}
-/** 将 $$..$$ 与 $..$ 渲染为公式 */
-export function renderMath(html) {
-  return html
-    .replace(/\$\$([\s\S]+?)\$\$/g, (_, s) => tex(s, true))
-    .replace(/\$([^$\n]+?)\$/g, (_, s) => tex(s, false));
-}
 
 export class App {
   constructor(root, ExpClass, { onExit }) {

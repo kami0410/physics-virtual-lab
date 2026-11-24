@@ -46,3 +46,12 @@ export function ellipseOf(S) {
   const chi = Ip > 1e-12 ? 0.5 * Math.asin(Math.max(-1, Math.min(1, S[3] / Ip))) : 0;
   return { I: S[0], psi, chi, dop: S[0] > 0 ? Ip / S[0] : 0 };
 }
+
+/** 菲涅耳反射率（入射角 th 弧度，从空气入射到折射率 n 的介质）：返回 s、p 分量的能量反射率 */
+export function fresnelR(th, n) {
+  const st = Math.sin(th) / n;
+  if (Math.abs(st) >= 1) return { s: 1, p: 1 };
+  const tt = Math.asin(st);
+  if (Math.abs(th) < 1e-6) { const r = ((n - 1) / (n + 1)) ** 2; return { s: r, p: r }; }
+  return { s: (Math.sin(th - tt) / Math.sin(th + tt)) ** 2, p: (Math.tan(th - tt) / Math.tan(th + tt)) ** 2 };
+}

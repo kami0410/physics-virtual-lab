@@ -1,14 +1,14 @@
 // 实验二：迈克尔逊干涉仪测 He-Ne 激光波长
 import * as THREE from 'three';
+import { meta, thumb, LAMBDA } from './michelson.meta.js';
 import { Component } from '../core/Component.js';
 import { MAT, mesh, labTable, laserMesh, ICONS, canvasTexture, knobMesh } from '../core/Models.js';
 import { OptBench, BeamDraw } from '../core/beams.js';
-import { michelsonPattern, michelsonSpots, GLSL_MICHELSON, GLSL_SPOTS, michelsonUniforms, spotsUniforms } from '../physics/interference.js';
+import { michelsonPattern, michelsonSpots, GLSL_MICHELSON, GLSL_SPOTS, michelsonUniforms, spotsUniforms, GLSL_MICHELSON_WHITE, michelsonWhiteUniforms, WHITE } from '../physics/interference.js';
 import { GPU } from '../core/gpu.js';
 import { linFit, mean, uA, fmtU, texU, sig, gauss, rand, relErr, pct, clamp, successiveDiff } from '../core/Stats.js';
 import { lineData } from '../core/Plot.js';
 
-const LAMBDA = 632.8e-6; // mm
 const YB = 14; // 光束高度 cm
 const HALF = 40; // 屏视场半宽 mm
 const DMS = 400; // M2 到屏的距离（光点偏移杠杆）mm
@@ -20,25 +20,9 @@ const NOM = 0.43; // 扩束后每一臂到达反射镜的功率（激光功率�
 const NOMS = 0.219; // 未扩束时每一臂到达屏的功率（0.48 × 0.95 × 0.48）
 
 export class MichelsonExperiment {
-  static meta = {
-    id: 'michelson',
-    title: '迈克尔逊干涉仪测激光波长',
-    subtitle: '分振幅干涉 · 等倾干涉圆环 · 条纹“冒出/缩进”计数 · 逐差法',
-    tags: ['波动光学', '干涉', '精密测长'],
-    level: '中等',
-    time: '40 min',
-    color: '#c41e3a',
-    formula: String.raw`\lambda=\dfrac{2\Delta d}{\Delta N}`,
-    measure: 'He-Ne 激光波长 λ',
-    goals: ['了解迈克尔逊干涉仪的结构与原理，掌握其调节方法', '观察等倾干涉条纹的特点，理解条纹“冒出”“缩进”与光程差变化的关系', '利用条纹计数测量 He-Ne 激光的波长，用逐差法处理数据'],
-    questions: ['为什么转动微动手轮时必须始终沿同一方向？空程误差是如何产生的？', '等倾干涉圆环中心冒出一个条纹时，动镜 M₁ 移动了多少？', '随着 d 减小，条纹变粗还是变细？当 d→0 时会看到什么现象？'],
-  };
+  static meta = meta;
 
-  static thumb(ctx, w, h) {
-    const img = ctx.createImageData(w, h);
-    michelsonPattern(img, { d: 1.1, lambda: LAMBDA, halfW: 30, beamW: 34 });
-    ctx.putImageData(img, 0, 0);
-  }
+  static thumb = thumb;
 
   constructor(app) {
     this.app = app;
@@ -48,6 +32,7 @@ export class MichelsonExperiment {
     this.lastDir = 0; this.travel = 0;
     this.eps = { x: rand(5, 8) * (Math.random() < 0.5 ? -1 : 1), y: rand(4, 7) * (Math.random() < 0.5 ? -1 : 1) }; // mrad
     this.laserOn = false;
+    this.white = false; // 光源：false = He-Ne 激光，true = 白光（钨丝灯 + 小孔）
     this.zeroD = this.d;
     this.showAssist = true;
     this.counter = 0;
@@ -161,9 +146,12 @@ export class MichelsonExperiment {
     lg.add(mesh(new THREE.BoxGeometry(24, YB - 4.6, 4), MAT.paint(0x334155), -14, (YB - 4.6) / 2, 0));
     this.laserAp = lz.aperture;
     app.addComponent(new Component({
-      key: 'laser', name: 'He-Ne 激光器', icon: ICONS.laser, zone: 'slot', defaultSlot: 'laser', required: true, object: lg, labelY: 24,
-      desc: '输出波长 632.8 nm（实验中视为待测）的红色激光，功率约 1 mW。注意：切勿直视激光！',
-      controls: () => [{ type: 'toggle', label: '激光电源', get: () => this.laserOn, set: (v) => (this.laserOn = v) }],
+      key: 'laser', name: 'He-Ne 激光器 / 白光灯', icon: ICONS.laser, zone: 'slot', defaultSlot: 'laser', required: true, object: lg, labelY: 24,
+      desc: '输出波长 632.8 nm（实验中视为待测）的红色激光，功率约 1 mW。注意：切勿直视激光！灯座上另有一盏钨丝白光灯（前加小孔），可切换使用，用于寻找零光程位置。',
+      controls: () => [
+        { type: 'toggle', label: '光源电源', get: () => this.laserOn, set: (v) => (this.laserOn = v) },
+        { type: 'segment', label: '光源', get: () => (this.white ? 'w' : 'l'), set: (v) => (this.white = v === 'w'), options: [{ value: 'l', label: 'He-Ne 激光' }, { value: 'w', label: '白光' }] },
+      ],
     }));
 
     const eg = new THREE.Group();
@@ -234,7 +222,7 @@ export class MichelsonExperiment {
   trace() {
     const app = this.app;
     const pk = (k) => { const c = app.comp(k); return c.placed ? `${c.root.position.x.toFixed(3)},${c.root.position.z.toFixed(3)},${c.root.rotation.y.toFixed(5)}` : '-'; };
-    const key = [this.laserOn, this.eps.x.toFixed(4), this.eps.y.toFixed(4), this.m1Carriage.position.x.toFixed(3), pk('laser'), pk('expander'), pk('screen')].join('|');
+    const key = [this.laserOn, this.white, this.eps.x.toFixed(4), this.eps.y.toFixed(4), this.m1Carriage.position.x.toFixed(3), pk('laser'), pk('expander'), pk('screen')].join('|');
     if (key === this._tkey && this._trace) return this._trace;
     this._tkey = key;
     const B = this.bench || (this.bench = new OptBench());
@@ -253,7 +241,7 @@ export class MichelsonExperiment {
     if (app.comp('laser').placed) B.add({ id: 'laserFace', kind: 'stop', ...pose('laser', V3(0.3, YB, 0), V3(1, 0, 0)), rect: [2.1, 2.1] });
     for (const [c, n] of [[[-88, 0], [1, 0]], [[88, 0], [-1, 0]], [[0, -63], [0, 1]], [[0, 63], [0, -1]]]) B.add({ id: 'edge', kind: 'stop', c: V3(c[0], YB, c[1]), n: V3(n[0], 0, n[1]), R: 400, noSpot: true });
     const src = [];
-    if (this.laserOn && app.comp('laser').placed) { const q = pose('laser', V3(0.5, YB, 0), V3(1, 0, 0)); src.push({ p: q.c, u: q.n, P: 1, w: 0.05, th: 0.0006, color: 0xff2a1a }); }
+    if (this.laserOn && app.comp('laser').placed) { const q = pose('laser', V3(0.5, YB, 0), V3(1, 0, 0)); src.push({ p: q.c, u: q.n, P: 1, w: 0.05, th: 0.0006, color: this.white ? 0xfff0d2 : 0xff2a1a }); }
     this._trace = B.trace(src);
     return this._trace;
   }
@@ -305,6 +293,7 @@ export class MichelsonExperiment {
     this.coarseWheel.rotation.z = -(this.drive / 1) * Math.PI * 2;
     this.m2Mirror.rotation.set(this.eps.y * 0.01, this.eps.x * 0.01, 0);
     this.laserAp.material.emissiveIntensity = on ? 3 : 0.1;
+    this.laserAp.material.emissive.set(this.white ? 0xfff0d2 : 0xff2222);
 
     // 光束：按实际光路追迹
     this.beamDraw.draw(on ? this.trace() : null, 1);
@@ -322,8 +311,8 @@ export class MichelsonExperiment {
         const a = Math.min(1.2, q.P / NOMS);
         spots.push({ x: q.X, y: q.Y, r: 1.3, a }, { x: q.X + 2.6, y: q.Y + 0.4, r: 1.0, a: a * 0.12 }, { x: q.X + 5.2, y: q.Y + 0.8, r: 0.9, a: a * 0.04 });
       }
-      if (!GPU.paint(v, 'mspots', GLSL_SPOTS, spotsUniforms(spots, HALF, v.W))) {
-        michelsonSpots(img, { spots, halfW: HALF });
+      if (!GPU.paint(v, 'mspots', GLSL_SPOTS, spotsUniforms(spots, HALF, v.W, this.white))) {
+        michelsonSpots(img, { spots, halfW: HALF, white: this.white });
         v.ctx.putImageData(img, 0, 0);
       }
       foot = !spots.length ? (expander ? '屏上没有光点：扩束镜没有对准激光，或光没有到达屏' : '屏上没有光点：光束没有经干涉仪到达观察屏')
@@ -331,12 +320,13 @@ export class MichelsonExperiment {
     } else {
       const g = this.geom();
       const mp = { d: this.d, lambda: LAMBDA, R0, dx: g.dx, dy: g.dy, halfW: HALF, ox: op.ox, oy: op.oy, va: op.va, gain: op.gain };
-      if (!GPU.paint(v, 'michelson', GLSL_MICHELSON, michelsonUniforms(mp, v.W))) {
-        michelsonPattern(img, mp);
+      const ok = this.white ? GPU.paint(v, 'michelsonW', GLSL_MICHELSON_WHITE, michelsonWhiteUniforms(mp, v.W)) : GPU.paint(v, 'michelson', GLSL_MICHELSON, michelsonUniforms(mp, v.W));
+      if (!ok) {
+        michelsonPattern(img, this.white ? { ...mp, white: WHITE } : mp);
         v.ctx.putImageData(img, 0, 0);
       }
       const c = this.ringCenter();
-      foot = c.r > HALF * 1.2 ? '圆心在视场外（条纹弯曲），需微调 M₂' : `d≈${Math.abs(this.d).toFixed(3)} mm  圆心偏离 ${c.r.toFixed(1)} mm`;
+      foot = this.white ? (Math.abs(this.d) < 0.002 ? `白光 · d≈${Math.abs(this.d).toFixed(4)} mm` : '白光 · 视场均匀（光程差太大，条纹不可见）') : c.r > HALF * 1.2 ? '圆心在视场外（条纹弯曲），需微调 M₂' : `d≈${Math.abs(this.d).toFixed(3)} mm  圆心偏离 ${c.r.toFixed(1)} mm`;
     }
     // 刻度十字
     v.ctx.strokeStyle = 'rgba(255,255,255,.12)'; v.ctx.beginPath(); v.ctx.moveTo(v.W / 2, 0); v.ctx.lineTo(v.W / 2, v.H); v.ctx.moveTo(0, v.H / 2); v.ctx.lineTo(v.W, v.H / 2); v.ctx.stroke();
@@ -418,6 +408,7 @@ export class MichelsonExperiment {
       buttons: [{
         label: '记录当前 N 与 M₁ 读数', onClick: (t) => {
           if (!this.app.comp('expander').placed || !this.laserOn) { this.app.toast('请先调出干涉圆环', 'warn'); return; }
+          if (this.white) { this.app.toast('白光的相干长度只有几微米，离开零光程就看不到条纹：测波长请换回激光', 'warn'); return; }
           const N = Math.round(this.N);
           if (Math.abs(Math.abs(this.drive - this.mirror) - BACKLASH / 2) > 1e-7 || this.travel < BACKLASH) this.app.toast('注意：手轮刚换向，空程尚未消除，读数与条纹变化不对应！', 'warn');
           const read = Math.round((this.drive + gauss(0.000006)) * 1e5) / 1e5;
@@ -508,6 +499,7 @@ export class MichelsonExperiment {
         status: () => `已记录 <b>${app.table('m').completeRows().length}</b> 组（需 10 组）`,
         auto: async () => {
           await app.view('观察屏');
+          this.white = false;
           app.select(app.comp('m1'));
           const dir = this.measDir || Math.sign(this.lastDir) || -1;
           const t = app.table('m');
@@ -528,6 +520,26 @@ export class MichelsonExperiment {
         html: '<p>动镜移动 $\\Delta d$ 时，中心处光程差改变 $2\\Delta d$，条纹变化 $\\Delta N$ 个：</p>$$\\lambda=\\frac{2\\Delta d}{\\Delta N}$$<p>用逐差法（前 5 个与后 5 个对应相减，$\\Delta N=250$）或作 $d$–$N$ 直线拟合求 $\\lambda$。</p>',
         check: () => app.analysisDone,
         auto: async () => { app.showAnalysis(); await app.wait(600); },
+      },
+      {
+        title: '白光干涉：寻找零光程位置',
+        html: '<p>用<b>粗动手轮</b>使 M₁ 向等光程位置移动：激光圆环不断缩进、变粗、变少。当视场内只剩一两个很粗的环时，略微调偏 M₂ 的微调螺钉，使条纹变成<b>直条纹</b>。</p><p>把光源切换为<b>白光</b>，缓慢转动<b>微动手轮</b>，直到屏上出现<b>彩色直条纹</b>：中央的白色条纹就是零光程（$d=0$）位置。</p>',
+        hint: '白光条纹只在 |2d| 小于约 2 µm 的范围内可见，对应微动手轮约 10 格：离开太远时视场是均匀的白色，要耐心地慢慢转。',
+        check: () => this.white && this.laserOn && this.optics().fringe && Math.abs(this.d) < 0.0005,
+        status: () => !this.white ? '光源还是激光：请切换为白光' : this.optics().fringe && Math.abs(this.d) < 0.0005 ? '屏上已出现彩色条纹' : '屏上还没有彩色条纹',
+        auto: async () => {
+          await app.view('观察屏');
+          app.select(app.comp('m1'));
+          this.white = false; app.changed();
+          const dir = -Math.sign(this.d) || -1, half = BACKLASH / 2;
+          // 先用粗动手轮快速靠近（M₁ 停在离等光程约 5 µm 处），再用微动手轮慢慢找
+          await app.tween(() => this.drive, (v) => this.moveDrive(v), this.m0 - dir * 0.005 + dir * half, 2200);
+          app.select(app.comp('m2'));
+          await app.tween(() => this.eps.x, (v) => (this.eps.x = v), 0.22 * (Math.sign(this.eps.x) || 1), 1000);
+          app.select(app.comp('laser')); this.white = true; app.changed(); await app.wait(500);
+          app.select(app.comp('m1'));
+          await app.tween(() => this.drive, (v) => this.moveDrive(v), this.m0 + dir * 0.0001 + dir * half, 2600);
+        },
       },
     ];
   }
@@ -581,6 +593,7 @@ export class MichelsonExperiment {
 <h3>3. 测量波长</h3><p>M₁ 移动 $\\Delta d$，中心处每“冒出”或“缩进”一个条纹，光程差改变 $\\lambda$：</p>$$\\lambda=\\frac{2\\Delta d}{\\Delta N}$$
 <p>$d$ 增大时条纹从中心冒出且变密；$d$ 减小时条纹向中心缩进且变疏。</p>
 <h3>4. 本仿真的计算模型</h3><p>扩束镜把激光会聚成点光源 S，经 M₁、M₂ 反射后等效为屏后两个相干虚点光源 S₁、S₂，它们沿轴相距 $2d$，M₂ 的倾角 $\\varepsilon$ 使 S₂ 横向偏移 $\\delta=2\\varepsilon L$。程序对屏上每一点精确计算</p>$$\\Delta=r_1-r_2=\\frac{r_1^2-r_2^2}{r_1+r_2},\\qquad I=I_0\\left[1+V\\cos\\frac{2\\pi\\Delta}{\\lambda}\\right]$$
-<p>因此 M₂ 未调垂直时会自然出现弯曲条纹、直条纹或偏心圆环（圆心偏移 $\\delta R_0/2d$），与真实现象一致。丝杠传动包含 ${(BACKLASH * 1e4).toFixed(0)}$ 格空程，换向时 M₁ 不动而读数在变，用于体会“空程误差”。</p>`;
+<p>因此 M₂ 未调垂直时会自然出现弯曲条纹、直条纹或偏心圆环（圆心偏移 $\\delta R_0/2d$），与真实现象一致。丝杠传动包含 ${(BACKLASH * 1e4).toFixed(0)}$ 格空程，换向时 M₁ 不动而读数在变，用于体会“空程误差”。</p>
+<h3>5. 白光干涉与零光程位置</h3><p>白光包含 400–700 nm 的连续光谱，各波长的条纹间距不同，只在光程差 $\\Delta\\approx 0$ 附近几个条纹内彼此对得上，形成彩色条纹；$|\\Delta|$ 超过几微米后各色条纹相互错开叠加，视场变为均匀的白色。屏上的颜色按</p>$$\\begin{pmatrix}R\\\\G\\\\B\\end{pmatrix}_{\\text{线性}}=\\sum_{\\lambda}\\boldsymbol w(\\lambda)\\left[1+V\\cos\\frac{2\\pi\\Delta}{\\lambda}\\right]$$<p>计算：$\\boldsymbol w(\\lambda)$ 由钨丝灯光谱（2850 K 黑体）乘 CIE 1931 色匹配函数换算到 sRGB 得到，并按光源白点归一。由于补偿板 G₂ 使两臂玻璃光程相同，各波长的零级条纹重合在 $d=0$ 处，零级条纹为白色（本仿真不计分光膜引入的附加相位差；若分光膜使两束光有 $\\pi$ 的附加相位差，零级条纹为黑色），两侧依次出现淡黄、褐、紫、蓝等颜色，与牛顿环的色序相同。实验中利用这一点确定等光程位置：先用激光使条纹变粗、变少（$d$ 很小），再换白光，用微动手轮缓慢寻找彩色条纹。</p>`;
   }
 }

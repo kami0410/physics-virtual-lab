@@ -1,9 +1,11 @@
 // 实验：分光计测三棱镜顶角与折射率（自准法测顶角 · 最小偏向角法 · 色散曲线）
 // 复用分光计的全部调节过程（望远镜调焦、各半调节、平行光管），在其基础上换用三棱镜。
 import * as THREE from 'three';
+import { meta, thumb } from './prism.meta.js';
 import { Component } from '../core/Component.js';
 import { MAT, mesh, ICONS } from '../core/Models.js';
 import { rgbCss } from '../physics/color.js';
+import { GLASSES, sellmeier } from '../physics/glass.js';
 import { SpectrometerExperiment } from './spectrometer.js';
 import { linFit, gauss, rand, relErr, pct, dms, texU } from '../core/Stats.js';
 import { fnData } from '../core/Plot.js';
@@ -27,41 +29,23 @@ function refract(d, n, eta) {
 const vec = (az) => [Math.cos(az * D2R), Math.sin(az * D2R)];
 
 export class PrismExperiment extends SpectrometerExperiment {
-  static meta = {
-    id: 'prism',
-    title: '三棱镜折射率与色散',
-    subtitle: '分光计调节 · 自准法测顶角 · 最小偏向角法测折射率 · 柯西色散公式',
-    tags: ['分光计', '折射', '色散'],
-    level: '较难',
-    time: '60 min',
-    color: '#13306b',
-    formula: String.raw`n=\dfrac{\sin\frac{A+\delta_{min}}{2}}{\sin\frac A2}`,
-    measure: '顶角 A、折射率 n(λ)',
-    goals: ['进一步掌握分光计的调节和使用', '用自准法测三棱镜顶角', '用最小偏向角法测棱镜玻璃对汞灯各谱线的折射率，作色散曲线并拟合柯西公式'],
-    questions: ['为什么要在最小偏向角位置测量？偏离最小偏向角对结果有多大影响？', '调节三棱镜光学面与望远镜光轴垂直时，为什么只能调载物台螺钉而不能再动望远镜？', '棱镜对紫光和黄光的折射率哪个大？由此说明正常色散的特点。'],
-  };
+  static meta = meta;
 
-  static thumb(ctx, w, h) {
-    ctx.fillStyle = '#06080a'; ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = 'rgba(220,230,240,.8)'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(w * 0.5, h * 0.2); ctx.lineTo(w * 0.72, h * 0.72); ctx.lineTo(w * 0.28, h * 0.72); ctx.closePath(); ctx.stroke();
-    ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.beginPath(); ctx.moveTo(0, h * 0.5); ctx.lineTo(w * 0.39, h * 0.46); ctx.stroke();
-    [404, 436, 546, 577].forEach((nm, i) => { ctx.strokeStyle = rgbCss(nm, 0.95); ctx.beginPath(); ctx.moveTo(w * 0.61, h * 0.47); ctx.lineTo(w, h * (0.6 + i * 0.07)); ctx.stroke(); });
-  }
+  static thumb = thumb;
 
   constructor(app) {
     super(app);
     this.Aap = 60 + rand(-0.35, 0.35); // 顶角 (°)
-    const nD = rand(1.62, 1.68);
-    this.cB = rand(0.0085, 0.0105); // 柯西系数 μm²
-    this.cA = nD - this.cB / 0.5893 ** 2;
+    // 棱镜玻璃：从几种常用火石/重火石玻璃中随机取一种（色散按 Sellmeier 公式），并带熔炼批次偏差
+    this.glass = ['F2', 'SF2', 'SF5'][Math.floor(Math.random() * 3)];
+    this.dn = rand(-3e-4, 3e-4);
     // 两个光学面外法线在台面上的方位（棱镜大致放正：顶角指向台面 +x 方向）
     const tw = rand(-4, 4);
     this.m1 = 90 - this.Aap / 2 + tw;
     this.m2 = -(90 - this.Aap / 2) + tw;
     this.g1 = rand(-0.6, 0.6); this.g2 = rand(-0.6, 0.6); // 光学面与底面不垂直量 (′)
   }
-  n(nm) { return this.cA + this.cB / (nm / 1000) ** 2; }
+  n(nm) { return sellmeier(this.glass, nm, this.dn); }
 
   build() {
     super.build();
@@ -94,7 +78,7 @@ export class PrismExperiment extends SpectrometerExperiment {
     this.prismG = pg;
     app.addComponent(new Component({
       key: 'prism', name: '三棱镜', icon: ICONS.prism, zone: 'slot', defaultSlot: 'plat', object: pg, labelY: 8,
-      desc: '重火石玻璃等边三棱镜，两个光学面已抛光，底面磨砂。放置时使两光学面分别大致垂直于两对螺钉的连线。',
+      desc: '火石玻璃等边三棱镜（牌号未知，待测），两个光学面已抛光，底面磨砂。放置时使两光学面分别大致垂直于两对螺钉的连线。',
     }));
   }
 
@@ -352,7 +336,7 @@ export class PrismExperiment extends SpectrometerExperiment {
     const fit = linFit(rows.map((r) => 1 / (r.nm / 1000) ** 2), rows.map((r) => r.n));
     html += `<h3>3. 色散</h3><p>以 $1/\\lambda^2$ 为横坐标线性拟合，得柯西公式 $n=a+b/\\lambda^2$：$a=${fit.b.toFixed(4)}$，$b=${(fit.k * 1e3).toFixed(2)}\\times10^{-3}\\ \\mu m^2$，$r=${fit.r.toFixed(5)}$。$n$ 随 $\\lambda$ 增大而减小，属于正常色散。</p>
       <div class="plot-wrap"><canvas data-plot="0" style="height:280px"></canvas></div>
-      <div class="result-box warn">本次棱镜参考值：顶角 ${dms(this.Aap)}，柯西系数 a = ${this.cA.toFixed(4)}，b = ${(this.cB * 1e3).toFixed(2)}×10⁻³ μm²（n_D = ${this.n(589.3).toFixed(4)}）。</div>`;
+      <div class="result-box warn">本次棱镜参考值：顶角 ${dms(this.Aap)}；玻璃为 ${this.glass}（${GLASSES[this.glass].kind}），本批次 n_d = ${this.n(587.56).toFixed(5)}（目录值 ${GLASSES[this.glass].nd.toFixed(5)}），表中“参考值”按 Sellmeier 公式计算。</div>`;
     return {
       html, ok: true,
       answers: [
@@ -362,6 +346,7 @@ export class PrismExperiment extends SpectrometerExperiment {
       plots: [{ title: '色散曲线 n(λ)', xLabel: 'λ / nm', yLabel: 'n', series: [
         { type: 'scatter', data: rows.map((r) => [r.nm, r.n]), label: '实验值', radius: 4 },
         { type: 'line', data: fnData((x) => fit.b + fit.k / (x / 1000) ** 2, 395, 600, 200), label: '柯西公式拟合' },
+        { type: 'line', data: fnData((x) => this.n(x), 395, 600, 200), label: `Sellmeier 公式（${this.glass}）`, color: '#94a3b8', width: 1 },
       ] }],
     };
   }
@@ -369,8 +354,8 @@ export class PrismExperiment extends SpectrometerExperiment {
   principle() {
     return `<h3>1. 自准法测顶角</h3><p>望远镜已调到聚焦无穷远且光轴垂直于仪器转轴。分别使望远镜光轴垂直于三棱镜的两个光学面（十字反射像与上叉丝交点重合），两次望远镜方位之差 $\\varphi$ 就是两面法线的夹角，顶角 $A=180^\\circ-\\varphi$。</p>
 <h3>2. 最小偏向角法测折射率</h3><p>单色平行光经棱镜两次折射，出射光与入射光的夹角称为偏向角 $\\delta$。当光线在棱镜内平行于底面（入射角等于出射角）时 $\\delta$ 取最小值 $\\delta_{min}$，此时</p>$$n=\\frac{\\sin\\frac{A+\\delta_{min}}{2}}{\\sin\\frac A2}$$<p>在最小偏向角附近，$\\delta$ 对入射角的变化最不敏感（一阶导数为零），因此测量结果最稳定。</p>
-<h3>3. 色散</h3><p>透明介质的折射率随波长变化。可见光区的正常色散可用柯西公式近似：$n=a+\\dfrac{b}{\\lambda^2}$。</p>
-<h3>4. 本仿真的计算模型</h3><p>程序对汞灯每条谱线作二维矢量折射光线追迹（斯涅尔定律，含全反射判断），出射方向随载物台转角连续变化，最小偏向角由光线追迹自然产生，而不是直接代公式。棱镜玻璃的色散按柯西公式给出，顶角、光学面与底面的垂直度都带有随机加工误差。望远镜、载物台和刻度盘的调节模型与“分光计”实验相同。</p>`;
+<h3>3. 色散</h3><p>透明介质的折射率随波长变化。可见光区的正常色散可用柯西公式近似：$n=a+\\dfrac{b}{\\lambda^2}$。更精确的是 Sellmeier 公式 $n^2=1+\\sum_i\\dfrac{B_i\\lambda^2}{\\lambda^2-C_i}$，它来自介质中束缚电子（紫外吸收）与晶格振动（红外吸收）的共振模型，玻璃厂的数据表都用它给出折射率。</p>
+<h3>4. 本仿真的计算模型</h3><p>程序对汞灯每条谱线作二维矢量折射光线追迹（斯涅尔定律，含全反射判断），出射方向随载物台转角连续变化，最小偏向角由光线追迹自然产生，而不是直接代公式。棱镜玻璃取 F2、SF2、SF5 三种火石玻璃之一，色散按 SCHOTT 数据表的 Sellmeier 系数计算（另加 ±3×10⁻⁴ 以内的批次偏差），顶角、光学面与底面的垂直度都带有随机加工误差。望远镜、载物台和刻度盘的调节模型与“分光计”实验相同。</p>`;
   }
 }
 

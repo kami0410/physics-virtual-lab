@@ -1,5 +1,6 @@
 // 实验：自组惠斯通电桥测电阻（平衡条件 · 保护电阻与跃接法 · 交换法消除比例臂误差 · 电桥灵敏度）
 import * as THREE from 'three';
+import { meta, thumb } from './bridge.meta.js';
 import { Circuit, benchTable, analogMeter, dcSupply, rheostat, knifeSwitch, partBoard, resistanceBox, drawDialFace } from '../core/circuit.js';
 import { mean, gauss, rand, relErr, pct } from '../core/Stats.js';
 
@@ -7,29 +8,9 @@ const G_PER_DIV = 1.0e-6; // 检流计每格电流 A
 const G_DIVS = 60; // ±30 格
 
 export class BridgeExperiment {
-  static meta = {
-    id: 'bridge',
-    title: '惠斯通电桥测电阻',
-    subtitle: '电桥平衡 · 保护电阻与跃接法 · 交换法消除比例臂误差 · 电桥灵敏度',
-    tags: ['电学', '比较法', '电桥'],
-    level: '基础',
-    time: '45 min',
-    color: '#0f766e',
-    formula: String.raw`R_x=\dfrac{R_1}{R_2}R_0,\quad R_x=\sqrt{R_0R_0'}`,
-    measure: '两个中值电阻的阻值、电桥灵敏度',
-    goals: ['理解惠斯通电桥的平衡原理，学会自组电桥', '掌握检流计的保护方法（保护电阻、跃接）和电桥平衡的调节', '用交换法消除比例臂误差，测量电桥灵敏度并估算其引起的误差'],
-    questions: ['电桥平衡时，电源电压的波动对测量结果有没有影响？为什么？', '为什么调平衡时先接入较大的保护电阻？最后为什么要把它减到零？', '交换法为什么能消除比例臂 R₁、R₂ 不相等带来的误差？', '如何提高电桥的灵敏度？'],
-  };
+  static meta = meta;
 
-  static thumb(ctx, w, h) {
-    ctx.fillStyle = '#f1ede2'; ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = '#1d2832'; ctx.lineWidth = 2;
-    const cx = w / 2, cy = h / 2, r = w * 0.32;
-    ctx.beginPath(); ctx.moveTo(cx - r, cy); ctx.lineTo(cx, cy - r); ctx.lineTo(cx + r, cy); ctx.lineTo(cx, cy + r); ctx.closePath(); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy + r); ctx.stroke();
-    ctx.fillStyle = '#f1ede2'; ctx.beginPath(); ctx.arc(cx, cy, 9, 0, 7); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#c41e3a'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center'; ctx.fillText('G', cx, cy + 4);
-  }
+  static thumb = thumb;
 
   constructor(app) {
     this.app = app;

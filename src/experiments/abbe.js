@@ -1,5 +1,6 @@
 // 实验：阿贝成像原理与空间滤波（二维 FFT 计算频谱面与像面的相干光场）
 import * as THREE from 'three';
+import { meta, thumb, cm } from './abbe.meta.js';
 import { Component } from '../core/Component.js';
 import { AXIS_Y, MAT, mesh, labTable, opticalRail, carriage, laserMesh, lensMesh, whiteScreen, Beam, ICONS } from '../core/Models.js';
 import { fft2, fIdx } from '../physics/fourier.js';
@@ -22,7 +23,6 @@ const FILTERS = [
 ];
 const OBS = ['正交网格', '竖直条纹', '水平条纹', '斜条纹', '条纹周期减半', '均匀亮场', '视场全暗', '网格字', '字（网格消失）', '字', '字的轮廓（边缘增强）'];
 const DISK = [[0, 0], ...[0, 1, 2, 3, 4, 5].map((k) => [0.55 * Math.cos((k * Math.PI) / 3), 0.55 * Math.sin((k * Math.PI) / 3)]), ...[0, 1, 2, 3, 4, 5].map((k) => [Math.cos(((k + 0.5) * Math.PI) / 3), Math.sin(((k + 0.5) * Math.PI) / 3)])];
-const cm = (a, m) => (m === 0 ? a : Math.sin(Math.PI * m * a) / (Math.PI * m)); // 占空比 a 的矩形光栅第 m 级振幅
 
 /** 圆锥形光束（两端半径可变） */
 class Cone {
@@ -48,31 +48,9 @@ class Cone {
 }
 
 export class AbbeExperiment {
-  static meta = {
-    id: 'abbe',
-    title: '阿贝成像与空间滤波',
-    subtitle: '频谱面上的衍射光点 · 测光栅常数 · 方向滤波、低通滤波、高通滤波',
-    tags: ['傅里叶光学', '空间滤波', 'FFT'],
-    level: '提高',
-    time: '60 min',
-    color: '#3b1f4d',
-    formula: String.raw`x_k=\frac{k\lambda f}{d}`,
-    measure: '光栅常数 d、不同滤波器下的像',
-    goals: ['理解阿贝成像原理：物的频谱在透镜后焦面上，像是频谱再一次衍射的结果', '由频谱面上衍射光点的间距测光栅常数', '用狭缝、小孔、挡光点进行方向滤波、低通滤波、高通滤波，观察像的变化，加深对空间频率的理解'],
-    questions: ['频谱面上离中心越远的光点对应物的什么信息？', '用竖直狭缝滤波时，像上为什么出现水平条纹？', '网格字实验中，可变光阑开得太大或太小会怎样？', '如果入射光不是平行光，频谱面在哪里？'],
-  };
+  static meta = meta;
 
-  static thumb(ctx, w, h) {
-    ctx.fillStyle = '#0b0a10'; ctx.fillRect(0, 0, w, h);
-    const cx = w / 2, cy = h / 2, s = Math.min(w, h) / 7;
-    for (let m = -2; m <= 2; m++) for (let n = -2; n <= 2; n++) {
-      const a = Math.abs(cm(0.62, m) * cm(0.62, n)) / 0.39;
-      const g = ctx.createRadialGradient(cx + m * s, cy + n * s, 0, cx + m * s, cy + n * s, 2 + 5 * Math.sqrt(a));
-      g.addColorStop(0, `rgba(255,90,80,${Math.min(1, 0.25 + a)})`); g.addColorStop(1, 'rgba(255,40,40,0)');
-      ctx.fillStyle = g; ctx.fillRect(cx + m * s - 8, cy + n * s - 8, 16, 16);
-    }
-    ctx.strokeStyle = 'rgba(255,255,255,.4)'; ctx.lineWidth = 1; ctx.strokeRect(cx - 3, 6, 6, h - 12);
-  }
+  static thumb = thumb;
 
   constructor(app) {
     this.app = app;

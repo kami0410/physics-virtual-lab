@@ -9,7 +9,8 @@
     "build": "vite build",
     "build:single": "vite build --mode single",
     "preview": "vite preview",
-    "test": "npm run build:single && node tests/e2e.mjs",
+    "test": "node tests/physics.mjs && npm run build:single && node tests/e2e.mjs",
+    "test:physics": "node tests/physics.mjs",
     "test:quick": "node tests/e2e.mjs --monkey 150"
   },
   "dependencies": {

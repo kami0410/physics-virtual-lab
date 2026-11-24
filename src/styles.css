@@ -403,3 +403,8 @@ table.dt tr:hover td .x { opacity: 1; }
 .pmode button { border: none; background: transparent; padding: 2px 8px; font-size: 11.5px; color: var(--ink-2); cursor: pointer; font-family: inherit; }
 .pmode button + button { border-left: 1px solid var(--rule-2); }
 .pmode button.on { background: var(--ink); color: #fff; }
+
+/* 实验载入中（按需加载实验本体与三维引擎时短暂显示） */
+.boot { height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; background: var(--paper); color: var(--ink); }
+.boot-t { font-size: 20px; letter-spacing: .08em; }
+.boot-s { font-size: 13px; color: var(--ink-3); }
