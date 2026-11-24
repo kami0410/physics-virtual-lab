@@ -41,6 +41,21 @@ export class BiprismExperiment {
 
   // ---------------- 几何量 ----------------
   P(k) { const c = this.app.comp(k); return c.placed ? c.pos * 10 : null; } // mm
+
+  /** 当前光路 → 光路设计台：狭缝当作点光源，双棱镜的两个半棱镜把它折成两个虚光源（像点自动标出），间距即 d */
+  toBench({ done }) {
+    const xs = this.P('slit'), xb = this.P('biprism');
+    if (xs == null || xb == null || xb <= xs) return null;
+    const a = xb - xs, H = 30, els = [];
+    els.push({ type: 'point', x: 0, y: 0, rot: 0, cone: +((2.2 * Math.atan(H / 2 / a) * 180) / Math.PI).toFixed(2), n: 61, lam: 589.3 });
+    els.push({ type: 'biprism', x: a, y: +this.edge.toFixed(3), alpha: +((this.alpha * 180) / Math.PI).toFixed(4), h: H, t: 2, mat: 'K9', secret: !done });
+    const xe = this.P('eye');
+    if (xe != null && xe > xb) els.push({ type: 'detector', x: xe - xs, y: 0, L: 30 });
+    return {
+      els, opts: { partial: false, images: true, ext: true },
+      note: `来自“菲涅耳双棱镜测波长”：狭缝距双棱镜 ${(a / 10).toFixed(1)} cm。两个半棱镜把狭缝折成两个相距 d 的虚光源（标出的两个虚像，虚线是反向延长线），两束光在屏上重叠的区域就是干涉区。d ≈ 2a(n−1)α，条纹间距 Δx = Dλ/d。`,
+    };
+  }
   get a() { const s = this.P('slit'), b = this.P('biprism'); return s != null && b != null && b > s ? b - s : null; }
   get D() { const s = this.P('slit'), e = this.P('eye'); return s != null && e != null && e > s ? e - s : null; }
   get b() { return this.D != null && this.a != null ? this.D - this.a : null; }

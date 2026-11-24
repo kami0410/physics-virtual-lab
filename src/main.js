@@ -99,7 +99,7 @@ function renderHome() {
         <div class="eyebrow">开放工作台 · 几何光学</div>
         <h2>光路设计台</h2>
         <p>在光学平台上自由摆放激光器、透镜、反射镜、棱镜、光栅和光屏，逐条光线实时追迹。折射率按 Sellmeier 公式随波长变化，界面反射按菲涅耳公式分配能量，自动标出实像与虚像，光屏给出光强分布。</p>
-        <div class="chips"><span>14 个典型光路</span><span>431 种光学玻璃</span><span>球差 · 色差 · 消色差</span><span>彩虹 · 全反射 · 光栅</span></div>
+        <div class="chips"><span>20 个典型光路</span><span>431 种光学玻璃</span><span>点列图 · 像差曲线 · 场曲</span><span>偏振 · 双折射 · 波片</span><span>分享链接</span></div>
         <span class="go">打开光路设计台 →</span>
       </div>
     </a>
@@ -109,7 +109,7 @@ function renderHome() {
         <div class="eyebrow">开放工作台 · 波动光学</div>
         <h2>衍射工作台</h2>
         <p>任选衍射屏，改变波长、光源距离与观察距离，在网格上数值计算光场传播。拖动观察距离，可以连续看到菲涅耳衍射过渡到夫琅禾费衍射，并与理论公式对照。</p>
-        <div class="chips"><span>圆孔 · 圆屏 · 单缝 · 双缝</span><span>光栅 · 矩孔 · 直边</span><span>白光衍射</span><span>角谱法 / 菲涅耳变换</span></div>
+        <div class="chips"><span>圆孔 · 圆屏 · 单缝 · 双缝</span><span>光栅 · 矩孔 · 直边</span><span>白光衍射</span><span>部分相干 · 相干长度</span><span>角谱法 / 菲涅耳变换</span><span>GPU 加速</span></div>
         <span class="go">打开衍射工作台 →</span>
       </div>
     </a>

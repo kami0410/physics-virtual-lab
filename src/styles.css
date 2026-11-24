@@ -584,3 +584,20 @@ input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px rg
 .topbar > * { min-width: 0; }
 .topbar .btn, .topbar select, .topbar .progress, .topbar .tb-group { flex-shrink: 0; }
 select { background-repeat: no-repeat !important; background-position: right 7px center !important; }
+[hidden] { display: none !important; }
+
+/* ---------- 像质分析面板（光路设计台检查器） ---------- */
+.iq { margin-top: 4px; }
+.iq-head { display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px; }
+.iq-tabs, .iq-seg { display: flex; border: 1px solid var(--rule-2); border-radius: var(--r); overflow: hidden; }
+.iq-seg { margin-bottom: 6px; width: max-content; }
+.iq-tab { flex: 1; padding: 4px 8px; font-size: 12px; background: var(--paper-2); color: var(--ink-2); border: 0; border-right: 1px solid var(--rule); cursor: pointer; font-family: var(--sans); }
+.iq-tab:last-child { border-right: 0; }
+.iq-tab:hover { background: var(--paper-3); }
+.iq-tab.on { background: var(--enamel); color: var(--engrave); }
+.iq-ctl { display: flex; gap: 6px; }
+.iq-ctl select { flex: 1; min-width: 0; font-size: 12px; }
+.iq-body canvas { display: block; }
+.iq-foot { font-size: 11px; color: var(--ink-3); line-height: 1.6; margin-top: 4px; }
+.iq-legend { display: flex; gap: 10px; font-size: 11px; color: var(--ink-2); font-family: var(--mono); margin-top: 4px; }
+.iq-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }

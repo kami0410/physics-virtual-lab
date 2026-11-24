@@ -163,4 +163,75 @@ export const PRESETS = [
       E('block', { x: 0, y: 0, w: 24, h: 120, mat: 'K9' }),
     ],
   },
+  {
+    id: 'brewster', title: '布儒斯特角：反射起偏', note: '自然光以布儒斯特角 θ_B = arctan n（K9 约 56.6°）射到玻璃表面，反射光中 p 分量为零，只剩垂直纸面振动的 s 光（打开“偏振”看光线上的圆点与短线）。光屏读数显示反射光为线偏振；把激光器转几度，偏振度随即下降。',
+    view: { cx: -40, cy: 10, w: 260 },
+    opts: { partial: true, pol: true },
+    build: () => {
+      const tb = Math.atan(index('K9', 632.8)), d = [Math.cos(tb), -Math.sin(tb)], q = [-10, 0], r = [-Math.cos(tb), -Math.sin(tb)];
+      return [
+        E('laser', { x: q[0] - 90 * d[0], y: q[1] - 90 * d[1], rot: -tb * R2D, lam: 632.8 }),
+        E('block', { x: 0, y: 0, w: 20, h: 120, mat: 'K9' }),
+        E('detector', { x: q[0] + 70 * r[0], y: q[1] + 70 * r[1], rot: Math.atan2(r[1], r[0]) * R2D, L: 20 }),
+      ];
+    },
+  },
+  {
+    id: 'malus', title: '马吕斯定律：起偏与检偏', note: '自然光通过透光轴竖直（0°，垂直纸面）的起偏器后成为线偏振光，强度减半；再通过透光轴为 θ 的检偏器，强度按 I = I₀cos²θ 变化。改变检偏器的“透光轴”角度，看光屏上的功率：θ = 60° 时应为 0.5 × 0.25 = 0.125。',
+    view: { cx: 10, cy: 0, w: 220 },
+    opts: { partial: false, pol: true },
+    build: () => [
+      E('laser', { x: -80, y: 0, lam: 632.8 }),
+      E('polarizer', { x: -30, y: 0, alpha: 0 }),
+      E('polarizer', { x: 30, y: 0, alpha: 60 }),
+      E('detector', { x: 80, y: 0, L: 20 }),
+    ],
+  },
+  {
+    id: 'qwp', title: '1/4 波片：线偏振变圆偏振', note: '振动方向与快轴成 45° 的线偏振光通过 1/4 波片，s、p 两分量产生 π/2 的相位差，出射为圆偏振光（光线上画成小圆圈）。把波片快轴改成 0° 或 90°，出射仍是线偏振；改成其他角度则是椭圆偏振。光源换成白光时，偏离设计波长的颜色得到的是椭圆偏振。',
+    view: { cx: 0, cy: 0, w: 220 },
+    opts: { partial: false, pol: true },
+    build: () => [
+      E('laser', { x: -80, y: 0, lam: 632.8, pol: 'lin', polAng: 45 }),
+      E('waveplate', { x: 0, y: 0, theta: 0, waves: 0.25, lam0: 632.8 }),
+      E('detector', { x: 80, y: 0, L: 20 }),
+    ],
+  },
+  {
+    id: 'rhomb', title: '菲涅耳菱体：全反射产生相位差', note: '全反射时 s、p 两分量的反射率都是 1，但相位跃变不同。K9 菱体的入射角约 54.6° 时每次全反射产生约 45° 的相位差，两次合计 90°：45° 线偏振光射入，出射成为圆偏振光，而且几乎与波长无关（比波片更“消色差”）。',
+    view: { cx: 5, cy: 5, w: 240 },
+    opts: { partial: false, pol: true },
+    build: () => {
+      const phi = 54.6, a = 25, t = Math.tan(phi * D2R), len = 2 * a * t, dx = a / t, rot = 90 - phi;
+      const W = (x, y) => [x * Math.cos(rot * D2R) - y * Math.sin(rot * D2R), x * Math.sin(rot * D2R) + y * Math.cos(rot * D2R)];
+      const inP = W(-len / 2 + dx / 2, 0), outP = W(len / 2 + dx / 2, 0);
+      return [
+        E('laser', { x: inP[0] - 60, y: inP[1], lam: 632.8, pol: 'lin', polAng: 45 }),
+        E('rhomb', { x: 0, y: 0, a, len, ang: phi, mat: 'K9', rot }),
+        E('detector', { x: outP[0] + 50, y: outP[1], L: 20 }),
+      ];
+    },
+  },
+  {
+    id: 'calcite', title: '方解石双折射', note: '光轴与表面成 45° 的方解石：垂直入射的自然光分成两束。o 光（垂直纸面振动，圆点）不偏折；e 光（纸面内振动，短线）的能流方向偏离波矢约 6.2°，出射时向一侧平移。两束光都是线偏振，振动方向互相垂直。在出射光后面加一块偏振片并转动它，两束光交替消失。',
+    view: { cx: 10, cy: 0, w: 200 },
+    opts: { partial: false, pol: true },
+    build: () => [
+      E('laser', { x: -70, y: 0, lam: 589.3 }),
+      E('calcite', { x: 0, y: 0, w: 40, h: 40, axis: 45 }),
+      E('detector', { x: 70, y: 0, L: 20 }),
+    ],
+  },
+  {
+    id: 'isolator', title: '偏振分束镜与 1/4 波片：光隔离', note: 'p 偏振光透过偏振分束镜，经快轴 45° 的 1/4 波片变成圆偏振，被平面镜反射后再次通过波片，变成 s 偏振（相当于经过一次半波片），于是被分束镜反射到上方的光屏，而不会回到激光器——这就是光纤通信与激光器中常用的光隔离器原理。',
+    view: { cx: 10, cy: 15, w: 220 },
+    opts: { partial: false, pol: true },
+    build: () => [
+      E('laser', { x: -70, y: 0, lam: 632.8, pol: 'lin', polAng: 90 }),
+      E('pbs', { x: 0, y: 0, L: 24, rot: 45 }),
+      E('waveplate', { x: 40, y: 0, theta: 45, waves: 0.25, lam0: 632.8 }),
+      E('mirror', { x: 80, y: 0, rot: 0, L: 30, refl: 1 }),
+      E('detector', { x: 0, y: 55, rot: 90, L: 20 }),
+    ],
+  },
 ];

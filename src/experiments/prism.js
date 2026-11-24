@@ -48,6 +48,21 @@ export class PrismExperiment extends SpectrometerExperiment {
   }
   n(nm) { return sellmeier(this.glass, nm, this.dn); }
 
+  /** 当前棱镜 → 光路设计台：汞灯几条谱线以绿线的最小偏向角入射。棱镜顶角与玻璃牌号是待测量，做完实验才公开 */
+  toBench({ done }) {
+    const A = this.Aap * (Math.PI / 180), a = 40, n = this.n(546.07);
+    const dmin = 2 * Math.asin(n * Math.sin(A / 2)) - A, i1 = (dmin + A) / 2, dir = -A / 2 + i1;
+    const w = a * Math.sin(A / 2), hgt = a * Math.cos(A / 2), hit = [-w / 2, hgt / 6], L = 90;
+    const els = [{ type: 'prism', x: 0, y: 0, A: +this.Aap.toFixed(4), a, mat: this.glass, secret: !done }];
+    for (const l of LINES) els.push({ type: 'laser', x: hit[0] - L * Math.cos(dir), y: hit[1] - L * Math.sin(dir), rot: (dir * 180) / Math.PI, lam: l.nm });
+    const out = dir - dmin;
+    els.push({ type: 'detector', x: w / 2 + 110 * Math.cos(out), y: hgt / 6 + 110 * Math.sin(out), rot: (out * 180) / Math.PI, L: 30 });
+    return {
+      els, opts: { partial: false, images: false },
+      note: `来自“三棱镜折射率与色散”：汞灯的紫、蓝紫、绿、黄谱线按绿线的最小偏向角入射。选中棱镜拖动旋转手柄，可以看到绿线出射方向在最小偏向角附近几乎不动；用量尺量偏向角，按 n = sin[(A+δ)/2]/sin(A/2) 计算折射率。`,
+    };
+  }
+
   build() {
     super.build();
     const app = this.app;

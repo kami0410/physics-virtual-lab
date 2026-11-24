@@ -72,6 +72,10 @@ async function autoRun(browser, id) {
       done: a.stepDone.map((x) => (x ? 1 : 0)).join(''), all: a.stepDone.every(Boolean), ok: !!res.ok,
       nan: /NaN|undefined|Infinity|出错/.test(text), errs, errors: window.__errors, bad: window.__bad, warn: [...new Set(window.__warn)],
       perf: { avg: window.__perf.sum / Math.max(1, window.__perf.n), max: window.__perf.max, n: window.__perf.n },
+      // 有“光路台”按钮的实验：做完后导出的光路至少含光源和一个光学元件，且没有隐藏参数
+      bench: a.exp.toBench ? (() => { try { const sc = a.exp.toBench({ done: true }); return sc ? `${sc.els.length}:${sc.els.some((e) => e.secret) ? 'secret' : 'open'}` : 'null'; } catch (err) { return 'error ' + err.message; } })() : null,
+      // 有“衍射台”按钮的实验：做完后导出的衍射参数有效（孔径、波长、距离都是正数）
+      wave: a.exp.toWave ? (() => { try { const sc = a.exp.toWave({ done: true }); if (!sc) return 'null'; const s = sc.s; return s && s.ap && s.lam > 0 && s.z > 0 && Object.values(s.p || {}).every((v) => v > 0) ? 'ok' : 'bad ' + JSON.stringify(s); } catch (err) { return 'error ' + err.message; } })() : null,
     };
   });
   await page.close();
@@ -80,6 +84,8 @@ async function autoRun(browser, id) {
   if (!r.ok) problems.push('数据处理未给出结果');
   if (r.selfBad.length) problems.push('自算核对：' + r.selfBad.join('、'));
   if (r.nan) problems.push('数据处理结果中有 NaN/undefined/出错');
+  if (r.bench != null && !/^([2-9]|\d\d+):open$/.test(r.bench)) problems.push(`导出到光路台异常：${r.bench}`);
+  if (r.wave != null && r.wave !== 'ok') problems.push(`导出到衍射台异常：${r.wave}`);
   for (const e of r.errs) if (Math.abs(e) > MAX_ERR) problems.push(`相对误差 ${e}% 超过 ${MAX_ERR}%`);
   problems.push(...r.errors, ...r.bad.map((b) => 'toast: ' + b));
   return { id, kind: 'auto', s: Math.round((Date.now() - t0) / 1000), problems, info: `误差 ${r.errs.map((e) => e + '%').join(' ') || '—'} · update 平均 ${r.perf.avg.toFixed(1)} ms / 最大 ${r.perf.max.toFixed(1)} ms` };
@@ -166,11 +172,23 @@ async function toolSmoke(browser, route) {
       // 每种元件都能添加并参与追迹
       for (const btn of document.querySelectorAll('.bp-item')) btn.click();
       b.trace();
-      return { bad, info: `${sel.options.length - 1} 个预设、${document.querySelectorAll('.bp-item').length} 种元件` };
+      // 分享链接往返：编码 → 用 #/bench?s= 重新打开 → 元件数与类型一致
+      const before = b.els.map((e) => e.type).join(','), code = await b.shareCode();
+      location.hash = '#/bench?s=' + code;
+      for (let i = 0; i < 100 && (window.__bench === b || !window.__bench || window.__bench.els.length === 0); i++) await new Promise((res) => setTimeout(res, 50));
+      const after = window.__bench.els.map((e) => e.type).join(',');
+      if (after !== before) bad.push(`分享链接往返后元件不一致（${code.length} 字符）`);
+      return { bad, info: `${sel.options.length - 1} 个预设、${document.querySelectorAll('.bp-item').length} 种元件、分享链接 ${code.length} 字符` };
     }
     const w = window.__wave, sel = document.querySelector('[data-a=preset]');
     for (const o of [...sel.options].slice(1)) { w.load(+o.value); await new Promise((res) => setTimeout(res, 40)); const I = w.out.res[0].I; let s = 0; for (const v of I) s += v; if (!(s > 0) || !isFinite(s)) bad.push(`${o.textContent}: 图样无效`); }
-    return { bad, info: `${sel.options.length - 1} 个典型现象` };
+    // 分享链接往返：载入“光源宽度”预设 → 编码 → #/wave?s= 重新打开 → 参数一致
+    w.load(8); await new Promise((res) => setTimeout(res, 60));
+    const before = JSON.stringify(w.shareState().s), code = await w.shareCode();
+    location.hash = '#/wave?s=' + code;
+    for (let i = 0; i < 100 && (window.__wave === w || !window.__wave || !window.__wave.out); i++) await new Promise((res) => setTimeout(res, 50));
+    if (JSON.stringify(window.__wave.shareState().s) !== before) bad.push(`衍射台分享链接往返后参数不一致（${code.length} 字符）`);
+    return { bad, info: `${sel.options.length - 1} 个典型现象、分享链接 ${code.length} 字符` };
   }, route);
   const errs = await page.evaluate(() => window.__errors);
   await page.close();

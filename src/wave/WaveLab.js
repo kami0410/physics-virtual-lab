@@ -1,12 +1,16 @@
 // 衍射工作台：选择衍射屏（圆孔、圆屏、单缝、双缝、光栅、矩孔、直边），改变波长、光源距离和观察距离，
 // 用标量衍射数值计算（physics/wavefield.js）实时得到观察屏上的光强分布，连续看到从菲涅耳衍射到夫琅禾费衍射的过渡。
 import * as W from '../physics/wavefield.js';
+import { GW } from '../physics/gpufft.js';
 import { cmf, xyzToLinear, encode, wavelengthToRGB } from '../physics/color.js';
+import { encodeObj, decodeObj, sceneParam } from '../bench/share.js';
 
 const h = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const fmt = (v, d = 3) => (Math.abs(v) >= 1000 ? v.toFixed(0) : (+v).toPrecision(d));
 const WHITE = [430, 460, 490, 520, 550, 580, 610, 640, 670];
 const sinc = (x) => (Math.abs(x) < 1e-9 ? 1 : Math.sin(x) / x);
+const F_COL = 250; // R = 0（平行光）时，扩展光源放在焦距 250 mm 的准直透镜焦面上
 
 // 衍射屏
 const APS = {
@@ -27,14 +31,17 @@ const PRESETS = [
   { t: '白光单缝', ap: 'slit', p: { a: 0.15 }, lam: 550, white: true, z: 1200, R: 0, txt: '白光下各波长的条纹间距不同，中央亮纹为白色，两侧条纹带彩色（内紫外红）。' },
   { t: '直边衍射', ap: 'edge', p: {}, lam: 632.8, z: 500, R: 0, txt: '几何阴影边界处光强为入射光的 1/4，亮区一侧出现逐渐变密的条纹，最大值约 1.37 倍——菲涅耳积分（考纽螺线）的结果。' },
   { t: '矩孔衍射', ap: 'rect', p: { a: 0.5, b: 1 }, lam: 532, z: 3000, R: 0, txt: '远场图样沿两个方向分别是 sinc²，较窄的一边对应较宽的衍射图样。' },
+  { t: '光源宽度与条纹可见度', ap: 'double', p: { a: 0.08, d: 0.4 }, lam: 632.8, z: 1000, R: 500, srcW: 0.4, txt: '光源不是点而是宽 w 的狭缝时，各点产生的条纹彼此错开，叠加后对比度下降：双缝处的横向相干宽度为 λR/w，可见度 V = |sinc(πwd/λR)|。把 w 加大到 λR/d ≈ 0.79 mm，条纹完全消失；再加大又会出现对比度反转的弱条纹。' },
+  { t: '谱宽与相干长度', ap: 'double', p: { a: 0.05, d: 0.5 }, lam: 589.3, dl: 60, z: 1500, R: 0, txt: '光源有一定谱宽 Δλ 时，各波长的条纹间距不同，离中央越远错开越多：能看清的条纹级次约 λ/Δλ，对应的光程差就是相干长度 λ²/Δλ。把谱宽改成 0（激光）或 0.6 nm（钠灯 D 线量级）比较。' },
 ];
 
 export class WaveLab {
   constructor(root, { onExit }) {
     this.root = root; this.onExit = onExit;
-    this.s = { ap: 'circle', p: { ...APS.circle.p }, lam: 632.8, white: false, z: 790, R: 0, N: 512, gamma: 0.6, expo: 0, log: false };
+    this.s = { ap: 'circle', p: { ...APS.circle.p }, lam: 632.8, white: false, z: 790, R: 0, N: 512, gamma: 0.6, expo: 0, log: false, srcW: 0, dl: 0 };
     this.build();
-    this.load(0);
+    const sp = sceneParam();
+    if (sp) this.loadShared(sp); else this.load(0);
     this.keyH = () => {};
   }
 
@@ -46,7 +53,10 @@ export class WaveLab {
         <button class="btn" data-a="back" title="返回实验目录"><svg class="i" viewBox="0 0 16 16"><path d="M10 3 5 8l5 5"/></svg>目录</button>
         <div class="title"><b>衍射工作台</b><small>标量衍射数值计算 · 角谱法 / 菲涅耳变换</small></div>
         <span class="spacer"></span>
-        <div class="tb-group"><select data-a="preset"><option value="">典型现象…</option>${PRESETS.map((p, i) => `<option value="${i}">${p.t}</option>`).join('')}</select></div>
+        <div class="tb-group"><select data-a="preset"><option value="">典型现象…</option>${PRESETS.map((p, i) => `<option value="${i}">${p.t}</option>`).join('')}</select>
+          <span class="tb-sep"></span>
+          <button class="btn small" data-a="png" title="保存观察屏图样">存图</button>
+          <button class="btn small" data-a="share" title="生成包含全部参数的网址，发给别人打开就是同一个衍射装置">分享</button></div>
       </header>
       <div class="bench-main wave-main">
         <aside class="bpanel wctl"></aside>
@@ -61,11 +71,45 @@ export class WaveLab {
     this.page = page; this.cv = q('.wcv'); this.pc = q('.wpc'); this.ctl = q('.wctl'); this.info = q('.winfo'); this.scaleEl = q('.wscale');
     q('[data-a=back]').onclick = () => this.onExit && this.onExit();
     q('[data-a=preset]').onchange = (e) => { if (e.target.value !== '') this.load(+e.target.value); e.target.value = ''; };
+    q('[data-a=share]').onclick = () => this.share();
+    q('[data-a=png]').onclick = () => { const a = document.createElement('a'); a.download = '衍射图样.png'; a.href = this.cv.toDataURL('image/png'); a.click(); };
+  }
+
+  // ------------------------------------------------------------ 分享
+  /** 可分享的状态（不含显示网格大小以外的临时量） */
+  shareState() { const { ap, p, lam, white, z, R, N, gamma, expo, srcW, dl } = this.s; return { v: 1, s: { ap, p, lam, white, z, R, N, gamma, expo, srcW, dl }, t: this.presetTxt || '' }; }
+  shareCode() { return encodeObj(this.shareState()); }
+  async share() {
+    const url = `${location.href.split('#')[0]}#/wave?s=${await this.shareCode()}`;
+    let ok = false;
+    try { await navigator.clipboard.writeText(url); ok = true; } catch { /* 无剪贴板权限 */ }
+    if (ok) this.flash(`分享网址已复制（${url.length} 个字符）`); else window.prompt('复制下面的网址发给别人：', url);
+  }
+  async loadShared(code) {
+    const d = await decodeObj(code);
+    if (this.disposed) return;
+    const st = d && d.s;
+    if (!st || !APS[st.ap]) { this.load(0); this.flash('分享链接无法解析，已载入默认装置', 'warn'); return; }
+    const num = (v, lo, hi, def) => (isFinite(+v) ? Math.min(hi, Math.max(lo, +v)) : def);
+    Object.assign(this.s, {
+      ap: st.ap, p: { ...APS[st.ap].p, ...(st.p || {}) }, lam: num(st.lam, 380, 780, 632.8), white: !!st.white, z: num(st.z, 0.5, 1e5, 500), R: num(st.R, 0, 1e6, 0),
+      N: [256, 512, 1024].includes(+st.N) ? +st.N : 512, gamma: num(st.gamma, 0.1, 1, 0.6), expo: num(st.expo, -3, 3, 0), srcW: num(st.srcW, 0, 50, 0), dl: num(st.dl, 0, 200, 0),
+    });
+    this.presetTxt = typeof d.t === 'string' ? d.t : '';
+    this.renderCtl(); this.compute();
+    try { history.replaceState(null, '', location.href.replace(/#.*$/, '#/wave')); } catch { /* file:// 下个别浏览器不允许 */ }
+    this.flash('已载入分享的衍射装置');
+  }
+  flash(msg, kind = 'ok') {
+    let box = this.page.querySelector('.toasts');
+    if (!box) { box = h('div', 'toasts'); this.page.append(box); }
+    const t = h('div', 'toast ' + kind); t.textContent = msg; box.append(t);
+    setTimeout(() => t.remove(), 3600);
   }
 
   load(i) {
     const P = PRESETS[i];
-    Object.assign(this.s, { ap: P.ap, p: { ...APS[P.ap].p, ...P.p }, lam: P.lam, white: !!P.white, z: P.z, R: P.R, N: P.white ? 256 : 512 });
+    Object.assign(this.s, { ap: P.ap, p: { ...APS[P.ap].p, ...P.p }, lam: P.lam, white: !!P.white, z: P.z, R: P.R, N: P.white ? 256 : 512, srcW: P.srcW || 0, dl: P.dl || 0 });
     this.presetTxt = P.txt;
     this.renderCtl();
     this.compute();
@@ -90,6 +134,9 @@ export class WaveLab {
     if (!s.white) row('波长 λ', num(s.lam, 0.1, (v) => { s.lam = Math.min(780, Math.max(380, v)); this.compute(); }, 380), 'nm');
     row('点光源距离 R', num(s.R, 10, (v) => { s.R = v; this.compute(); }), 'mm').title = '0 表示平行光照明；有限值为点光源发出的球面波';
     box.append(h('div', 'bi-sub', 'R = 0 为平行光（激光扩束准直后）'));
+    row('光源宽度 w', num(s.srcW, 0.05, (v) => { s.srcW = v; this.compute(); }), 'mm').title = '0 为理想点光源。缝状衍射屏配缝状光源（与缝平行），其余配圆形光源（直径 w）';
+    box.append(h('div', 'bi-sub', `扩展光源各点互不相干，光强相加。${s.R > 0 ? '' : `R = 0 时光源放在焦距 ${F_COL} mm 的准直透镜焦面上。`}`));
+    if (!s.white) row('谱宽 Δλ', num(s.dl, 0.5, (v) => { s.dl = Math.min(200, v); this.compute(); }), 'nm').title = '光谱的半高全宽，按高斯线型取 7 个波长叠加；0 为单色光';
     sec('观察屏');
     const zr = h('input'); zr.type = 'range'; zr.min = 0; zr.max = 1000; zr.step = 1;
     const toR = (z) => (Math.log10(z) / 4) * 1000, fromR = (v) => Math.pow(10, (v / 1000) * 4);
@@ -122,26 +169,29 @@ export class WaveLab {
     const spread = Math.sqrt(lam * zEff);
     if (A.edge) return { L: Math.max(2, 24 * spread, Math.sqrt(N * lam * s.z) * 1.05), method: 'asm', Wp: 16 * spread };
     const E = A.extent(s.p), a = A.feat(s.p), mag = 1 + (s.R > 0 ? s.z / s.R : 0);
-    const Wp = Math.max(1.4 * E * mag, E * mag + 8 * spread, (10 * lam * s.z) / a);
+    const Wp = Math.max(1.4 * E * mag, E * mag + 8 * spread, (10 * lam * s.z) / a) + this.srcBlur();
     let L = Math.max(Wp, Math.sqrt(N * lam * s.z) * 1.02);
     if (A.opaque) L = Math.max(L, 5 * E);
     if (L / N <= a / 5) return { L, method: 'asm', Wp };
     return { L: Math.max(1.2 * E, (lam * s.z * N) / Wp), method: 'fresnel', Wp };
   }
 
-  field(lam, L) {
+  field(lam, L, withPhase = true) {
     const s = this.s, A = APS[s.ap], N = s.N;
     const F = W.begin(N, L, lam);
     if (A.edge) {
       // 直边：用宽度为窗口 0.42 倍的“半无限”透光区，两侧加缓变窗口，减小周期边界的影响
       const Lw = L * 0.42, tap = L * 0.06;
-      W.mask(F, (x) => (x < 0 ? 0 : x > Lw ? 0 : x > Lw - tap ? 0.5 + 0.5 * Math.cos((Math.PI * (x - Lw + tap)) / tap) : 1), 3);
+      W.maskX(F, (x) => (x < 0 ? 0 : x > Lw ? 0 : x > Lw - tap ? 0.5 + 0.5 * Math.cos((Math.PI * (x - Lw + tap)) / tap) : 1), 3);
     } else if (A.opaque) {
       // 圆屏：外面是平面波；照明区边缘用余弦缓变（模拟有限大的照明光斑），避免截断引起的人为条纹
-      const r0 = L * 0.42, tap = L * 0.07, R2 = (s.p.a / 2) ** 2;
-      W.mask(F, (x, y) => { const r2 = x * x + y * y; if (r2 <= R2) return 0; const r = Math.sqrt(r2); return r < r0 - tap ? 1 : r > r0 ? 0 : 0.5 + 0.5 * Math.cos((Math.PI * (r - r0 + tap)) / tap); }, 3);
-    } else W.mask(F, A.fn(s.p), 3);
-    if (s.R > 0) W.spherical(F, s.R);
+      const r0 = L * 0.42, tap = L * 0.07, Rd = s.p.a / 2;
+      W.maskRadial(F, (r) => (r <= Rd ? 0 : r < r0 - tap ? 1 : r > r0 ? 0 : 0.5 + 0.5 * Math.cos((Math.PI * (r - r0 + tap)) / tap)), Rd, 3);
+    } else if (A.oneD) W.maskX(F, A.fn(s.p), 3);
+    else if (s.ap === 'rect') W.maskSep(F, (x) => (Math.abs(x) <= s.p.a / 2 ? 1 : 0), (y) => (Math.abs(y) <= s.p.b / 2 ? 1 : 0), 3);
+    else if (s.ap === 'circle') W.maskRadial(F, (r) => (r <= s.p.a / 2 ? 1 : 0), s.p.a / 2, 3);
+    else W.mask(F, A.fn(s.p), 3);
+    if (withPhase && s.R > 0) W.spherical(F, s.R);
     return F;
   }
 
@@ -151,17 +201,30 @@ export class WaveLab {
   }
   _compute(fast) {
     const s = this.s, t0 = performance.now();
-    const lams = s.white ? WHITE : [s.lam];
-    const nSave = s.N;
-    if (fast && s.N > 256) s.N = 256; // 拖动滑块时先用粗网格
+    const spec = s.white ? WHITE.map((nm) => ({ nm, w: 1 / WHITE.length })) : W.spectrumSamples(s.lam, s.dl, 7);
+    const lams = spec.map((o) => o.nm);
+    const nSave = s.N, gpu = GW.ok(s.N);
+    if (fast && s.N > (gpu ? 512 : 256)) s.N = gpu ? 512 : 256; // 拖动滑块时先用粗网格
     const lamRef = s.white ? 550 : s.lam;
     const g = this.grid(lamRef * 1e-6);
     const res = [];
-    for (const nm of lams) {
+    const bw = this.srcBlur(), A = APS[s.ap];
+    // GPU：透过率与波长无关，只算一次；各波长的相位、FFT 与光强在显卡上完成
+    let mask = gpu ? Float32Array.from(this.field(lamRef * 1e-6, g.L, false).re) : null;
+    this.engine = 'CPU';
+    for (const { nm, w } of spec) {
       const lam = nm * 1e-6;
-      const F = this.field(lam, g.L);
-      const out = g.method === 'asm' ? W.angularSpectrum(F, s.z) : W.fresnelFar(F, s.z);
-      res.push({ nm, I: W.intensity(out), size: out.size });
+      let I = null, size = g.method === 'asm' ? g.L : (lam * s.z * s.N) / g.L;
+      if (mask) {
+        try { I = GW.run({ mask, N: s.N, L: g.L, lam, R: s.R, z: s.z, method: g.method }); this.engine = 'GPU'; } catch (err) { console.warn('GPU 衍射计算失败，改用 CPU：', err.message); GW.verified = false; mask = null; }
+      }
+      if (!I) {
+        const out = g.method === 'asm' ? W.angularSpectrum(this.field(lam, g.L), s.z) : W.fresnelFar(this.field(lam, g.L), s.z);
+        I = W.intensity(out); size = out.size;
+      }
+      // 扩展光源：与光源在观察屏上的投影像卷积（缝状衍射屏用平行于缝的线光源）
+      if (bw > 0) { const px = bw / (size / s.N); I = A.oneD || A.edge ? W.blurLine(I, s.N, px) : W.blurDisk(I, s.N, px / 2); }
+      res.push({ nm, w, I, size });
     }
     const size = res[Math.floor(res.length / 2)].size;
     // 显示窗口：只显示图样所在的中央区域（计算窗口往往更大，以满足采样条件）
@@ -181,7 +244,7 @@ export class WaveLab {
     const X = new Float64Array(N * N), Y = new Float64Array(N * N), Z = new Float64Array(N * N);
     const dxD = o.size / N;
     for (const r of o.res) {
-      const c = cmf(r.nm), k = r.size / N, w = 1 / o.res.length; // k：该波长输出网格的像素尺寸
+      const c = cmf(r.nm), k = r.size / N, w = r.w; // k：该波长输出网格的像素尺寸；w：光谱权重
       for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
         const u = ((j - N / 2) * dxD) / k + N / 2, v = ((i - N / 2) * dxD) / k + N / 2;
         const j0 = Math.floor(u), i0 = Math.floor(v);
@@ -229,7 +292,7 @@ export class WaveLab {
         const u = (j - N / 2) / k + N / 2, j0 = Math.floor(u);
         if (j0 < 0 || j0 >= N - 1) continue;
         const b = (N / 2) * N + j0, fu = u - j0;
-        prof[j] += (r.I[b] * (1 - fu) + r.I[b + 1] * fu) / o.res.length;
+        prof[j] += (r.I[b] * (1 - fu) + r.I[b + 1] * fu) * r.w;
       }
     }
     let mx = 0; for (const v of prof) mx = Math.max(mx, v);
@@ -245,9 +308,10 @@ export class WaveLab {
     g.strokeStyle = col; g.lineWidth = 1.6; g.beginPath();
     for (let j = 0; j < N; j++) (j ? g.lineTo(x(j), y(prof[j])) : g.moveTo(x(j), y(prof[j])));
     g.stroke();
-    // 夫琅禾费理论（单色、平行光、N_F < 0.3 时叠加）
-    const lam = s.lam * 1e-6, NF = this.NF();
-    if (!s.white && NF < 0.3 && !A.edge && !A.opaque) {
+    this.prof = prof;
+    // 夫琅禾费理论（单色、N_F < 0.3 时叠加；扩展光源时双缝按可见度 V 修正）
+    const lam = s.lam * 1e-6, NF = this.NF(), V = this.visTheory();
+    if (!s.white && !(s.dl > 0) && NF < 0.3 && !A.edge && !A.opaque && (s.srcW === 0 || V != null)) {
       const I0 = prof[N / 2];
       const th = (xx) => {
         const fx = xx / (lam * s.z);
@@ -255,17 +319,39 @@ export class WaveLab {
           case 'circle': { const v = Math.PI * s.p.a * Math.abs(fx); const j1 = besselJ1(v); return v < 1e-9 ? 1 : (2 * j1 / v) ** 2; }
           case 'slit': return sinc(Math.PI * s.p.a * fx) ** 2;
           case 'rect': return sinc(Math.PI * s.p.a * fx) ** 2;
-          case 'double': return sinc(Math.PI * s.p.a * fx) ** 2 * Math.cos(Math.PI * s.p.d * fx) ** 2;
+          case 'double': return sinc(Math.PI * s.p.a * fx) ** 2 * (1 + (V ?? 1) * Math.cos(2 * Math.PI * s.p.d * fx)) / 2;
           case 'grating': { const b = Math.PI * s.p.d * fx, n = s.p.n; const m = Math.abs(Math.sin(b)) < 1e-9 ? 1 : (Math.sin(n * b) / (n * Math.sin(b))) ** 2; return sinc(Math.PI * s.p.a * fx) ** 2 * m; }
           default: return 0;
         }
       };
       g.strokeStyle = 'rgba(242,193,78,.9)'; g.setLineDash([4, 3]); g.lineWidth = 1; g.beginPath();
-      for (let j = 0; j < N; j++) { const xx = (j - N / 2) * (o.size / N), v = I0 * th(xx); (j ? g.lineTo(x(j), y(v)) : g.moveTo(x(j), y(v))); }
+      const t0 = th(0) || 1;
+      for (let j = 0; j < N; j++) { const xx = (j - N / 2) * (o.size / N), v = (I0 * th(xx)) / t0; (j ? g.lineTo(x(j), y(v)) : g.moveTo(x(j), y(v))); }
       g.stroke(); g.setLineDash([]);
       g.fillStyle = 'rgba(242,193,78,.9)'; g.fillText('--- 夫琅禾费理论', Wd - 140, 14);
     }
     g.fillStyle = col; g.fillText('— 数值计算 I/I₀', Wd - 290, 14);
+  }
+
+  /** 扩展光源在观察屏上的投影宽度（mm） */
+  srcBlur() { const s = this.s; return s.srcW > 0 ? (s.srcW * s.z) / (s.R > 0 ? s.R : F_COL) : 0; }
+  /** 光源张角（rad）与双缝处的横向相干宽度 */
+  srcAngle() { const s = this.s; return s.srcW / (s.R > 0 ? s.R : F_COL); }
+  /** 双缝条纹可见度的理论值（缝状光源、单色）：V = sinc(π d θ_s / λ)，可为负（对比度反转） */
+  visTheory() {
+    const s = this.s;
+    if (s.ap !== 'double' || s.white) return null;
+    return sinc((Math.PI * s.p.d * this.srcAngle()) / (s.lam * 1e-6));
+  }
+  /** 从中央水平线的光强测条纹可见度：中央 ±0.6 个条纹间距内的 (max − min)/(max + min) */
+  visMeasured() {
+    const s = this.s, o = this.out, prof = this.prof;
+    if (s.ap !== 'double' || !prof) return null;
+    const N = o.N, px = o.size / N, P = (s.lam * 1e-6 * s.z) / s.p.d; // 远场杨氏条纹间距 λz/d（与 R 无关）
+    const k = Math.max(2, Math.round((0.6 * P) / px)); // ±0.6 个条纹：含中央极大和两侧极小，单缝包络的影响小
+    let mx = 0, mn = Infinity;
+    for (let j = N / 2 - k; j <= N / 2 + k; j++) { if (j < 0 || j >= N) continue; mx = Math.max(mx, prof[j]); mn = Math.min(mn, prof[j]); }
+    return mx > 0 ? (mx - mn) / (mx + mn) : null;
   }
 
   NF() {
@@ -287,6 +373,13 @@ export class WaveLab {
     }
     if (s.ap === 'slit' || s.ap === 'rect') extra += `<tr><td>中央亮纹半宽 λz/a</td><td>${fmt((lam * s.z) / s.p.a)} mm</td></tr>`;
     if (s.ap === 'double' || s.ap === 'grating') extra += `<tr><td>条纹间距 λz/d</td><td>${fmt((lam * s.z) / s.p.d)} mm</td></tr><tr><td>缺级</td><td>${Number.isInteger(+(s.p.d / s.p.a).toFixed(6)) ? `${(s.p.d / s.p.a).toFixed(0)} 的整数倍级` : '无'}</td></tr>`;
+    if (s.srcW > 0) {
+      const th = this.srcAngle(), lc = (lam / th);
+      extra += `<tr><td>光源张角 θ<sub>s</sub></td><td>${fmt(th * 1000)} mrad</td></tr><tr><td>横向相干宽度 λ/θ<sub>s</sub></td><td>${fmt(lc)} mm</td></tr>`;
+    }
+    if (s.dl > 0 && !s.white) extra += `<tr><td>相干长度 λ²/Δλ</td><td>${fmt((s.lam * s.lam) / s.dl / 1e6)} mm</td></tr><tr><td>可见条纹级次 ≈ λ/Δλ</td><td>${fmt(s.lam / s.dl)}</td></tr>`;
+    const Vt = this.visTheory(), Vm = this.visMeasured();
+    if (Vt != null && (s.srcW > 0 || s.dl > 0)) extra += `<tr><td>中央条纹可见度（计算）</td><td>${Vm == null ? '—' : Vm.toFixed(3)}</td></tr>${s.dl > 0 ? '' : `<tr><td>可见度理论 |sinc(πdθ<sub>s</sub>/λ)|</td><td>${Math.abs(Vt).toFixed(3)}${Vt < 0 ? '（反转）' : ''}</td></tr>`}`;
     this.info.innerHTML = `
       <div class="bi-h">${A.label}</div>
       <p class="bi-empty" style="color:var(--ink-2)">${this.presetTxt || A.note}</p>
@@ -297,14 +390,14 @@ export class WaveLab {
         <tr><td>算法</td><td style="font-family:var(--sans)">${o.method === 'asm' ? '带限角谱法' : '单次 FFT 菲涅耳变换'}</td></tr>
         <tr><td>计算网格</td><td>${o.N}² · ${fmt(o.L)} mm</td></tr>
         <tr><td>显示范围</td><td>${fmt(o.size)} mm</td></tr>
-        <tr><td>计算耗时</td><td>${this.ms.toFixed(0)} ms</td></tr>
+        <tr><td>计算耗时</td><td>${this.ms.toFixed(0)} ms · ${this.engine === 'GPU' ? 'GPU' : 'CPU'}</td></tr>
       </table>
       <div class="bi-h2">说明</div>
       <p class="bi-empty">菲涅耳数 N<sub>F</sub> = ρ²/λ·(1/z + 1/R)，ρ 为孔径半宽。N<sub>F</sub> ≫ 1 时屏上基本是孔的几何投影，N<sub>F</sub> ≪ 1 时为夫琅禾费衍射。曲线是屏幕中央水平线上的光强，以入射光强 I₀ 为单位；N<sub>F</sub> &lt; 0.3 时虚线给出夫琅禾费公式作对照。</p>
-      <p class="bi-empty">计算方法：网格上的复振幅经 FFT 做角谱传播（近场），或乘二次相位后做一次 FFT（远场）。不做傍轴近似之外的简化，因此近场的边缘条纹、泊松亮斑都能直接算出。</p>`;
+      <p class="bi-empty">计算方法：网格上的复振幅经 FFT 做角谱传播（近场），或乘二次相位后做一次 FFT（远场）。不做傍轴近似之外的简化，因此近场的边缘条纹、泊松亮斑都能直接算出。${this.engine === 'GPU' ? `FFT 在显卡上用单精度浮点计算（${esc(GW.renderer)}），启动时已与 CPU 双精度结果对比自检。` : ''}</p>`;
   }
 
-  dispose() { clearTimeout(this.tm); this.root.innerHTML = ''; }
+  dispose() { this.disposed = true; clearTimeout(this.tm); this.root.innerHTML = ''; }
 }
 
 function besselJ1(x) {

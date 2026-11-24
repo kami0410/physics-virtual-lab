@@ -42,6 +42,16 @@ export class YoungExperiment {
 
   // ---------------- 几何量 ----------------
   P(k) { const c = this.app.comp(k); return c.placed ? c.pos * 10 : null; }
+
+  /** 当前装置 → 衍射工作台（缝宽、缝距、单缝宽度与距离都带过去，看光源宽度对条纹可见度的影响）。待测双缝要做完实验才公开 */
+  toWave({ done }) {
+    if (!done && this.plate === 'B') return false;
+    if (this.R == null || this.D == null) return null;
+    return {
+      v: 1, s: { ap: 'double', p: { a: this.a, d: +this.d.toFixed(4) }, lam: 589.3, white: false, z: Math.round(this.D), R: Math.round(this.R), N: 512, gamma: 0.6, expo: 0, srcW: this.w, dl: 0 },
+      t: `来自“杨氏双缝干涉”：单缝宽 ${this.w.toFixed(2)} mm、距双缝 ${(this.R / 10).toFixed(1)} cm，双缝 a = ${this.a} mm、d = ${this.d.toFixed(3)} mm，观察距离 ${(this.D / 10).toFixed(1)} cm。改变“光源宽度”（即单缝宽度），看条纹可见度按 |sinc(πwd/λR)| 变化；单缝宽度超过 λR/d 时条纹消失。`,
+    };
+  }
   get R() { const s = this.P('slit'), b = this.P('ds'); return s != null && b != null && b > s ? b - s : null; }
   get D() { const b = this.P('ds'), e = this.P('eye'); return b != null && e != null && e > b ? e - b : null; }
   get d() { return this.plate === 'A' ? this.dA : this.dB; }

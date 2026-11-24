@@ -49,6 +49,13 @@ export class App {
     { const qs = this.page.querySelector('[data-a=quality]'); qs.value = this.quality.mode; this.onQuality = (qq) => { qs.options[0].textContent = qq.mode === 'auto' ? `画质 自动·${qq.cfg.name}` : '画质 自动'; qs.title = `画质：自动根据设备性能调节观察窗分辨率和三维像素比
 干涉/衍射图样计算：${GPU.ok ? 'GPU（' + GPU.renderer + '）' : 'CPU'}`; }; this.onQuality(this.quality); }
     this.exp = new ExpClass(this);
+    if (this.exp.toBench || this.exp.toWave) {
+      const tb = this.page.querySelector('[data-a=tobench]');
+      if (tb) {
+        tb.hidden = false; tb.onclick = () => this.openInBench();
+        if (this.exp.toWave) { tb.querySelector('.lb').textContent = '衍射台'; tb.title = '在新标签页的衍射工作台中打开当前装置：可改缝宽、光源宽度、谱宽和观察距离，看衍射图样如何变化'; }
+      }
+    }
     // 光具座实验：等高共轴调节（“自己摆”模式下元件有高度、横向和转角偏差）
     const cs = this.exp.coaxSpec && this.exp.coaxSpec();
     this.coax = cs ? new Coax(this, cs) : null;
@@ -104,6 +111,7 @@ export class App {
         </div>
         <div class="tb-sep"></div>
         <div class="tb-group">
+          <button class="btn" data-a="tobench" title="在新标签页的光路设计台中打开当前光路：可自由改参数、换玻璃、看像差" hidden>${I.rays}<span class="lb">光路台</span></button>
           <button class="btn" data-a="analyze" title="数据处理">${I.chart}<span class="lb">数据处理</span></button>
           <button class="btn" data-a="report" title="实验报告">${I.doc}<span class="lb">实验报告</span></button>
           <button class="btn" data-a="reset" title="重新开始（随机生成新的待测样品参数）">${I.reset}<span class="lb">重做</span></button>
@@ -205,6 +213,17 @@ export class App {
       b.onclick = () => { t.onClick(); if (t.get) b.classList.toggle('active', !!t.get()); this.changed(); };
       this.vtools.append(b);
     }
+  }
+
+  /** 把实验当前的光路交给光路设计台或衍射工作台（新标签页，不打断本实验） */
+  async openInBench() {
+    const done = this.stepDone.every(Boolean), wave = !!this.exp.toWave;
+    const scene = wave ? this.exp.toWave({ done }) : this.exp.toBench({ done });
+    if (!scene || (!wave && !scene.els.length)) { this.toast(scene === false ? '完成全部步骤后才能在衍射工作台中打开（待测参数在那里是公开的）' : '先在光具座上摆好器材，再打开', 'warn'); return; }
+    const { encodeScene, encodeObj } = await import('../bench/share.js');
+    const url = `${location.href.split('#')[0]}#/${wave ? 'wave' : 'bench'}?s=${wave ? await encodeObj(scene) : await encodeScene(scene)}`;
+    const w = window.open(url, '_blank');
+    if (!w) location.hash = url.slice(url.indexOf('#')); // 弹窗被拦截时在本页打开
   }
 
   // ============================ 视图窗口 ============================

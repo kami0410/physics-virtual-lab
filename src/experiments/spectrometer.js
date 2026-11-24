@@ -46,6 +46,20 @@ export class SpectrometerExperiment {
   // ---------- 状态 ----------
   get onPlat() { const z = this.app.zones.find((z) => z.id === 'plat'); return z && z.occupant ? z.occupant.key : null; }
   /** 当前台上元件的(前表面)法线方位与仰角 (°, ′) */
+  /** 当前光栅 → 光路设计台：汞灯四条谱线的平行光经光栅衍射，望远镜物镜（f = 170 mm）把一级谱线会聚到焦面上。光栅常数是待测量，做完实验才公开 */
+  toBench({ done }) {
+    const lines = [435.83, 546.07, 576.96, 579.07], els = [];
+    for (const nm of lines) els.push({ type: 'beam', x: -70, y: 0, rot: 0, lam: nm, w: 6, n: 4 });
+    els.push({ type: 'grating', x: 0, y: 0, rot: 0, L: 30, lpm: +this.lines.toFixed(3), duty: 0.3, maxOrder: 2, eff: 0.8, secret: !done });
+    const th = Math.asin(546.07e-6 * this.lines), c = Math.cos(th), s = Math.sin(th), f = 170, l = 70;
+    els.push({ type: 'ideal', x: l * c, y: l * s, rot: (th * 180) / Math.PI, f, D: 40 });
+    els.push({ type: 'detector', x: (l + f) * c, y: (l + f) * s, rot: (th * 180) / Math.PI, L: 40 });
+    return {
+      els, opts: { partial: false, images: false },
+      note: `来自“分光计调节与光栅衍射”：汞灯平行光正入射光栅，各谱线按 d·sinθ = kλ 分开。望远镜物镜放在绿线一级方向上，焦面探测器上能分辨出黄双线 576.96 / 579.07 nm。把光栅刻线密度加倍，看谱线怎样散开、二级谱怎样移出视场。`,
+    };
+  }
+
   face() {
     const k = this.onPlat;
     if (!k) return null;

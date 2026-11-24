@@ -39,6 +39,29 @@ export class ScopeExperiment {
 
   // ---------------- 光学系统 ----------------
   P(k) { const c = this.app.comp(k); return c.placed ? c.pos * 10 : null; }
+
+  /**
+   * 导轨上的当前光路 → 光路设计台场景（mm）。透镜按理想薄透镜处理（与本实验的计算模型一致），
+   * 显微镜取微尺上的轴上点与离轴点，望远镜用来自远处标尺的平行光（轴上与斜 1°）。眼瞳用 3 mm 光阑表示。
+   */
+  toBench({ done }) {
+    const ks = Object.keys(LENSES).filter((k) => this.P(k) != null).sort((a, b) => this.P(a) - this.P(b));
+    if (!ks.length) return null;
+    const x0 = this.P(ks[0]), X = (p) => p - x0, first = LENSES[ks[0]];
+    const els = ks.map((k) => ({ type: 'ideal', x: X(this.P(k)), y: 0, f: this.f[k], D: LENSES[k].a * 2, secret: !done })); // 焦距不取整：目镜靠近焦点时，0.01 mm 的焦距误差会让虚像位置差几个百分点
+    const xm = this.P('micro'), xe = this.P('eye');
+    let note;
+    if (xm != null && xm < x0) {
+      const d = x0 - xm;
+      for (const y of [0, 0.5]) els.push({ type: 'point', x: X(xm), y, rot: (Math.atan2(-y, d) * 180) / Math.PI, cone: +((2.2 * Math.atan(first.a / d) * 180) / Math.PI).toFixed(2), n: 21, lam: 550 });
+      note = '来自“自组望远镜和显微镜”（显微镜）：微尺上取轴上点和离轴 0.5 mm 的点。物镜成放大实像，目镜再把它变成虚像；打开“延长线”可看到最终虚像的位置。';
+    } else {
+      for (const a of [0, 1]) els.push({ type: 'beam', x: -60, y: -60 * Math.tan((a * Math.PI) / 180), rot: a, w: first.a * 1.8, n: 13, lam: 550 });
+      note = '来自“自组望远镜和显微镜”（望远镜）：远处标尺发出的光近似平行，取轴上与斜 1° 两束。物镜在后焦面成实像，目镜焦点与它重合时出射光仍平行（无焦系统）；出射光束的倾角与入射倾角之比即视角放大率，光束最窄处是出瞳。';
+    }
+    if (xe != null && xe > x0) els.push({ type: 'aperture', x: X(xe), y: 0, L: 30, gap: PUPIL });
+    return { els, note, opts: { partial: false, images: true, ext: true } };
+  }
   /** 当前物体和眼睛之间的透镜（按位置排序） */
   system() {
     const xe = this.P('eye');

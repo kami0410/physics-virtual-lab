@@ -43,6 +43,37 @@ export function mask(F, t, ss = 3) {
   return F;
 }
 
+// mask() 的快速等价形式（结果与 mask() 逐点相同）：
+/** 只随 x 变化的透过率 t(x)（缝、光栅、直边）：算一行再复制 */
+export function maskX(F, t, ss = 3) {
+  const N = F.N, dx = F.dx, row = new Float64Array(N);
+  for (let j = 0; j < N; j++) { const x = F.coord(j); let a = 0; for (let u = 0; u < ss; u++) for (let v = 0; v < ss; v++) a += t(x + ((u + 0.5) / ss - 0.5) * dx); row[j] = a / (ss * ss); }
+  for (let i = 0; i < N; i++) for (let j = 0, k = i * N; j < N; j++, k++) { F.re[k] *= row[j]; F.im[k] *= row[j]; }
+  return F;
+}
+/** 可分离的透过率 tx(x)·ty(y)（矩孔）：子像素平均也可分离 */
+export function maskSep(F, tx, ty, ss = 3) {
+  const N = F.N, dx = F.dx, px = new Float64Array(N), py = new Float64Array(N);
+  for (let j = 0; j < N; j++) { const x = F.coord(j); let a = 0, b = 0; for (let u = 0; u < ss; u++) { const d = ((u + 0.5) / ss - 0.5) * dx; a += tx(x + d); b += ty(x + d); } px[j] = a / ss; py[j] = b / ss; }
+  for (let i = 0; i < N; i++) for (let j = 0, k = i * N; j < N; j++, k++) { const m = py[i] * px[j]; F.re[k] *= m; F.im[k] *= m; }
+  return F;
+}
+/** 只在半径 rEdge 附近不连续的旋转对称透过率 t(r)（圆孔、圆屏）：离边缘超过一个像素的点只取中心值 */
+export function maskRadial(F, t, rEdge, ss = 3) {
+  const N = F.N, dx = F.dx;
+  for (let i = 0; i < N; i++) {
+    const y = F.coord(i);
+    for (let j = 0; j < N; j++) {
+      const x = F.coord(j), r = Math.hypot(x, y);
+      let a;
+      if (Math.abs(r - rEdge) > dx) a = t(r);
+      else { a = 0; for (let u = 0; u < ss; u++) for (let v = 0; v < ss; v++) a += t(Math.hypot(x + ((u + 0.5) / ss - 0.5) * dx, y + ((v + 0.5) / ss - 0.5) * dx)); a /= ss * ss; }
+      const k = i * N + j; F.re[k] *= a; F.im[k] *= a;
+    }
+  }
+  return F;
+}
+
 // 常用光阑（与 LightPipes 同名的含义）
 export const circAperture = (F, R, x0 = 0, y0 = 0) => mask(F, (x, y) => ((x - x0) ** 2 + (y - y0) ** 2 <= R * R ? 1 : 0));
 export const circScreen = (F, R, x0 = 0, y0 = 0) => mask(F, (x, y) => ((x - x0) ** 2 + (y - y0) ** 2 <= R * R ? 0 : 1));
@@ -125,4 +156,62 @@ export function intensity(F) {
   const I = new Float64Array(F.N * F.N);
   for (let k = 0; k < I.length; k++) I[k] = F.re[k] * F.re[k] + F.im[k] * F.im[k];
   return I;
+}
+
+// ---------------------------------------------------------------- 部分相干
+// 扩展的非相干光源：傍轴菲涅耳衍射中，横移 xₛ 的点光源（距离 R）产生的光强图样，恰好是轴上点光源图样平移 xₛ·z/R。
+// 所以整个光源的图样 = 轴上点光源的图样 与 “光源经孔径中心投影到观察屏上的像” 的卷积（各点非相干、光强相加）。
+
+/** 光强图样与宽度 w（像素）的线光源（沿 x 的均匀条）卷积：用前缀和，O(N²) */
+export function blurLine(I, N, w) {
+  if (!(w > 0.5)) return I;
+  const out = new Float64Array(N * N), half = w / 2, row = new Float64Array(N + 1);
+  for (let i = 0; i < N; i++) {
+    const b = i * N;
+    for (let j = 0; j < N; j++) row[j + 1] = row[j] + I[b + j];
+    for (let j = 0; j < N; j++) {
+      // 以像素 j 的中心为中点、宽 w 的区间，两端按小数部分线性取值
+      const lo = Math.max(0, j + 0.5 - half), hi = Math.min(N, j + 0.5 + half);
+      const l0 = Math.floor(lo), h0 = Math.floor(hi);
+      let s = row[h0] - row[l0];
+      if (h0 < N) s += (hi - h0) * I[b + h0];
+      s -= (lo - l0) * I[b + l0];
+      out[b + j] = s / (hi - lo);
+    }
+  }
+  return out;
+}
+
+/** 光强图样与半径 r（像素）的均匀圆盘卷积（圆形光源）：FFT 卷积 */
+export function blurDisk(I, N, r) {
+  if (!(r > 0.5)) return I;
+  const re = Float64Array.from(I), im = new Float64Array(N * N);
+  const kr = new Float64Array(N * N), ki = new Float64Array(N * N);
+  let sum = 0;
+  const R = Math.ceil(r + 1);
+  for (let y = -R; y <= R; y++) for (let x = -R; x <= R; x++) {
+    // 边缘像素按覆盖面积近似（距离在 r ± 0.5 之间线性过渡）
+    const w = Math.min(1, Math.max(0, r + 0.5 - Math.hypot(x, y)));
+    if (!w) continue;
+    kr[((y + N) % N) * N + ((x + N) % N)] += w; sum += w;
+  }
+  for (let k = 0; k < N * N; k++) kr[k] /= sum;
+  fft2(re, im, N, false); fft2(kr, ki, N, false);
+  for (let k = 0; k < N * N; k++) { const a = re[k], b = im[k]; re[k] = a * kr[k] - b * ki[k]; im[k] = a * ki[k] + b * kr[k]; }
+  fft2(re, im, N, true);
+  for (let k = 0; k < N * N; k++) re[k] = Math.max(0, re[k]);
+  return re;
+}
+
+/** 高斯谱线：中心 lam（nm），半高全宽 fwhm（nm），取 n 个波长及其权重（权重和为 1） */
+export function spectrumSamples(lam, fwhm, n = 7) {
+  if (!(fwhm > 0)) return [{ nm: lam, w: 1 }];
+  const sig = fwhm / 2.3548, out = [];
+  let s = 0;
+  for (let i = 0; i < n; i++) {
+    const t = -2 + (4 * i) / (n - 1), w = Math.exp(-0.5 * t * t);
+    out.push({ nm: lam + t * sig, w }); s += w;
+  }
+  for (const o of out) o.w /= s;
+  return out;
 }

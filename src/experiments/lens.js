@@ -141,6 +141,37 @@ export class LensExperiment {
   // ---------- 物理核心 ----------
   pos(key) { const c = this.app.comp(key); return c.placed ? c.pos : null; }
 
+  /**
+   * 光具座上的当前光路 → 光路设计台场景（mm，透镜光心在原点）。
+   * 物屏上取轴上点和离轴 10 mm 的点，白光；透镜用真实的 R、厚度与 K9 玻璃，透镜升降偏差也带过去。
+   * 实验未完成时透镜标为“待测”，光路台不显示其参数。
+   */
+  toBench({ done }) {
+    const xL = this.pos('lens');
+    if (xL == null) return null;
+    const X = (p) => (p - xL) * 10, els = [];
+    const ly = this.lensOff.y * 10;
+    const xo = this.pos('object');
+    if (xo != null && xo < xL) {
+      for (const y of [0, 10]) {
+        const dx = X(xL) - X(xo), aim = Math.atan2(ly - y, dx);
+        const cone = 2.2 * Math.atan((this.stopD * 5 + Math.abs(ly - y) * 0.2) / dx) * (180 / Math.PI);
+        els.push({ type: 'point', x: X(xo), y, rot: (aim * 180) / Math.PI, cone: +cone.toFixed(2), n: 15, white: true });
+      }
+    }
+    if (this.stopD < D_LENS) els.push({ type: 'aperture', x: -4, y: ly, L: D_LENS * 10 + 10, gap: this.stopD * 10 });
+    els.push({ type: 'lens', x: 0, y: ly, R1: +(this.lens.R * 10).toFixed(3), R2: -(this.lens.R * 10).toFixed(3), d: this.lens.t * 10, D: D_LENS * 10, mat: 'K9', secret: !done });
+    const xs = this.pos('screen');
+    if (xs != null && xs > xL) els.push({ type: 'detector', x: X(xs), y: 0, L: 60 });
+    const xm = this.pos('mirror');
+    if (xm != null && xm > xL) els.push({ type: 'mirror', x: X(xm), y: 0, rot: (this.mirrorTilt * 180) / Math.PI, L: 60 });
+    const head = `来自“薄透镜焦距的测定”：物屏上取轴上点和离轴 10 mm 的点（白光），透镜为 K9 双凸透镜${this.stopD < D_LENS ? `，前加 Φ${this.stopD * 10} mm 光阑` : ''}。`;
+    const note = xm != null && xm > xL
+      ? head + '自准直法：物点在焦平面上时，光经透镜变成平行光，被平面镜反射后又会聚回物屏附近，成等大倒立的实像；平面镜稍有倾斜，像就偏到物旁。离轴的光线还能看到像散和场曲造成的像面前移。'
+      : head + '拖动光屏找最清晰的像，打开“像点”可看到不同颜色的像点位置不同（色差）；把光阑改小，球差弥散随之减小。';
+    return { els, note, opts: { partial: false, images: true, ext: false } };
+  }
+
   /** 当前成像状态：屏上像的放大率、模糊斑半径、中心偏移 */
   imaging(xs = this.pos('screen'), xL = this.pos('lens')) {
     const xo = this.pos('object');

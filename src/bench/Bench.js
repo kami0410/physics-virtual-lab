@@ -1,12 +1,14 @@
 // 光路设计台：在光学平台上自由摆放光源、透镜、反射镜、棱镜、光栅、光屏，实时追迹光线。
 // 物理计算见 physics/rays2d.js（二维非顺序追迹）与 physics/lensTrace.js（透镜的傍轴参数与赛德尔像差）。
-import { traceScene, irradiance, inside, hitGeom, v2 } from '../physics/rays2d.js';
+import { traceScene, irradiance, inside, hitGeom, v2, polState } from '../physics/rays2d.js';
 import { TYPES, GROUPS, makeElement, compile, WHITE } from './elements.js';
 import { PRESETS } from './presets.js';
+import { encodeScene, decodeScene, sceneParam } from './share.js';
 import { wavelengthToRGB } from '../physics/color.js';
 import { index, abbe, GLASS_NAMES, glassData, COMMON, ALIASES, typeCN } from '../physics/glassdb.js';
 import { CATALOGUE } from '../physics/glasscat.js';
 import { paraxial, seidel, LENSES } from '../physics/lensTrace.js';
+import { qualityPanel } from './quality.js';
 
 const D2R = Math.PI / 180, R2D = 180 / Math.PI;
 const STORE = 'bench-scene-v1';
@@ -30,6 +32,7 @@ const ICON = {
   splitter: '<path d="M6 18L18 6"/><path d="M3 12h18M12 3v9"/>',
   prism: '<path d="M12 4l8 15H4z"/>',
   block: '<rect x="8" y="3" width="8" height="18"/>',
+  biprism: '<path d="M8 3v18h4l4-9-4-9z"/>',
   semicircle: '<path d="M8 3v18a9 9 0 0 0 0-18z"/>',
   circle: '<circle cx="12" cy="12" r="8"/>',
   tank: '<rect x="3" y="6" width="18" height="12"/><path d="M3 10c3-1.5 6 1.5 9 0s6 1.5 9 0"/>',
@@ -37,6 +40,11 @@ const ICON = {
   blocker: '<path d="M12 3v18" stroke-width="4"/>',
   aperture: '<path d="M12 3v6M12 15v6" stroke-width="3"/>',
   detector: '<rect x="10" y="3" width="4" height="18"/><path d="M6 8h4M6 12h4M6 16h4"/>',
+  polarizer: '<rect x="10" y="3" width="4" height="18"/><path d="M12 6v12"/><path d="M4 12h4M16 12h4"/>',
+  waveplate: '<rect x="9" y="3" width="6" height="18"/><path d="M9 8l6-3M9 13l6-3M9 18l6-3"/>',
+  pbs: '<rect x="5" y="5" width="14" height="14"/><path d="M5 19L19 5"/>',
+  calcite: '<path d="M5 18l4-12h10l-4 12z"/><path d="M8 12h11" stroke-dasharray="2 2"/>',
+  rhomb: '<path d="M3 17l5-10h13l-5 10z"/>',
 };
 const svgI = (k) => `<svg class="i" viewBox="0 0 24 24">${ICON[k] || ''}</svg>`;
 
@@ -44,11 +52,12 @@ export class Bench {
   constructor(root, { onExit }) {
     this.root = root; this.onExit = onExit;
     this.els = []; this.sel = null;
-    this.opts = { partial: true, images: true, ext: true, vobj: false, density: 1, mono: false };
+    this.opts = { partial: true, images: true, ext: true, vobj: false, density: 1, mono: false, pol: false };
     this.view = { cx: 0, cy: 0, s: 2 }; // s：像素/mm（CSS 像素）
     this.measure = null; this.tool = null;
     this.buildDOM();
-    this.load();
+    const sp = sceneParam();
+    if (sp) this.loadShared(sp); else this.load();
     this.resize();
     this.ro = new ResizeObserver(() => this.resize()); this.ro.observe(this.cv.parentElement);
     this.keyH = (e) => this.onKey(e); window.addEventListener('keydown', this.keyH);
@@ -70,12 +79,14 @@ export class Bench {
           <button class="btn small" data-t="partial" title="界面上按菲涅耳公式计算部分反射">部分反射</button>
           <button class="btn small" data-t="images" title="标出相邻光线会聚的像点">像点</button>
           <button class="btn small" data-t="ext" title="虚像的反向延长线">延长线</button>
+          <button class="btn small" data-t="pol" title="在光线上标出偏振：圆点 = 垂直纸面振动（s），短线 = 纸面内振动（p），小圆圈 = 圆偏振成分">偏振</button>
           <label class="tb-range" title="光线密度倍数">密度<input type="range" data-a="density" min="0.25" max="4" step="0.25" value="1"></label>
           <span class="tb-sep"></span>
           <button class="btn small" data-a="ruler" title="量尺：在平台上拖动测距离与角度">量尺</button>
           <button class="btn small" data-a="fit" title="缩放到全部元件">全景</button>
           <button class="btn small" data-a="clear" title="清空平台">清空</button>
           <button class="btn small" data-a="png" title="保存当前光路图">存图</button>
+          <button class="btn small" data-a="share" title="生成包含整套光路的网址，发给别人打开就是同一套光路">分享</button>
         </div>
       </header>
       <div class="bench-main">
@@ -93,6 +104,7 @@ export class Bench {
     q('[data-a=fit]').onclick = () => { this.fit(); this.draw(); };
     q('[data-a=clear]').onclick = () => { if (!this.els.length || confirm('清空平台上的全部元件？')) { this.els = []; this.select(null); this.note(''); this.changed(); } };
     q('[data-a=png]').onclick = () => this.savePNG();
+    q('[data-a=share]').onclick = () => this.share();
     q('[data-a=ruler]').onclick = (e) => { this.tool = this.tool === 'ruler' ? null : 'ruler'; e.currentTarget.classList.toggle('active', this.tool === 'ruler'); if (!this.tool) { this.measure = null; this.draw(); } };
     page.querySelectorAll('[data-t]').forEach((b) => {
       const k = b.dataset.t;
@@ -158,6 +170,38 @@ export class Bench {
     } else this.loadPreset('imaging');
   }
 
+  /** 由分享网址载入：成功后存为本机的当前光路，并把地址栏还原为 #/bench */
+  async loadShared(code) {
+    const d = await decodeScene(code);
+    if (this.disposed) return;
+    if (!d || !d.els.length) { this.load(); this.flash('分享链接无法解析，已载入上次的光路', 'warn'); return; }
+    this.els = d.els.map((e) => makeElement(e.type, e));
+    if (d.opts) Object.assign(this.opts, d.opts), this.syncToggles();
+    this.select(null);
+    this.note(d.note || '');
+    this.changed();
+    const place = () => { this.resize(); if (d.view) this.view = { ...d.view }; else this.fit(); this.draw(); };
+    place(); setTimeout(() => { if (!this.disposed && !this.userMoved) place(); }, 150); // 等布局稳定后再对一次视野
+    try { history.replaceState(null, '', location.href.replace(/#.*$/, '#/bench')); } catch { /* file:// 下个别浏览器不允许 */ }
+    this.flash(`已载入分享的光路（${this.els.length} 个元件）`);
+  }
+  shareCode() { return encodeScene({ els: this.els, opts: this.opts, view: this.view, note: this.noteEl.textContent }); }
+  async share() {
+    const code = await this.shareCode();
+    const url = `${location.href.split('#')[0]}#/bench?s=${code}`;
+    let ok = false;
+    try { await navigator.clipboard.writeText(url); ok = true; } catch { /* 无剪贴板权限 */ }
+    if (ok) this.flash(`分享网址已复制（${url.length} 个字符），粘贴发给别人即可打开同一套光路`);
+    else window.prompt('复制下面的网址发给别人：', url);
+  }
+  flash(msg, kind = 'ok') {
+    let box = this.page.querySelector('.toasts');
+    if (!box) { box = h('div', 'toasts'); this.page.append(box); }
+    const t = h('div', 'toast ' + kind, esc(msg));
+    box.append(t);
+    setTimeout(() => t.remove(), 3600);
+  }
+
   // ------------------------------------------------------------ 追迹
   changed(save = true) {
     this.dirtyTrace = true;
@@ -180,7 +224,10 @@ export class Bench {
   resize() {
     const box = this.cv.parentElement.getBoundingClientRect();
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    this.W = Math.max(50, box.width); this.H = Math.max(50, box.height); this.dpr = dpr;
+    const W = Math.max(50, box.width), H = Math.max(50, box.height);
+    // 画布尺寸变化时保持看到的范围不变（也修正了页面尚未布局、尺寸为最小值时算出的视野）
+    if (this.W && this.H && (W !== this.W || H !== this.H)) this.view.s *= Math.min(W / this.W, H / this.H);
+    this.W = W; this.H = H; this.dpr = dpr;
     this.cv.width = Math.round(this.W * dpr); this.cv.height = Math.round(this.H * dpr);
     this.cv.style.width = this.W + 'px'; this.cv.style.height = this.H + 'px';
     this.draw();
@@ -263,10 +310,18 @@ export class Bench {
     return { fill: `rgba(${150 - 60 * k | 0},${190 - 40 * k | 0},${225 - 20 * k | 0},${0.1 + 0.16 * k})`, edge: `rgba(${180 - 40 * k | 0},${215 - 30 * k | 0},240,0.75)` };
   }
   drawGlass(g, sh) {
-    const c = this.glassColor(sh.material);
+    const c = sh.material === 'calcite' ? { fill: 'rgba(214,226,196,0.16)', edge: 'rgba(226,236,206,0.8)' } : this.glassColor(sh.material);
     this.pathEdges(g, sh.edges);
     g.fillStyle = c.fill; g.fill();
     g.strokeStyle = c.edge; g.lineWidth = 1.2 / this.view.s; g.stroke();
+    if (sh.axis != null) {
+      // 晶体光轴方向：过中心的点划线（裁剪在晶体内）
+      g.save(); this.pathEdges(g, sh.edges); g.clip();
+      const u = [Math.cos(sh.axis), Math.sin(sh.axis)], R = 400;
+      g.beginPath(); g.moveTo(sh.c[0] - u[0] * R, sh.c[1] - u[1] * R); g.lineTo(sh.c[0] + u[0] * R, sh.c[1] + u[1] * R);
+      g.setLineDash([6 / this.view.s, 2 / this.view.s, 1 / this.view.s, 2 / this.view.s]); g.lineWidth = 1 / this.view.s; g.strokeStyle = 'rgba(226,236,206,0.55)'; g.stroke();
+      g.restore();
+    }
   }
   drawShape(g, sh) {
     const px = 1 / this.view.s;
@@ -296,10 +351,51 @@ export class Bench {
         break;
       }
       case 'detector': line(sh.geom, 3, '#e9ede6'); break;
+      case 'polarizer': {
+        line(sh.geom, 4, 'rgba(70,78,74,0.95)');
+        // 透光轴示意：沿元件的短刻线越多，越接近 p 方向；中心画一个表示 s 的圆点
+        const { a, b } = sh.geom, k = Math.abs(Math.cos((sh.alpha || 0) * D2R));
+        line(sh.geom, 1.2, 'rgba(233,237,230,0.85)', [2, 2]);
+        const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+        if (k > 0.05) { g.beginPath(); g.arc(m[0], m[1], 2.6 * k * px, 0, 7); g.fillStyle = 'rgba(233,237,230,0.95)'; g.fill(); }
+        break;
+      }
+      case 'waveplate': line(sh.geom, 4.5, 'rgba(160,200,170,0.55)'); line(sh.geom, 1, 'rgba(210,235,215,0.9)'); break;
+      case 'pbs': line(sh.geom, 2.4, 'rgba(160,190,255,0.85)', [6, 2, 1, 2]); break;
       case 'source': if (sh.geom) line(sh.geom, 2, 'rgba(255,220,160,0.5)'); break;
       default: break;
     }
   }
+  /** 教科书画法：圆点 = s（垂直纸面）分量，短线 = p（纸面内）分量，小圆圈 = 圆偏振成分；大小按各自所占比例 */
+  drawPolGlyphs(g, segs) {
+    g.globalCompositeOperation = 'source-over';
+    const px = 1 / this.view.s, step = 34 * px;
+    let budget = 4000;
+    const done = new Set();
+    for (const sg of segs) {
+      if (!sg.S || sg.rel < 0.04) continue;
+      const key = sg.src + '|' + sg.fan + '|' + sg.sig; // 白光的各波长重合，只画一次
+      if (done.has(key)) continue; done.add(key);
+      const S = sg.S, I = S[0];
+      if (!(I > 0)) continue;
+      const ps = Math.max(0, (I + S[1]) / 2) / I, pp = Math.max(0, (I - S[1]) / 2) / I, circ = Math.abs(S[3]) / I;
+      const dx = sg.b[0] - sg.a[0], dy = sg.b[1] - sg.a[1], L = Math.hypot(dx, dy);
+      if (L < step * 0.6) continue;
+      const u = [dx / L, dy / L], nrm = [-u[1], u[0]];
+      const alpha = Math.min(1, 0.35 + Math.sqrt(sg.rel));
+      for (let t = step / 2; t < L && budget > 0; t += step, budget--) {
+        const x = sg.a[0] + u[0] * t, y = sg.a[1] + u[1] * t;
+        if (circ > 0.3) {
+          g.beginPath(); g.arc(x, y, 3.6 * px, 0, 7); g.lineWidth = 1.1 * px; g.strokeStyle = `rgba(255,236,200,${alpha})`; g.stroke();
+        } else {
+          if (pp > 0.08) { const hl = 5.5 * px * Math.sqrt(pp); g.beginPath(); g.moveTo(x - nrm[0] * hl, y - nrm[1] * hl); g.lineTo(x + nrm[0] * hl, y + nrm[1] * hl); g.lineWidth = 1.3 * px; g.strokeStyle = `rgba(255,236,200,${alpha})`; g.stroke(); }
+          if (ps > 0.08) { g.beginPath(); g.arc(x, y, 2.3 * px * Math.sqrt(ps), 0, 7); g.fillStyle = `rgba(255,236,200,${alpha})`; g.fill(); }
+        }
+      }
+    }
+    g.globalCompositeOperation = 'lighter';
+  }
+
   drawSources(g) {
     for (const el of this.els) {
       if (!['laser', 'beam', 'point'].includes(el.type)) continue;
@@ -334,6 +430,7 @@ export class Bench {
       g.strokeStyle = rgbStr(c, a);
       g.beginPath(); g.moveTo(sgm.a[0], sgm.a[1]); g.lineTo(sgm.b[0], sgm.b[1]); g.stroke();
     }
+    if (this.opts.pol) this.drawPolGlyphs(g, segs);
     // 虚像的反向延长线
     if (this.opts.ext && this.opts.images) {
       g.globalCompositeOperation = 'source-over';
@@ -453,7 +550,7 @@ export class Bench {
       const d = this.drag;
       if (!d) { this.draw(); return; }
       if (d.ruler) { this.measure.b = w; }
-      else if (d.pan) { this.view.cx = d.cx - (x - d.x) / this.view.s; this.view.cy = d.cy + (y - d.y) / this.view.s; }
+      else if (d.pan) { this.userMoved = true; this.view.cx = d.cx - (x - d.x) / this.view.s; this.view.cy = d.cy + (y - d.y) / this.view.s; }
       else if (d.move) {
         // 移动时吸附到 0.5 mm；按住 Alt 不吸附
         const sn = e.altKey ? 0 : this.view.s > 4 ? 0.1 : 0.5;
@@ -476,7 +573,7 @@ export class Bench {
       const [x, y] = pos(e), w0 = this.toWorld(x, y);
       this.view.s = Math.min(400, Math.max(0.05, this.view.s * Math.exp(-e.deltaY * 0.0015)));
       const w1 = this.toWorld(x, y);
-      this.view.cx += w0[0] - w1[0]; this.view.cy += w0[1] - w1[1];
+      this.userMoved = true; this.view.cx += w0[0] - w1[0]; this.view.cy += w0[1] - w1[1];
       this.draw();
     }, { passive: false });
   }
@@ -525,7 +622,7 @@ export class Bench {
       return;
     }
     const T = TYPES[el.type];
-    box.append(h('div', 'bi-h', `${svgI(el.type)}<span>${T.label}</span>`));
+    box.append(h('div', 'bi-h', `${svgI(el.type)}<span>${el.secret ? '待测' : ''}${T.label}</span>`));
     const form = h('div', 'bi-form');
     const inputs = [];
     const numRow = (k, label, unit = '', step = 1, opt = {}) => {
@@ -540,7 +637,8 @@ export class Bench {
       form.append(row);
     };
     numRow('x', 'x', 'mm', 0.5); numRow('y', 'y', 'mm', 0.5); numRow('rot', '转角', '°', 0.5);
-    for (const p of T.params) {
+    if (el.secret) form.append(h('p', 'bi-empty', '这是实验中的待测元件，参数在完成实验后公开（回到实验页做完全部步骤，再打开光路台即可看到）。可以移动它，用光屏找像来测量。'));
+    for (const p of el.secret ? [] : T.params) {
       if (p.hideIf && p.hideIf(el)) continue;
       if (p.type === 'bool') {
         const row = h('label', 'bi-row bi-chk', `<span>${p.label}</span>`);
@@ -574,10 +672,12 @@ export class Bench {
     const el = this.sel, box = this.lensInfoEl;
     if (!box) return;
     box.innerHTML = '';
+    if (el.secret) return;
     let L = null;
     const R = (r) => (r === 0 ? Infinity : r);
-    if (el.type === 'lens') L = { epd: el.D * 0.9, field: 3, surfaces: [{ R: R(el.R1), t: el.d, glass: el.mat, stop: true }, { R: R(el.R2), t: 100, glass: 'air' }] };
-    else if (el.type === 'achromat') L = { epd: el.D * 0.9, field: 3, surfaces: [{ R: R(el.R1), t: el.d1, glass: el.mat1, stop: true }, { R: R(el.R2), t: el.d2, glass: el.mat2 }, { R: R(el.R3), t: 100, glass: 'air' }] };
+    const qs = (this.qState ||= { field: 3 });
+    if (el.type === 'lens') L = { epd: el.D * 0.9, field: qs.field, surfaces: [{ R: R(el.R1), t: el.d, glass: el.mat, stop: true }, { R: R(el.R2), t: 100, glass: 'air' }] };
+    else if (el.type === 'achromat') L = { epd: el.D * 0.9, field: qs.field, surfaces: [{ R: R(el.R1), t: el.d1, glass: el.mat1, stop: true }, { R: R(el.R2), t: el.d2, glass: el.mat2 }, { R: R(el.R3), t: 100, glass: 'air' }] };
     else if (el.type === 'camera') { const B = LENSES[el.design]; const k = el.scale || 1; L = { epd: B.epd * k, field: B.field, surfaces: B.surfaces.map((s) => ({ ...s, R: s.R * k, t: s.t * k })) }; }
     if (!L) return;
     try {
@@ -597,7 +697,11 @@ export class Bench {
           <tr><td>初级球差 W<sub>040</sub></td><td>${fmt(W040, 1)} λ</td></tr>
           <tr><td>佩茨瓦尔和</td><td>${fmt(pd.petzval * 1000, 3)} ×10⁻³/mm</td></tr>
         </table>`;
-    } catch (err) { box.innerHTML = '<p class="bi-empty">该组参数无法计算近轴量（曲率与厚度不协调）。</p>'; }
+    } catch (err) { box.innerHTML = '<p class="bi-empty">该组参数无法计算近轴量（曲率与厚度不协调）。</p>'; return; }
+    // 像质：点列图、光线像差、场曲畸变（物在无穷远，精确光线追迹）
+    box.append(h('div', 'bi-h2', `像质分析（物在无穷远，F/${fmt(Math.abs(paraxial(L, 587.56).efl / L.epd), 1)}）`));
+    const single = el.type !== 'camera';
+    box.append(qualityPanel(L, qs, single ? { fieldOptions: [1, 3, 5, 10, 15], onField: (v) => { qs.field = v; this.renderLensInfo(); } } : {}));
   }
 
   // ------------------------------------------------------------ 测量面板
@@ -621,6 +725,7 @@ export class Bench {
       card.innerHTML = `<div class="bm-t">光屏 @ (${fmt(d.x, 1)}, ${fmt(d.y, 1)})</div>`;
       const cv = h('canvas'); cv.width = 260; cv.height = 96; card.append(cv);
       card.append(h('div', 'bm-n mono', `功率 ${fmt(ps, 4)} · 质心 ${fmt(mu, 2)} mm · RMS 半宽 ${fmt(rms, 3)} mm`));
+      if (ps > 0) card.append(h('div', 'bm-n', polText(hs)));
       box.append(card);
       drawIrr(cv, ir, d.L);
       if (this.sel === d) card.classList.add('on');
@@ -653,11 +758,27 @@ export class Bench {
   dispose() {
     window.removeEventListener('keydown', this.keyH);
     this.ro && this.ro.disconnect();
+    this.disposed = true;
     this.root.innerHTML = '';
   }
 }
 
 // ---------------------------------------------------------------- 工具函数
+/** 落在光屏上的光的偏振（各光线斯托克斯矢量非相干相加） */
+function polText(hs) {
+  const S = [0, 0, 0, 0];
+  for (const x of hs) if (x.S) for (let i = 0; i < 4; i++) S[i] += x.S[i];
+  if (!(S[0] > 0)) return '';
+  const { dop, psi, chi } = polState(S);
+  const deg = (r) => (r * 180) / Math.PI;
+  let kind;
+  if (dop < 0.03) kind = '自然光';
+  else if (dop > 0.97 && Math.abs(deg(chi)) < 1) kind = '线偏振';
+  else if (dop > 0.97 && Math.abs(deg(chi)) > 44) kind = deg(chi) > 0 ? '右旋圆偏振' : '左旋圆偏振';
+  else if (dop > 0.97) kind = '椭圆偏振';
+  else kind = '部分偏振';
+  return `偏振：<b>${kind}</b> · 偏振度 ${fmt(dop * 100, 1)}%${dop > 0.03 ? ` · 方位 ${fmt(deg(psi), 1)}°（自 s 起）· 椭圆率角 ${fmt(deg(chi), 1)}°` : ''}`;
+}
 function rgbStr(c, a) { return `rgba(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)},${a})`; }
 
 function distGeom(g, p) {

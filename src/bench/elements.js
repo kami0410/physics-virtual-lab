@@ -1,6 +1,6 @@
 // 光路设计台的元件库：每种元件由参数生成引擎需要的面、玻璃体与光线，以及绘图用的形状。
 // 局部坐标：光轴沿 +x，元件中心在原点；摆放时先转 rot（度，逆时针）再平移到 (x, y)。单位 mm。
-import { makeBody, v2 } from '../physics/rays2d.js';
+import { makeBody, v2, stokesOf } from '../physics/rays2d.js';
 import { LENSES, autoSemiDiameters } from '../physics/lensTrace.js';
 
 const D2R = Math.PI / 180;
@@ -65,14 +65,16 @@ function sourceRays(el, F, kind) {
   const lams = el.white ? WHITE : [el.lam];
   const rays = [];
   const P0 = (el.power ?? 1) / lams.length;
+  // 偏振角在光线自己的 s/p 基矢里定义（s 垂直纸面，p = ẑ × d），对每条光线都相同
+  const S = (P) => stokesOf(el.pol || 'unpol', (el.polAng || 0) * D2R, P);
   for (const lam of lams) {
-    if (kind === 'laser') rays.push({ p: F.P(0, 0), d: F.D(1, 0), lam, P: P0 });
+    if (kind === 'laser') rays.push({ p: F.P(0, 0), d: F.D(1, 0), lam, S: S(P0) });
     else if (kind === 'beam') {
       const n = Math.max(1, Math.round(el.n));
       for (let i = 0; i < n; i++) {
         const y = n === 1 ? 0 : -el.w / 2 + (el.w * i) / (n - 1);
         const a = (el.div || 0) * D2R * (n === 1 ? 0 : (2 * i) / (n - 1) - 1);
-        rays.push({ p: F.P(0, y), d: F.D(Math.cos(a), Math.sin(a)), lam, P: P0 / n });
+        rays.push({ p: F.P(0, y), d: F.D(Math.cos(a), Math.sin(a)), lam, S: S(P0 / n) });
       }
     } else if (kind === 'point') {
       const n = Math.max(1, Math.round(el.n));
@@ -80,7 +82,7 @@ function sourceRays(el, F, kind) {
       const full = cone >= TAU_EPS;
       for (let i = 0; i < n; i++) {
         const a = full ? (TAU * i) / n : -cone / 2 + (cone * (i + 0.5)) / n;
-        rays.push({ p: F.P(0, 0), d: F.D(Math.cos(a), Math.sin(a)), lam, P: P0 / n });
+        rays.push({ p: F.P(0, 0), d: F.D(Math.cos(a), Math.sin(a)), lam, S: S(P0 / n) });
       }
     }
   }
@@ -92,22 +94,25 @@ const glassParam = { k: 'mat', label: '材料', type: 'glass' };
 const lamParams = [
   { k: 'white', label: '白光', type: 'bool' },
   { k: 'lam', label: '波长', unit: 'nm', min: 380, max: 760, step: 0.1, hideIf: (e) => e.white },
+  { k: 'pol', label: '偏振', type: 'select', options: () => [['unpol', '自然光'], ['lin', '线偏振'], ['rcp', '右旋圆偏振'], ['lcp', '左旋圆偏振']] },
+  { k: 'polAng', label: '振动方向', unit: '°', step: 1, hideIf: (e) => e.pol !== 'lin', hint: '与垂直纸面方向（s）的夹角：0° 垂直纸面，90° 在纸面内（p）' },
 ];
+const polDefaults = { pol: 'unpol', polAng: 0 };
 
 // ---------------------------------------------------------------- 元件定义
 export const TYPES = {
   laser: {
-    label: '激光器', group: '光源', defaults: { lam: 632.8, white: false, power: 1 },
+    label: '激光器', group: '光源', defaults: { lam: 632.8, white: false, power: 1, ...polDefaults },
     params: [...lamParams],
     build(el, F) { return { rays: sourceRays(el, F, 'laser'), shapes: [{ kind: 'source', src: 'laser' }] }; },
   },
   beam: {
-    label: '平行光束', group: '光源', defaults: { lam: 589.3, white: false, w: 30, n: 15, div: 0, power: 1 },
+    label: '平行光束', group: '光源', defaults: { lam: 589.3, white: false, w: 30, n: 15, div: 0, power: 1, ...polDefaults },
     params: [...lamParams, { k: 'w', label: '光束宽度', unit: 'mm', min: 0, max: 400, step: 0.5 }, { k: 'n', label: '光线数', min: 1, max: 400, step: 1 }, { k: 'div', label: '发散半角', unit: '°', min: 0, max: 30, step: 0.1 }],
     build(el, F) { return { rays: sourceRays(el, F, 'beam'), shapes: [{ kind: 'source', src: 'beam', geom: { type: 'line', a: F.P(0, -el.w / 2), b: F.P(0, el.w / 2) } }] }; },
   },
   point: {
-    label: '点光源', group: '光源', defaults: { lam: 589.3, white: false, n: 36, cone: 360, power: 1 },
+    label: '点光源', group: '光源', defaults: { lam: 589.3, white: false, n: 36, cone: 360, power: 1, ...polDefaults },
     params: [...lamParams, { k: 'n', label: '光线数', min: 1, max: 720, step: 1 }, { k: 'cone', label: '发光角', unit: '°', min: 0.1, max: 360, step: 0.5 }],
     build(el, F) { return { rays: sourceRays(el, F, 'point'), shapes: [{ kind: 'source', src: 'point' }] }; },
   },
@@ -236,6 +241,16 @@ export const TYPES = {
       return { bodies: [{ material: el.mat, edges: p.map((a, i) => ({ type: 'line', a, b: p[(i + 1) % 4] })) }] };
     },
   },
+  biprism: {
+    label: '菲涅耳双棱镜', group: '玻璃', defaults: { alpha: 0.5, h: 30, t: 2, mat: 'K9' },
+    params: [{ k: 'alpha', label: '折射角 α', unit: '°', min: 0.05, max: 30, step: 0.05 }, { k: 'h', label: '高度', unit: 'mm', min: 1, step: 1 }, { k: 't', label: '底厚', unit: 'mm', min: 0.1, step: 0.1 }, glassParam],
+    build(el, F) {
+      // 平面朝 −x，棱脊在 +x 一侧的中线上；两个半棱镜各使光偏折约 (n−1)α，形成两个虚光源
+      const ridge = el.t / 2 + (el.h / 2) * Math.tan(el.alpha * D2R);
+      const p = [F.P(-el.t / 2, -el.h / 2), F.P(el.t / 2, -el.h / 2), F.P(ridge, 0), F.P(el.t / 2, el.h / 2), F.P(-el.t / 2, el.h / 2)];
+      return { bodies: [{ material: el.mat, edges: p.map((a, i) => ({ type: 'line', a, b: p[(i + 1) % p.length] })) }] };
+    },
+  },
   semicircle: {
     label: '半圆柱玻璃砖', group: '玻璃', defaults: { r: 30, mat: 'K9' },
     params: [{ k: 'r', label: '半径', unit: 'mm', min: 1, step: 0.5 }, glassParam],
@@ -273,6 +288,39 @@ export const TYPES = {
       return { surfaces: out, shapes: out };
     },
   },
+  polarizer: {
+    label: '偏振片', group: '偏振', defaults: { L: 30, alpha: 0, T: 1 },
+    params: [{ k: 'L', label: '长度', unit: 'mm', min: 1, step: 1 }, { k: 'alpha', label: '透光轴', unit: '°', step: 1, hint: '与垂直纸面方向（s）的夹角；0° 只透过 s 光，90° 只透过 p 光' }, { k: 'T', label: '主透过率', min: 0, max: 1, step: 0.01 }],
+    build(el, F) { const geom = { type: 'line', a: F.P(0, -el.L / 2), b: F.P(0, el.L / 2) }; return { surfaces: [{ kind: 'polarizer', geom, alpha: el.alpha * D2R, T: el.T }], shapes: [{ kind: 'polarizer', geom, alpha: el.alpha }] }; },
+  },
+  waveplate: {
+    label: '波片', group: '偏振', defaults: { L: 30, theta: 45, waves: 0.25, lam0: 589.3 },
+    params: [{ k: 'L', label: '长度', unit: 'mm', min: 1, step: 1 }, { k: 'theta', label: '快轴', unit: '°', step: 1, hint: '与垂直纸面方向（s）的夹角' }, { k: 'waves', label: '延迟量', unit: 'λ₀', step: 0.05, hint: '0.25 为 1/4 波片，0.5 为半波片' }, { k: 'lam0', label: '设计波长 λ₀', unit: 'nm', min: 380, max: 1100, step: 0.1 }],
+    build(el, F) { const geom = { type: 'line', a: F.P(0, -el.L / 2), b: F.P(0, el.L / 2) }; return { surfaces: [{ kind: 'waveplate', geom, theta: el.theta * D2R, waves: el.waves, lam0: el.lam0 }], shapes: [{ kind: 'waveplate', geom, waves: el.waves }] }; },
+  },
+  pbs: {
+    label: '偏振分束镜', group: '偏振', defaults: { L: 30, rot: 45 },
+    params: [{ k: 'L', label: '长度', unit: 'mm', min: 1, step: 1 }],
+    build(el, F) { const geom = { type: 'line', a: F.P(0, -el.L / 2), b: F.P(0, el.L / 2) }; return { surfaces: [{ kind: 'pbs', geom }], shapes: [{ kind: 'pbs', geom }] }; },
+  },
+  calcite: {
+    label: '方解石晶体', group: '偏振', defaults: { w: 30, h: 40, axis: 45 },
+    params: [{ k: 'w', label: '厚度', unit: 'mm', min: 0.5, step: 0.5 }, { k: 'h', label: '高度', unit: 'mm', min: 0.5, step: 1 }, { k: 'axis', label: '光轴方向', unit: '°', step: 1, hint: '光轴在纸面内，与元件 x 轴（厚度方向）的夹角' }],
+    build(el, F) {
+      const p = [F.P(-el.w / 2, -el.h / 2), F.P(el.w / 2, -el.h / 2), F.P(el.w / 2, el.h / 2), F.P(-el.w / 2, el.h / 2)];
+      return { bodies: [{ material: 'calcite', axis: F.th + el.axis * D2R, edges: p.map((a, i) => ({ type: 'line', a, b: p[(i + 1) % 4] })) }] };
+    },
+  },
+  rhomb: {
+    label: '菲涅耳菱体', group: '偏振', defaults: { a: 25, len: 60, ang: 54.6, mat: 'K9', rot: 0 },
+    params: [{ k: 'a', label: '端面宽', unit: 'mm', min: 1, step: 0.5 }, { k: 'len', label: '长', unit: 'mm', min: 1, step: 1 }, { k: 'ang', label: '锐角', unit: '°', min: 20, max: 89, step: 0.1, hint: '光垂直端面入射后在两个斜面各全反射一次，入射角等于此角' }, glassParam],
+    build(el, F) {
+      // 平行四边形：两条长边沿 x，两条短边（端面）与长边成锐角 ang
+      const t = Math.tan(el.ang * D2R), dx = el.a / t, L = el.len / 2;
+      const p = [F.P(-L, -el.a / 2), F.P(L, -el.a / 2), F.P(L + dx, el.a / 2), F.P(-L + dx, el.a / 2)];
+      return { bodies: [{ material: el.mat, edges: p.map((a, i) => ({ type: 'line', a, b: p[(i + 1) % 4] })) }] };
+    },
+  },
   detector: {
     label: '光屏 / 探测器', group: '其他', defaults: { L: 60, pass: false, rot: 0 },
     params: [{ k: 'L', label: '长度', unit: 'mm', min: 1, step: 1 }, { k: 'pass', label: '透明（只测量不挡光）', type: 'bool' }],
@@ -295,7 +343,7 @@ function semiDiam(key) {
   return sdCache.get(key);
 }
 
-export const GROUPS = ['光源', '透镜', '反射镜', '玻璃', '其他'];
+export const GROUPS = ['光源', '透镜', '反射镜', '玻璃', '偏振', '其他'];
 
 let uid = 1;
 export function makeElement(type, props = {}) {
@@ -315,10 +363,10 @@ export function compile(elements) {
     try { r = T.build(el, F); } catch (err) { console.error(`元件 ${el.type} 构造失败`, err); continue; }
     (r.surfaces || []).forEach((s, i) => surfaces.push({ ...s, id: el.id + '.' + i, obj: el.id }));
     (r.bodies || []).forEach((b, i) => {
-      const body = { ...makeBody(b.edges), material: b.material, obj: el.id, id: el.id + '.b' + i, edges: b.edges };
+      const body = { ...makeBody(b.edges), material: b.material, obj: el.id, id: el.id + '.b' + i, edges: b.edges, axis: b.axis };
       bodies.push(body);
       body.geoms.forEach((g, j) => surfaces.push({ kind: 'glass', geom: g, body, id: el.id + '.b' + i + '.' + j, obj: el.id }));
-      shapes.push({ kind: 'glass', obj: el.id, edges: b.edges, material: b.material });
+      shapes.push({ kind: 'glass', obj: el.id, edges: b.edges, material: b.material, axis: b.axis, c: F.P(0, 0) });
     });
     if (r.rays && r.rays.length) {
       const s = src++;

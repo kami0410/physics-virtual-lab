@@ -46,6 +46,16 @@ export class SlitExperiment {
 
   get a() { return Math.max(0, this.aRead - this.a0); }
   get L() { const s = this.app.comp('slit'), d = this.app.comp('det'), sc = this.app.comp('screen'); const t = d.placed ? d : sc.placed ? sc : null; return s.placed && t && t.pos > s.pos ? (t.pos - s.pos) * 10 : null; }
+  /** 当前装置 → 衍射工作台（单缝或双缝、缝宽、缝到探测面距离）。缝宽是待测量，做完实验才公开 */
+  toWave({ done }) {
+    if (!done) return false;
+    if (this.L == null) return null;
+    const dbl = this.type === 'double';
+    return {
+      v: 1, s: { ap: dbl ? 'double' : 'slit', p: dbl ? { a: +this.a.toFixed(4), d: 0.25 } : { a: +this.a.toFixed(4) }, lam: 632.8, white: false, z: Math.round(this.L), R: 0, N: 512, gamma: 0.6, expo: 0, srcW: 0, dl: 0 },
+      t: `来自“单缝衍射的光强分布”：缝宽 a = ${this.a.toFixed(3)} mm，缝到探测面 ${(this.L / 10).toFixed(1)} cm，He-Ne 激光。把观察距离从几毫米拖到几米，看图样怎样从缝的几何投影过渡到 sinc² 形的夫琅禾费衍射。`,
+    };
+  }
   aps() { return slitApertures(this.type, this.a, 0.25, 0); }
   beam() { return { w: BEAM_W, c: this.slitOff }; }
   /** 屏上相对光强（以入射光束中心光强为 1） */
