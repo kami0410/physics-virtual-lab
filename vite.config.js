@@ -24,13 +24,20 @@ const BUNDLED = [
   ['katex', 'katex/LICENSE'],
   ['@fontsource/ibm-plex-mono', '@fontsource/ibm-plex-mono/LICENSE'],
 ];
+/** 直接收录进源码的第三方文件（src/physics/glasscat.js、lensTrace.js、glassdb.js 来自 Optica Viva） */
+const VENDORED = [
+  ['Optica Viva（https://github.com/iiogurt/Optica_Viva）', 'licenses/Optica_Viva-LICENSE.txt'],
+];
 const licenseText = () => BUNDLED.map(([name, file]) => {
   const pkg = JSON.parse(fs.readFileSync(`node_modules/${name}/package.json`, 'utf8'));
   return `==== ${name} ${pkg.version}（${pkg.license}）====
 
 ${fs.readFileSync(`node_modules/${file}`, 'utf8').trim()}
 `;
-}).join('\n');
+}).concat(VENDORED.map(([name, file]) => `==== ${name}（MIT）====
+
+${fs.readFileSync(file, 'utf8').trim()}
+`)).join('\n');
 const licenseNotice = (emitFile) => ({
   name: 'lab-license-notice',
   apply: 'build',

@@ -1,0 +1,602 @@
+// 来源：Optica Viva（https://github.com/iiogurt/Optica_Viva，MIT 许可，Copyright (c) 2026 iiogurt）js/lib/raytrace.js。
+// 本项目的修改：玻璃折射率改由 ./glassdb.js 提供（含国产 CDGM 牌号的中文别名），镜头库只保留教学用的几种，
+// 其余算法（精确三维追迹、傍轴分析、光线瞄准、OPD、赛德尔和数）保持原样。单位 mm，光轴 z。
+
+// Sequential, exact (non-paraxial) 3-D ray tracer for rotationally symmetric systems of
+// spherical surfaces, with paraxial first-order analysis, real-ray aiming at the aperture
+// stop and optical-path-difference (OPD) evaluation against the exit-pupil reference sphere.
+// Units: mm. z is the optical axis, light travels toward +z.
+
+import { index } from './glassdb.js';
+
+// ── Lens prescriptions ─────────────────────────────────────────────────────────────────
+// Each surface: R (radius, Infinity = plane), t (axial distance to next surface),
+// glass (medium AFTER the surface), stop: true marks the aperture stop.
+// Mirrors: glass 'mirror'. After a mirror light travels toward −z, so the following distances t
+// are negative, and the medium's refractive index changes sign (the usual negative-index
+// convention): paraxial matrices, Seidel sums and optical path then need no special cases.
+export const LENSES = {
+  'plano-convex': {
+    name: 'Plano-convex singlet f/5 (N-BK7, convex side to object)',
+    epd: 20, field: 3,
+    surfaces: [
+      { R: 51.5, t: 3.6, glass: 'N-BK7', stop: true },
+      { R: Infinity, t: 97.6, glass: 'air' },
+    ],
+  },
+  'plano-convex-rev': {
+    name: 'Plano-convex singlet f/5, reversed (flat side to object)',
+    epd: 20, field: 3,
+    surfaces: [
+      { R: Infinity, t: 3.6, glass: 'N-BK7', stop: true },
+      { R: -51.5, t: 97.6, glass: 'air' },
+    ],
+  },
+  'plano-hyperbolic': {
+    name: 'Plano-aspheric singlet f/5 (N-BK7, hyperbolic k = −n², no spherical aberration)',
+    epd: 20, field: 3,
+    surfaces: [
+      { R: Infinity, t: 5, glass: 'N-BK7', stop: true },
+      { R: -51.68, k: -2.30068, t: 100, glass: 'air' },
+    ],
+  },
+  'achromat': {
+    // designed for this project: N-BK7/F2 cemented doublet, f = 100 mm, spherical aberration
+    // corrected and F, C brought to a common paraxial focus (solved numerically)
+    name: 'Cemented achromat f/5, 100 mm (N-BK7 / F2)',
+    epd: 20, field: 3,
+    surfaces: [
+      { R: 44.444, t: 5, glass: 'N-BK7', stop: true },
+      { R: -42.447, t: 2.5, glass: 'F2' },
+      { R: -826.165, t: 95, glass: 'air' },
+    ],
+  },
+  'cooke': {
+    name: 'Cooke triplet f/5, 50 mm (SK16 / F2 / SK16)',
+    epd: 10, field: 20,
+    surfaces: [
+      { R: 22.01359, t: 3.25896, glass: 'SK16' },
+      { R: -435.76044, t: 6.00755, glass: 'air' },
+      { R: -22.21328, t: 0.99997, glass: 'F2' },
+      { R: 20.29192, t: 4.75041, glass: 'air', stop: true },
+      { R: 79.6836, t: 2.95208, glass: 'SK16' },
+      { R: -18.39533, t: 42.20778, glass: 'air' },
+    ],
+  },
+  'double-gauss': {
+    name: 'Double-Gauss f/3, 100 mm (SK2 / SK16 / F5)',
+    epd: 33.3, field: 14,
+    surfaces: [
+      { R: 54.153246, t: 8.746658, glass: 'SK2' },
+      { R: 152.52192, t: 0.5, glass: 'air' },
+      { R: 35.950619, t: 14.0, glass: 'SK16' },
+      { R: Infinity, t: 3.776966, glass: 'F5' },
+      { R: 22.269925, t: 14.253059, glass: 'air' },
+      { R: Infinity, t: 12.428129, glass: 'air', stop: true },
+      { R: -25.685033, t: 3.776966, glass: 'F5' },
+      { R: Infinity, t: 10.833929, glass: 'SK16' },
+      { R: -36.980221, t: 0.5, glass: 'air' },
+      { R: 196.41712, t: 6.858175, glass: 'SK16' },
+      { R: -67.147919, t: 57.314642, glass: 'air' },
+    ],
+  },
+  // The four classic forms below were designed for this project: a starting layout of the classic
+  // form, then curvatures and focus optimised with optimise.js (damped least squares, thicknesses
+  // fixed). They show what each form does, not any manufacturer's lens.
+  'tessar': {
+    // a Cooke triplet whose rear element became a cemented doublet (Rudolph, Zeiss 1902)
+    name: 'Tessar type f/5, 50 mm (SK16 / F2 / F5–SK16)',
+    epd: 10, field: 20,
+    surfaces: [
+      { R: 22.2546, t: 3.259, glass: 'SK16' },
+      { R: -374.0917, t: 6.0076, glass: 'air' },
+      { R: -23.4571, t: 1, glass: 'F2' },
+      { R: 20.2634, t: 4.7504, glass: 'air', stop: true },
+      { R: 77.0688, t: 0.9, glass: 'F5' },
+      { R: 50.304, t: 3, glass: 'SK16' },
+      { R: -19.1924, t: 42.0363, glass: 'air' },
+    ],
+  },
+  'petzval': {
+    // two achromats far apart (Petzval 1840): sharp and fast on axis, curved field at the edges
+    name: 'Petzval portrait type f/4, 100 mm (N-BK7–F2, N-BK7 + F2)',
+    epd: 25, field: 8,
+    surfaces: [
+      { R: 83.7582, t: 7, glass: 'N-BK7' },
+      { R: -88.6622, t: 4, glass: 'F2' },
+      { R: 2041.0289, t: 10, glass: 'air' },
+      { R: Infinity, t: 90, glass: 'air', stop: true },
+      { R: 40.2233, t: 5, glass: 'N-BK7' },
+      { R: -50.7325, t: 1.5, glass: 'air' },
+      { R: -46.8312, t: 2.5, glass: 'F2' },
+      { R: -2841.6297, t: 40.6713, glass: 'air' },
+    ],
+  },
+  'telephoto': {
+    // positive front achromat, negative rear achromat: the lens is shorter than its focal length
+    name: 'Telephoto f/5.6, 200 mm, length 0.79 f (N-BK7–F2, N-BK7–F2)',
+    epd: 35.7, field: 6,
+    surfaces: [
+      { R: 40.1736, t: 6, glass: 'N-BK7', stop: true },
+      { R: -83.5895, t: 3, glass: 'F2' },
+      { R: 207.27, t: 55, glass: 'air' },
+      { R: -25.4191, t: 2.5, glass: 'N-BK7' },
+      { R: -104.9679, t: 4, glass: 'F2' },
+      { R: -50.3117, t: 86.7838, glass: 'air' },
+    ],
+  },
+  'retrofocus': {
+    // negative front meniscus ahead of a triplet (inverted telephoto, Angénieux 1950): the back
+    // focal distance (40 mm) exceeds the focal length, leaving room for an SLR mirror
+    name: 'Retrofocus wide angle f/6, 35 mm, back focus 40 mm (N-BK7 + triplet)',
+    epd: 5.8333, field: 22,
+    surfaces: [
+      { R: 17.2003, t: 2.5, glass: 'N-BK7' },
+      { R: 9.2032, t: 14, glass: 'air' },
+      { R: 15.5906, t: 1.7272, glass: 'SK16' },
+      { R: -25.5342, t: 3.184, glass: 'air' },
+      { R: -15.937, t: 0.53, glass: 'F2' },
+      { R: 15.2936, t: 2.5177, glass: 'air', stop: true },
+      { R: 745.5605, t: 1.5646, glass: 'SK16' },
+      { R: -13.1801, t: 39.9996, glass: 'air' },
+    ],
+  },
+  // Bertele's Biogon (US patent 2,721,499, 1955), Example 2 (f = 100 mm, f/4.5), scaled to the
+  // 38 mm of the Hasselblad Super Wide: nearly symmetric about the stop, thick cemented groups and
+  // negative outer menisci, ±45° with almost no distortion. The patent gives each glass only as
+  // n_d and V_d, so these are model glasses named by their six-digit glass code.
+  'biogon': (() => {
+    const g = (nd, vd) => ({ name: `${Math.round((nd - 1) * 1000)}${Math.round(vd * 10)}`, nd, vd });
+    const s = 0.38, rx = [
+      [109.14, 3.7, g(1.50380, 66.7)], [52.63, 13.2, 'air'], [110.25, 3.7, g(1.48697, 70.3)], [50.72, 35.0, 'air'],
+      [56.24, 29.3, g(1.72050, 50.3)], [25.37, 13.3, g(1.60739, 59.5)], [-194.92, 2.35, 'air'], [Infinity, 2.35, 'air'],
+      [-252.70, 2.8, g(1.56993, 57.5)], [30.59, 23.7, g(1.62500, 53.3)], [-25.51, 18.2, g(1.71966, 29.3)], [-57.38, 39.0, 'air'],
+      [-40.15, 9.8, g(1.64200, 58.1)], [-102.64, 49.36, 'air'],
+    ];
+    return {
+      name: 'Biogon type f/4.5, 38 mm (Bertele, US 2,721,499)',
+      epd: 38 / 4.5, field: 45,
+      surfaces: rx.map(([R, t, glass], i) => ({ R: R * s, t: t * s, glass, ...(i === 7 ? { stop: true } : {}) })),
+    };
+  })(),
+  // Two-mirror telescopes. The Hubble Space Telescope's published design: primary R = −11 040 mm,
+  // secondary R = −1 358 mm, 4 906.071 mm apart, focus 1 500 mm behind the primary vertex (f/24).
+  // Its conic constants make it aplanatic (no spherical aberration, no coma): a Ritchey–Chrétien.
+  // The central obstruction is not part of this sequential model.
+  'hubble': {
+    name: 'Hubble Space Telescope: Ritchey–Chrétien f/24, 2.4 m (as designed)',
+    epd: 2400, field: 0.05,
+    surfaces: [
+      { R: -11040, k: -1.0022985, t: -4906.071, glass: 'mirror', stop: true },
+      { R: -1358, k: -1.4963, t: 6406.071, glass: 'mirror' },
+    ],
+  },
+  'hubble-1990': {
+    // the primary as polished: conic −1.0139 instead of −1.0023, its edge 2.2 µm too low
+    name: 'Hubble in 1990: primary mirror with conic −1.0139 (the flaw)',
+    epd: 2400, field: 0.05,
+    surfaces: [
+      { R: -11040, k: -1.0139, t: -4906.071, glass: 'mirror', stop: true },
+      { R: -1358, k: -1.4963, t: 6406.071, glass: 'mirror' },
+    ],
+  },
+  'cassegrain': {
+    // same layout with a paraboloidal primary and the secondary conic that cancels spherical
+    // aberration (solved from the Seidel sums): perfect on axis, but with the paraboloid's coma
+    name: 'Classical Cassegrain f/24, 2.4 m (paraboloid primary, Hubble layout)',
+    epd: 2400, field: 0.05,
+    surfaces: [
+      { R: -11040, k: -1, t: -4906.071, glass: 'mirror', stop: true },
+      { R: -1358, k: -1.4689008, t: 6406.071, glass: 'mirror' },
+    ],
+  },
+  'tma': {
+    // A Korsch-type three-mirror anastigmat with the first-order layout of the James Webb Space
+    // Telescope (6.5 m, f/20.2, primary R = 15.88 m), designed for this project and unfolded (no
+    // fold mirror, on-axis field). The tertiary radius makes the Petzval sum zero
+    // (1/R₁ − 1/R₂ + 1/R₃ = 0, a flat field); the three conics solve S_I = S_II = S_III = 0.
+    // An intermediate image forms just behind the primary; the final image is erect.
+    name: 'Three-mirror anastigmat (Korsch type, JWST layout): 6.5 m f/20',
+    epd: 6500, field: 0.15,
+    surfaces: [
+      { R: -15880, k: -0.9971452, t: -7169, glass: 'mirror', stop: true },
+      { R: -1700, k: -1.4131293, t: 9866.36, glass: 'mirror' },
+      { R: -1903.81, k: -0.778158, t: -2416.026, glass: 'mirror' },
+    ],
+  },
+};
+
+// ── Geometry helpers ────────────────────────────────────────────────────────────────────
+export function vertices(lens) {
+  const z = [0];
+  for (let i = 0; i < lens.surfaces.length - 1; i++) z.push(z[i] + lens.surfaces[i].t);
+  return z;
+}
+export const stopIndex = (lens) => Math.max(0, lens.surfaces.findIndex((s) => s.stop));
+export function sag(R, r) {
+  if (!isFinite(R)) return 0;
+  const c = 1 / R, k = 1 - c * c * r * r;
+  return k <= 0 ? R : (c * r * r) / (1 + Math.sqrt(k));
+}
+
+// ── Aspheric surfaces ───────────────────────────────────────────────────────────────────
+// Even asphere: z(r) = c r² / (1 + √(1 − (1+k) c² r²)) + a₄r⁴ + a₆r⁶ + a₈r⁸ + a₁₀r¹⁰,
+// with c = 1/R (0 for R = ∞), conic constant k (0 sphere, −1 paraboloid, < −1 hyperboloid)
+// and s.a = [a₄, a₆, a₈, a₁₀]. Returns NaN outside the conic's domain.
+export const isAspheric = (s) => !!(s.k || (s.a && s.a.some((v) => v)));
+export function surfaceSag(s, r) {
+  const c = isFinite(s.R) ? 1 / s.R : 0, k = s.k || 0, r2 = r * r;
+  const q = 1 - (1 + k) * c * c * r2;
+  if (q < 0) return NaN;
+  let z = (c * r2) / (1 + Math.sqrt(q)), rp = r2 * r2;
+  for (const ai of s.a || []) { z += ai * rp; rp *= r2; }
+  return z;
+}
+// dz/dr (analytic)
+function surfaceSlope(s, r) {
+  const c = isFinite(s.R) ? 1 / s.R : 0, k = s.k || 0;
+  const q = 1 - (1 + k) * c * c * r * r;
+  if (q <= 0) return NaN;
+  let d = (c * r) / Math.sqrt(q), pw = 4, rp = r * r * r;
+  for (const ai of s.a || []) { d += pw * ai * rp; pw += 2; rp *= r * r; }
+  return d;
+}
+// Intersection by Newton iteration on f(t) = z(t) − z₀ − sag(r(t)), starting at the vertex plane.
+export function intersectAsphere(s, z0, p, d) {
+  let t = (z0 - p[2]) / d[2];
+  for (let it = 0; it < 40; it++) {
+    const x = p[0] + t * d[0], y = p[1] + t * d[1], z = p[2] + t * d[2], r = Math.hypot(x, y);
+    const zs = surfaceSag(s, r);
+    if (!isFinite(zs)) return null;
+    const f = z - z0 - zs;
+    const dr = r > 1e-12 ? (x * d[0] + y * d[1]) / r : 0;
+    const df = d[2] - surfaceSlope(s, r) * dr;
+    const dt = f / df;
+    t -= dt;
+    if (Math.abs(dt) < 1e-12) {
+      const P = [p[0] + t * d[0], p[1] + t * d[1], p[2] + t * d[2]], rr = Math.hypot(P[0], P[1]);
+      const m = surfaceSlope(s, rr), ux = rr > 1e-12 ? P[0] / rr : 0, uy = rr > 1e-12 ? P[1] / rr : 0;
+      const L = Math.hypot(m, 1);
+      return { t, p: P, nrm: [(m * ux) / L, (m * uy) / L, -1 / L] }; // normal points against propagation
+    }
+  }
+  return null;
+}
+// Signed refractive index of the medium after each surface (negative while light travels toward −z).
+export function mediaIndices(lens, lambda) {
+  const out = [];
+  let n = 1, sgn = 1;
+  for (const s of lens.surfaces) {
+    if (s.glass === 'mirror') { sgn = -sgn; n = -n; } else n = sgn * index(s.glass, lambda);
+    out.push(n);
+  }
+  return out;
+}
+export const hasMirrors = (lens) => lens.surfaces.some((s) => s.glass === 'mirror');
+
+// ── Paraxial (first-order) analysis, y–nu matrix method ─────────────────────────────────
+// Returns the 2×2 transfer matrix from just before surface `from` to just before surface
+// `to` (exclusive), acting on (y, n·u).
+export function paraxialMatrix(lens, lambda, from, to) {
+  let M = [1, 0, 0, 1];
+  const mul = (A, B) => [A[0] * B[0] + A[1] * B[2], A[0] * B[1] + A[1] * B[3], A[2] * B[0] + A[3] * B[2], A[2] * B[1] + A[3] * B[3]];
+  const nm = mediaIndices(lens, lambda);
+  for (let i = from; i < to; i++) {
+    const s = lens.surfaces[i];
+    const n = i ? nm[i - 1] : 1, n2 = nm[i];
+    const phi = (n2 - n) * (isFinite(s.R) ? 1 / s.R : 0);
+    M = mul([1, 0, -phi, 1], M);
+    if (i < to - 1) M = mul([1, s.t / n2, 0, 1], M);
+  }
+  return M;
+}
+
+export function paraxial(lens, lambda = 587.56) {
+  const N = lens.surfaces.length;
+  const zv = vertices(lens);
+  // Marginal ray from infinity: y = 1, nu = 0
+  const M = paraxialMatrix(lens, lambda, 0, N);
+  const efl = -1 / M[2];
+  const nm = mediaIndices(lens, lambda), nImg = nm[N - 1];
+  // image distance from the last vertex along z (negative after an odd number of mirrors)
+  const bfl = -M[0] * nImg / M[2];
+  const zImage = zv[N - 1] + bfl;
+  // Entrance pupil: matrix from surface 1 up to (just before) the stop, including the
+  // final translation onto the stop vertex.
+  const si = stopIndex(lens);
+  let A = 1, B = 0;
+  if (si > 0) {
+    const Ms = paraxialMatrix(lens, lambda, 0, si);
+    const nS = nm[si - 1], t = lens.surfaces[si - 1].t;
+    // y_stop = (Ms00 + t/n Ms10) y + (Ms01 + t/n Ms11) u   (n·u with n=1 in object space)
+    A = Ms[0] + (t / nS) * Ms[2];
+    B = Ms[1] + (t / nS) * Ms[3];
+  }
+  const zEP = B / A;              // relative to first vertex
+  const stopR = A * lens.epd / 2; // stop semi-diameter that yields the specified EPD
+  // Exit pupil: image of the stop through the following surfaces.
+  let zXP = zv[si];
+  {
+    // trace a ray from stop centre with nu = 1; find where it (extended) crosses the axis in image space
+    let y = 0, nu = 1;
+    for (let i = si; i < N; i++) {
+      const s = lens.surfaces[i];
+      const n = i ? nm[i - 1] : 1, n2 = nm[i];
+      if (i > si) { y += lens.surfaces[i - 1].t * nu / n; }
+      const phi = (n2 - n) * (isFinite(s.R) ? 1 / s.R : 0);
+      nu = nu - y * phi;
+    }
+    zXP = zv[N - 1] - y * nImg / nu; // ray y(z) = y + (nu/n) (z − z_last); axis crossing
+  }
+  // Petzval sum Σ φ_k / (n_k n'_k)
+  let petz = 0;
+  lens.surfaces.forEach((s, i) => {
+    const n = i ? nm[i - 1] : 1, n2 = nm[i];
+    petz += (n2 - n) * (isFinite(s.R) ? 1 / s.R : 0) / (n * n2);
+  });
+  return { efl, bfl, zImage, zEP, stopR, zXP, petzval: petz, fnum: efl / lens.epd, zv };
+}
+
+// ── Decentered and tilted surfaces ──────────────────────────────────────────────────────
+// A surface may carry dec: [dx, dy] (mm, its vertex moved off the axis) and tilt: [ax, ay]
+// (radians, rotations about the x and y axes through its vertex). The ray is carried into the
+// surface's own frame, intersected and refracted there, and carried back. Paraxial data stay
+// those of the nominal system.
+const isPerturbed = (s) => !!(s.dec || s.tilt);
+function frame(s) {
+  const [ax, ay] = s.tilt || [0, 0], [dx, dy] = s.dec || [0, 0];
+  const cx = Math.cos(ax), sx = Math.sin(ax), cy = Math.cos(ay), sy = Math.sin(ay);
+  // R = Rx(ax) · Ry(ay): local → global (columns are the local axes in global coordinates)
+  const R = [cy, 0, sy, sx * sy, cx, -sx * cy, -cx * sy, sx, cx * cy];
+  const toL = (v) => [R[0] * v[0] + R[3] * v[1] + R[6] * v[2], R[1] * v[0] + R[4] * v[1] + R[7] * v[2], R[2] * v[0] + R[5] * v[1] + R[8] * v[2]];
+  const toG = (v) => [R[0] * v[0] + R[1] * v[1] + R[2] * v[2], R[3] * v[0] + R[4] * v[1] + R[5] * v[2], R[6] * v[0] + R[7] * v[1] + R[8] * v[2]];
+  return { toL, toG, o: [dx, dy] };
+}
+
+// ── Exact 3-D ray trace ──────────────────────────────────────────────────────────────────
+// ray: {p:[x,y,z], d:[l,m,n] unit, opl}. Returns {path, p, d, opl, ok, blocked}.
+export function trace(lens, lambda, p0, d0, opts = {}) {
+  const zv = opts.zv || vertices(lens);
+  const clip = opts.clip !== false;
+  const sds = opts.sd || null;
+  let p = p0.slice(), d = d0.slice();
+  let opl = opts.opl0 ?? 0;
+  const path = opts.path ? [p.slice()] : null;
+  const N = lens.surfaces.length;
+  const stopHit = { x: 0, y: 0 };
+  let n1 = 1, sgn = 1; // signed index of the current medium (see mediaIndices)
+  for (let i = 0; i < N; i++) {
+    const s = lens.surfaces[i];
+    const mirror = s.glass === 'mirror';
+    if (mirror) sgn = -sgn;
+    const n2 = mirror ? -n1 : sgn * index(s.glass, lambda);
+    let z0 = zv[i], F = null;
+    if (isPerturbed(s)) {
+      // into the surface frame: origin at the moved vertex
+      F = frame(s);
+      p = F.toL([p[0] - F.o[0], p[1] - F.o[1], p[2] - z0]); d = F.toL(d); z0 = 0;
+    }
+    let t, nrm;
+    if (isAspheric(s)) {
+      const hit = intersectAsphere(s, z0, p, d);
+      if (!hit) return { ok: false, path, missed: i };
+      ({ t, p, nrm } = hit);
+    } else if (!isFinite(s.R)) {
+      t = (z0 - p[2]) / d[2];
+      if (!(t > -1e9)) return { ok: false, path };
+      p = [p[0] + t * d[0], p[1] + t * d[1], z0];
+      nrm = [0, 0, -1];
+    } else {
+      const R = s.R, cz = z0 + R;
+      const q = [p[0], p[1], p[2] - cz];
+      const b = q[0] * d[0] + q[1] * d[1] + q[2] * d[2];
+      const c = q[0] * q[0] + q[1] * q[1] + q[2] * q[2] - R * R;
+      const disc = b * b - c;
+      if (disc < 0) return { ok: false, path, missed: i };
+      const sq = Math.sqrt(disc);
+      // choose the intersection on the vertex-side hemisphere
+      const t1 = -b - sq, t2 = -b + sq;
+      const zA = p[2] + t1 * d[2];
+      t = (zA - cz) * R < 0 ? t1 : t2;
+      p = [p[0] + t * d[0], p[1] + t * d[1], p[2] + t * d[2]];
+      nrm = [p[0] / R, p[1] / R, (p[2] - cz) / R]; // points against the propagation (−z side)
+    }
+    opl += Math.abs(n1) * t;
+    if (path) path.push(F ? (([x, y, z]) => [x + F.o[0], y + F.o[1], z + zv[i]])(F.toG(p)) : p.slice());
+    const r = Math.hypot(p[0], p[1]);
+    if (s.stop) { stopHit.x = p[0]; stopHit.y = p[1]; }
+    if (clip && sds && r > sds[i] * 1.0000001) return { ok: false, blocked: i, path, p, d, opl };
+    // the normal must face the incoming ray (it does not after a mirror, when light travels toward −z)
+    let cosi = -(nrm[0] * d[0] + nrm[1] * d[1] + nrm[2] * d[2]);
+    if (cosi < 0) { nrm = [-nrm[0], -nrm[1], -nrm[2]]; cosi = -cosi; }
+    if (mirror) d = [d[0] + 2 * cosi * nrm[0], d[1] + 2 * cosi * nrm[1], d[2] + 2 * cosi * nrm[2]];
+    else {
+      // vector Snell's law
+      const mu = Math.abs(n1 / n2);
+      const k = 1 - mu * mu * (1 - cosi * cosi);
+      if (k < 0) return { ok: false, tir: i, path };
+      const f = mu * cosi - Math.sqrt(k);
+      d = [mu * d[0] + f * nrm[0], mu * d[1] + f * nrm[1], mu * d[2] + f * nrm[2]];
+    }
+    if (F) { const g = F.toG(p); p = [g[0] + F.o[0], g[1] + F.o[1], g[2] + zv[i]]; d = F.toG(d); }
+    n1 = n2;
+  }
+  return { ok: true, p, d, opl, path, stopHit };
+}
+
+// Propagate a traced ray to the plane z = zp.
+export function toPlane(res, zp) {
+  const t = (zp - res.p[2]) / res.d[2];
+  return [res.p[0] + t * res.d[0], res.p[1] + t * res.d[1], zp];
+}
+
+// Trace up to (and including) the stop surface only — used for ray aiming.
+function stopCoords(lens, lambda, p0, d0, zv) {
+  const si = stopIndex(lens);
+  const sub = { surfaces: lens.surfaces.slice(0, si + 1) };
+  const r = trace(sub, lambda, p0, d0, { zv, clip: false });
+  return r.ok ? [r.p[0], r.p[1]] : null;
+}
+
+// Real-ray aiming: find the launch point (on plane z0, direction set by field angle θ)
+// whose ray passes the stop at normalised pupil coordinates (px, py).
+export function aimRay(lens, lambda, thetaDeg, px, py, par) {
+  par = par || paraxial(lens, lambda);
+  const zv = par.zv;
+  const th = thetaDeg * Math.PI / 180;
+  const d = [0, Math.sin(th), Math.cos(th)];
+  const z0 = -20;
+  const rEP = lens.epd / 2;
+  // paraxial initial guess through the entrance pupil
+  let x = px * rEP, y = py * rEP + (z0 - par.zEP) * Math.tan(th);
+  const tx = px * par.stopR, ty = py * par.stopR;
+  if (stopIndex(lens) === 0 && zv.length) {
+    // the stop is the first surface: aim directly
+  }
+  for (let it = 0; it < 6; it++) {
+    const s = stopCoords(lens, lambda, [x, y, z0], d, zv);
+    if (!s) return null;
+    const ex = s[0] - tx, ey = s[1] - ty;
+    if (Math.abs(ex) < 1e-9 && Math.abs(ey) < 1e-9) break;
+    const h = 1e-4;
+    const sx = stopCoords(lens, lambda, [x + h, y, z0], d, zv);
+    const sy = stopCoords(lens, lambda, [x, y + h, z0], d, zv);
+    if (!sx || !sy) return null;
+    const a = (sx[0] - s[0]) / h, b = (sy[0] - s[0]) / h, c = (sx[1] - s[1]) / h, e = (sy[1] - s[1]) / h;
+    const det = a * e - b * c;
+    if (Math.abs(det) < 1e-12) return null;
+    x -= (e * ex - b * ey) / det;
+    y -= (-c * ex + a * ey) / det;
+  }
+  // OPL measured from the incident plane wavefront through the origin
+  return { p: [x, y, z0], d, opl0: x * d[0] + y * d[1] + z0 * d[2] };
+}
+
+// Automatic clear semi-diameters: trace marginal rays at full field, take the maxima.
+export function autoSemiDiameters(lens, lambdas = [486.13, 587.56, 656.27]) {
+  const N = lens.surfaces.length, sd = new Array(N).fill(0);
+  for (const lam of lambdas) {
+    const par = paraxial(lens, lam);
+    for (const f of [0, 0.7, 1]) for (const [px, py] of [[0, 1], [0, -1], [1, 0], [0, 0]]) {
+      const a = aimRay(lens, lam, f * lens.field, px, py, par);
+      if (!a) continue;
+      const r = trace(lens, lam, a.p, a.d, { clip: false, path: true, zv: par.zv });
+      if (!r.path) continue;
+      for (let i = 0; i < N && i + 1 < r.path.length; i++) sd[i] = Math.max(sd[i], Math.hypot(r.path[i + 1][0], r.path[i + 1][1]));
+    }
+  }
+  return sd.map((v) => v * 1.04 + 0.2);
+}
+
+// Chief-ray image point and the exit-pupil reference sphere.
+export function referenceSphere(lens, lambda, thetaDeg, zImg, par) {
+  par = par || paraxial(lens, lambda);
+  const a = aimRay(lens, lambda, thetaDeg, 0, 0, par);
+  if (!a) return null;
+  const r = trace(lens, lambda, a.p, a.d, { clip: false, opl0: a.opl0, zv: par.zv });
+  if (!r.ok) return null;
+  const P = toPlane(r, zImg);
+  const E = toPlane(r, par.zXP);
+  const R = Math.hypot(P[0] - E[0], P[1] - E[1], P[2] - E[2]);
+  // OPL of the chief ray up to the reference sphere (point E)
+  const tE = (par.zXP - r.p[2]) / r.d[2];
+  return { center: P, R, oplChief: r.opl + tE, chief: r };
+}
+
+// OPD (in waves) of a ray w.r.t. the reference sphere; positive = ray path longer.
+export function opd(lens, lambda, thetaDeg, px, py, ref, par) {
+  const r = opdRay(lens, lambda, thetaDeg, px, py, ref, par);
+  return r ? r.w : null;
+}
+
+// The same, also returning s, the unit vector from the ray's point Q on the reference sphere to
+// its centre. Its direction cosines (s[0], s[1]) are the pupil coordinates of the Debye integral;
+// the ray's own direction would count the transverse aberration twice.
+export function opdRay(lens, lambda, thetaDeg, px, py, ref, par) {
+  const a = aimRay(lens, lambda, thetaDeg, px, py, par);
+  if (!a) return null;
+  const r = trace(lens, lambda, a.p, a.d, { clip: false, opl0: a.opl0, zv: par.zv });
+  if (!r.ok) return null;
+  const C = ref.center;
+  const q = [r.p[0] - C[0], r.p[1] - C[1], r.p[2] - C[2]];
+  const b = q[0] * r.d[0] + q[1] * r.d[1] + q[2] * r.d[2];
+  const c = q[0] * q[0] + q[1] * q[1] + q[2] * q[2] - ref.R * ref.R;
+  const disc = b * b - c;
+  if (disc < 0) return null;
+  const t = -b - Math.sqrt(disc); // intersection on the exit-pupil side of the sphere
+  const s = [-(q[0] + t * r.d[0]) / ref.R, -(q[1] + t * r.d[1]) / ref.R, -(q[2] + t * r.d[2]) / ref.R];
+  return { w: (r.opl + t - ref.oplChief) / (lambda * 1e-6), s };
+}
+
+// ── Seidel (third-order) aberration sums, Welford's formulation ──────────────────────────
+// A paraxial marginal ray (y, u) from an axial object at infinity filling the pupil, and a
+// chief ray (ȳ, ū) at the maximum field through the pupil centre, give per surface
+//   S_I = −A² y Δ(u/n)     S_II = −A Ā y Δ(u/n)     S_III = −Ā² y Δ(u/n)
+//   S_IV = −H² c Δ(1/n)    S_V = (Ā/A)(S_III + S_IV)
+//   C_I = A y Δ(δn/n)      C_II = Ā y Δ(δn/n)
+// with A = n(u + yc), Ā = n(ū + ȳc), H = n(ūy − uȳ) and δn = n_F − n_C.
+// Aspheric surfaces add ΔS_I = 8G(n'−n)y⁴ with G = k c³/8 + a₄, and the stop-shift partners
+// ΔS_II = ΔS_I(ȳ/y), ΔS_III = ΔS_I(ȳ/y)², ΔS_V = ΔS_I(ȳ/y)³.
+// Wavefront coefficients at full field and aperture: W₀₄₀ = S_I/8, W₁₃₁ = S_II/2,
+// W₂₂₂ = S_III/2, W₂₂₀ = (S_III + S_IV)/4 (medial), W₃₁₁ = S_V/2 (all in lens units).
+export function seidel(lens, lambda = 587.56) {
+  const S = lens.surfaces, N = S.length, par = paraxial(lens, lambda);
+  const nm = mediaIndices(lens, lambda), nB = mediaIndices(lens, 486.13), nR = mediaIndices(lens, 656.27);
+  let y = lens.epd / 2, u = 0;
+  const ub0 = Math.tan((lens.field * Math.PI) / 180);
+  let yb = -ub0 * par.zEP, ub = ub0;
+  const H = ub * y - u * yb; // object space, n = 1
+  const rows = [];
+  for (let i = 0; i < N; i++) {
+    const s = S[i], c = isFinite(s.R) ? 1 / s.R : 0;
+    const n = i ? nm[i - 1] : 1, n2 = nm[i];
+    const dn1 = i ? nB[i - 1] - nR[i - 1] : 0, dn2 = nB[i] - nR[i];
+    const A = n * (u + y * c), Ab = n * (ub + yb * c);
+    const u2 = (n * u - y * (n2 - n) * c) / n2, ub2 = (n * ub - yb * (n2 - n) * c) / n2;
+    const dUn = u2 / n2 - u / n;
+    const SI = -A * A * y * dUn, SII = -A * Ab * y * dUn, SIII = -Ab * Ab * y * dUn;
+    const SIV = -H * H * c * (1 / n2 - 1 / n);
+    let SV = A !== 0 ? (Ab / A) * (SIII + SIV) : 0;
+    const CI = A * y * (dn2 / n2 - dn1 / n), CII = Ab * y * (dn2 / n2 - dn1 / n);
+    const row = { i, SI, SII, SIII, SIV, SV, CI, CII };
+    const G = ((s.k || 0) * c * c * c) / 8 + ((s.a && s.a[0]) || 0);
+    if (G) {
+      const dSI = 8 * G * (n2 - n) * y ** 4, q = yb / y;
+      row.SI += dSI; row.SII += dSI * q; row.SIII += dSI * q * q; row.SV += dSI * q * q * q;
+    }
+    rows.push(row);
+    if (i < N - 1) { y += S[i].t * u2; yb += S[i].t * ub2; }
+    u = u2; ub = ub2;
+  }
+  const total = {};
+  for (const k of ['SI', 'SII', 'SIII', 'SIV', 'SV', 'CI', 'CII']) total[k] = rows.reduce((a, r) => a + r[k], 0);
+  return { rows, total, H, uImage: u, nImage: nm[N - 1] };
+}
+
+// ── Through-field analysis ──────────────────────────────────────────────────────────────
+// Tangential and sagittal foci from differential real rays about the chief ray (the
+// Coddington foci, found by exact tracing), and real-ray distortion, versus field angle.
+// Returns rows { theta, zt, zs, dist } with zt, zs relative to the paraxial image plane (mm,
+// measured along z) and dist in % relative to f·tanθ.
+// The tangential and sagittal foci of field angle th (degrees): where two meridional rays ±δ of
+// the pupil cross each other, and where a sagittal ray +δ returns to the meridional plane; with
+// the chief ray. Absolute z (mm), or null when a ray fails.
+export function astigFoci(lens, lambda, th, par = paraxial(lens, lambda), delta = 0.02) {
+  const go = (px, py) => { const a = aimRay(lens, lambda, th, px, py, par); if (!a) return null; const r = trace(lens, lambda, a.p, a.d, { clip: false, zv: par.zv }); return r.ok ? r : null; };
+  const c = go(0, 0), t1 = go(0, delta), t2 = go(0, -delta), s1 = go(delta, 0);
+  if (!c || !t1 || !t2 || !s1) return null;
+  const ty1 = t1.d[1] / t1.d[2], ty2 = t2.d[1] / t2.d[2];
+  const zt = (t2.p[1] - ty2 * t2.p[2] - t1.p[1] + ty1 * t1.p[2]) / (ty1 - ty2);
+  const zs = s1.p[2] - s1.p[0] * (s1.d[2] / s1.d[0]);
+  return { zt, zs, chief: c };
+}
+export function fieldCurves(lens, lambda = 587.56, n = 13, delta = 0.02) {
+  const par = paraxial(lens, lambda), out = [];
+  for (let k = 0; k < n; k++) {
+    const th = (lens.field * k) / (n - 1), f = astigFoci(lens, lambda, th, par, delta);
+    if (!f) continue;
+    const yImg = toPlane(f.chief, par.zImage)[1], ideal = par.efl * Math.tan((th * Math.PI) / 180);
+    out.push({ theta: th, zt: f.zt - par.zImage, zs: f.zs - par.zImage, dist: th > 0 ? ((yImg - ideal) / ideal) * 100 : 0 });
+  }
+  return out;
+}

@@ -8,6 +8,15 @@ import { CATALOG as EXPERIMENTS } from './experiments/catalog.js';
 import { michelsonPattern } from './physics/interference.js';
 
 const root = document.getElementById('app');
+
+// 滑块已划过的一段着色（Chromium 没有 ::range-progress）：用户拖动时立即更新，程序改值（自动演示）由低频巡检补上
+const fillRange = (r) => {
+  const lo = +r.min || 0, hi = r.max === '' ? 100 : +r.max, f = hi > lo ? ((+r.value - lo) / (hi - lo)) * 100 : 0;
+  const s = `${Math.max(0, Math.min(100, f)).toFixed(1)}%`;
+  if (r.style.getPropertyValue('--fill') !== s) r.style.setProperty('--fill', s);
+};
+document.addEventListener('input', (e) => { if (e.target.type === 'range') fillRange(e.target); }, true);
+setInterval(() => { if (!document.hidden) document.querySelectorAll('input[type=range]').forEach(fillRange); }, 300);
 let current = null;
 const CN = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
 
@@ -16,6 +25,26 @@ async function route() {
   const m = location.hash.match(/^#\/exp\/(\w+)/);
   const my = ++seq;
   if (current) { current.dispose(); current = null; }
+  if (/^#\/wave/.test(location.hash)) {
+    document.title = '衍射工作台 · 大学物理实验虚拟仿真';
+    root.innerHTML = `<div class="boot"><div class="boot-t">衍射工作台</div><div class="boot-s">正在载入衍射计算模块…</div></div>`;
+    let WaveLab;
+    try { ({ WaveLab } = await import('./wave/WaveLab.js')); } catch (err) { console.error(err); root.innerHTML = `<div class="boot"><div class="boot-t">衍射工作台</div><div class="boot-s">载入失败，请检查网络后<a href="#/">返回目录</a>重试。</div></div>`; return; }
+    if (my !== seq) return;
+    current = new WaveLab(root, { onExit: () => { current = null; location.hash = '#/'; } });
+    window.__wave = current;
+    return;
+  }
+  if (/^#\/bench/.test(location.hash)) {
+    document.title = '光路设计台 · 大学物理实验虚拟仿真';
+    root.innerHTML = `<div class="boot"><div class="boot-t">光路设计台</div><div class="boot-s">正在载入光线追迹引擎与玻璃库…</div></div>`;
+    let Bench;
+    try { ({ Bench } = await import('./bench/Bench.js')); } catch (err) { console.error(err); root.innerHTML = `<div class="boot"><div class="boot-t">光路设计台</div><div class="boot-s">载入失败，请检查网络后<a href="#/">返回目录</a>重试。</div></div>`; return; }
+    if (my !== seq) return;
+    current = new Bench(root, { onExit: () => { current = null; location.hash = '#/'; } });
+    window.__bench = current;
+    return;
+  }
   if (m) {
     const E = EXPERIMENTS.find((e) => e.meta.id === m[1]);
     if (E) {
@@ -58,10 +87,33 @@ function renderHome() {
         <div class="eyebrow">大学物理实验 · 三维仿真</div>
         <h1>大学物理实验<br><em>虚拟仿真</em>实验室</h1>
         <p>从器材柜取出仪器，自己摆放、调节、接线，读数并记录，最后完成数据处理与实验报告。光学实验要共轴、调焦、对准；电学实验要选量程、连电路、注意安全。卡住时可以让某一步自动完成，或者用“一键运行”看完整的规范操作。每次开始实验，待测样品的参数都会重新随机生成。</p>
-        <div class="facts"><span><b>${n}</b>个实验项目</span><span><b>15</b>类自研物理计算模型</span><span>电脑、手机浏览器直接打开，可离线运行</span></div>
+        <div class="facts"><span><b>${n}</b>个实验项目</span><span><b>15</b>类自研物理计算模型</span><span><b>2</b>个开放工作台</span><span>电脑、手机浏览器直接打开，可离线运行</span></div>
       </div>
       <div class="eyepiece"><canvas id="heroCv" width="272" height="272"></canvas><div class="cap">He-Ne 632.8 nm · 等倾干涉 · 实时计算</div></div>
     </header>
+
+    <div class="features">
+    <a class="feature" href="#/bench">
+      <div class="feature-fig"><canvas id="benchCv" width="560" height="200"></canvas></div>
+      <div class="feature-txt">
+        <div class="eyebrow">开放工作台 · 几何光学</div>
+        <h2>光路设计台</h2>
+        <p>在光学平台上自由摆放激光器、透镜、反射镜、棱镜、光栅和光屏，逐条光线实时追迹。折射率按 Sellmeier 公式随波长变化，界面反射按菲涅耳公式分配能量，自动标出实像与虚像，光屏给出光强分布。</p>
+        <div class="chips"><span>14 个典型光路</span><span>431 种光学玻璃</span><span>球差 · 色差 · 消色差</span><span>彩虹 · 全反射 · 光栅</span></div>
+        <span class="go">打开光路设计台 →</span>
+      </div>
+    </a>
+    <a class="feature" href="#/wave">
+      <div class="feature-fig"><canvas id="waveCv" width="560" height="200"></canvas></div>
+      <div class="feature-txt">
+        <div class="eyebrow">开放工作台 · 波动光学</div>
+        <h2>衍射工作台</h2>
+        <p>任选衍射屏，改变波长、光源距离与观察距离，在网格上数值计算光场传播。拖动观察距离，可以连续看到菲涅耳衍射过渡到夫琅禾费衍射，并与理论公式对照。</p>
+        <div class="chips"><span>圆孔 · 圆屏 · 单缝 · 双缝</span><span>光栅 · 矩孔 · 直边</span><span>白光衍射</span><span>角谱法 / 菲涅耳变换</span></div>
+        <span class="go">打开衍射工作台 →</span>
+      </div>
+    </a>
+    </div>
 
     <div class="toc-head"><h2>目 录</h2><span>单击进入实验</span></div>
     ${PARTS.filter((p) => EXPERIMENTS.some((E) => partOf(E) === p)).map((p) => `<div class="toc-part"><h3>${p}</h3><span>${EXPERIMENTS.filter((E) => partOf(E) === p).length} 个实验</span></div>
@@ -90,7 +142,7 @@ function renderHome() {
         <li><span><b>运行环境。</b>Chrome / Edge / Firefox 等支持 WebGL 2 的浏览器；集成显卡、4 GB 内存即可流畅运行，推荐 1920×1080 分辨率。</span></li>
       </ol>
     </section>
-    <div class="colophon"><span>计算核心：矩阵光学 · 干涉与衍射数值计算 · 穆勒矩阵 · 电路改进节点法与牛顿迭代</span><span>开源组件：three.js（MIT）· KaTeX（MIT）· IBM Plex Mono（OFL-1.1）</span><span>数据：CIE 1931 色匹配函数（Wyman 等 2013 解析拟合）· SCHOTT 玻璃 Sellmeier 系数</span></div>
+    <div class="colophon"><span>计算核心：矩阵光学 · 非序列光线追迹 · 角谱法衍射 · 穆勒矩阵 · 电路改进节点法与牛顿迭代</span><span>开源组件：three.js（MIT）· KaTeX（MIT）· IBM Plex Mono（OFL-1.1）· Optica Viva 透镜追迹与玻璃库（MIT）</span><span>数据：CIE 1931 色匹配函数（Wyman 等 2013 解析拟合）· refractiveindex.info 玻璃目录（CC0）</span></div>
   </div></div>`;
   root.querySelectorAll('.toc-row').forEach((c) => {
     const go = () => (location.hash = `#/exp/${c.dataset.id}`);
@@ -103,6 +155,53 @@ function renderHome() {
     try { E.thumb && E.thumb(ctx, cv.width, cv.height); } catch (err) { console.error(`缩略图绘制失败：${E.meta.id}`, err); }
   });
   heroAnim();
+  benchThumb();
+  waveThumb();
+}
+
+/** 首页“衍射工作台”插图：单缝从近场到远场（每列一个观察距离，逐列数值计算） */
+async function waveThumb() {
+  const cv = document.getElementById('waveCv');
+  if (!cv) return;
+  const W = await import('./physics/wavefield.js');
+  if (!document.body.contains(cv)) return;
+  const g = cv.getContext('2d'), Wd = cv.width, Hd = cv.height, N = 256, lam = 632.8e-6, a = 0.4;
+  const img = g.createImageData(Wd, Hd);
+  const cols = 70;
+  for (let c = 0; c < cols; c++) {
+    const z = Math.pow(10, 0.3 + (c / (cols - 1)) * 3.2);
+    const L = Math.max(1.6 * (a + 10 * Math.sqrt(lam * z)), 1.2 * a);
+    // 一维计算：只需一行，用 N×N 网格的中间行近似（缝沿竖直方向）
+    const F = W.mask(W.begin(N, L, lam), (x) => (Math.abs(x) <= a / 2 ? 1 : 0), 2);
+    const out = z <= (L * L) / (N * lam) ? W.angularSpectrum(F, z) : W.fresnelFar(F, z);
+    const row = new Float64Array(N); let mx = 0;
+    for (let j = 0; j < N; j++) { const k = (N / 2) * N + j; row[j] = out.re[k] ** 2 + out.im[k] ** 2; mx = Math.max(mx, row[j]); }
+    const half = 2.2; // 显示 ±2.2 mm
+    for (let x = Math.floor((c * Wd) / cols); x < Math.floor(((c + 1) * Wd) / cols); x++) for (let y = 0; y < Hd; y++) {
+      const X = ((y / Hd) * 2 - 1) * half, j = Math.round(X / out.dx + N / 2);
+      const v = j >= 0 && j < N ? Math.pow(row[j] / mx, 0.6) : 0, p = (y * Wd + x) * 4;
+      img.data[p] = 255 * v; img.data[p + 1] = 40 * v; img.data[p + 2] = 30 * v; img.data[p + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+}
+
+/** 首页“光路设计台”插图：真实追迹一次三棱镜色散 */
+async function benchThumb() {
+  const cv = document.getElementById('benchCv');
+  if (!cv) return;
+  const [{ traceScene }, { compile, makeElement }, { PRESETS }, { wavelengthToRGB }] = await Promise.all([import('./physics/rays2d.js'), import('./bench/elements.js'), import('./bench/presets.js'), import('./physics/color.js')]);
+  if (!document.body.contains(cv)) return;
+  const els = PRESETS.find((p) => p.id === 'prism').build().filter((e) => e.type !== 'detector');
+  const c = compile(els), r = traceScene({ ...c, opts: { partial: true } });
+  const g = cv.getContext('2d'), W = cv.width, H = cv.height, s = 3.2, ox = W * 0.42, oy = H * 0.55;
+  g.fillStyle = '#141817'; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#0b0d0d';
+  for (let x = ox % (25 * s); x < W; x += 25 * s) for (let y = oy % (25 * s); y < H; y += 25 * s) { g.beginPath(); g.arc(x, y, 3, 0, 7); g.fill(); }
+  g.setTransform(s, 0, 0, -s, ox, oy);
+  for (const sh of c.shapes) if (sh.kind === 'glass') { g.beginPath(); sh.edges.forEach((e, i) => { if (i === 0) g.moveTo(...e.a); g.lineTo(...e.b); }); g.closePath(); g.fillStyle = 'rgba(120,170,215,.2)'; g.fill(); g.strokeStyle = 'rgba(170,205,240,.8)'; g.lineWidth = 1 / s; g.stroke(); }
+  g.globalCompositeOperation = 'lighter'; g.lineWidth = 1.6 / s;
+  for (const sg of r.segs) { const k = wavelengthToRGB(sg.lam); g.strokeStyle = `rgba(${k[0] * 255 | 0},${k[1] * 255 | 0},${k[2] * 255 | 0},${Math.min(1, 0.9 * Math.pow(sg.rel, 0.5))})`; g.beginPath(); g.moveTo(...sg.a); g.lineTo(...sg.b); g.stroke(); }
 }
 
 function heroAnim() {

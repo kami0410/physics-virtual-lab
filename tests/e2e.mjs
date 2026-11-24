@@ -151,6 +151,32 @@ for (const id of ids) {
   if (!has('--no-auto')) { const t = () => autoRun(browser, id); t.id = id; t.kind = 'auto'; tasks.push(t); }
   if (!has('--no-monkey')) { const t = () => monkey(browser, id, MONKEY); t.id = id; t.kind = 'monkey'; tasks.push(t); }
 }
+// 光路设计台、衍射工作台：逐个载入预设，检查无报错、有光线 / 有图样
+async function toolSmoke(browser, route) {
+  const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+  await page.addInitScript(INIT, SEED);
+  const t0 = Date.now();
+  await page.goto(`${URL0}#/${route}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForFunction((r) => window[r === 'bench' ? '__bench' : '__wave'], route, { timeout: 30000 });
+  const r = await page.evaluate(async (route) => {
+    const bad = [];
+    if (route === 'bench') {
+      const b = window.__bench, sel = document.querySelector('[data-a=preset]');
+      for (const o of [...sel.options].slice(1)) { b.loadPreset(o.value); if (!b.res.segs.length) bad.push(`${o.value}: 没有光线`); if (b.traceMs > 400) bad.push(`${o.value}: 追迹 ${b.traceMs.toFixed(0)} ms`); }
+      // 每种元件都能添加并参与追迹
+      for (const btn of document.querySelectorAll('.bp-item')) btn.click();
+      b.trace();
+      return { bad, info: `${sel.options.length - 1} 个预设、${document.querySelectorAll('.bp-item').length} 种元件` };
+    }
+    const w = window.__wave, sel = document.querySelector('[data-a=preset]');
+    for (const o of [...sel.options].slice(1)) { w.load(+o.value); await new Promise((res) => setTimeout(res, 40)); const I = w.out.res[0].I; let s = 0; for (const v of I) s += v; if (!(s > 0) || !isFinite(s)) bad.push(`${o.textContent}: 图样无效`); }
+    return { bad, info: `${sel.options.length - 1} 个典型现象` };
+  }, route);
+  const errs = await page.evaluate(() => window.__errors);
+  await page.close();
+  return { id: route, kind: 'tool', s: Math.round((Date.now() - t0) / 1000), problems: [...r.bad, ...errs], info: r.info };
+}
+if (!ONLY) for (const route of ['bench', 'wave']) { const t = () => toolSmoke(browser, route); t.id = route; t.kind = 'tool'; tasks.push(t); ids.push(route); }
 console.log(`测试 ${ids.length} 个实验，种子 ${SEED}…`);
 const results = await pool(tasks, 4);
 await browser.close();

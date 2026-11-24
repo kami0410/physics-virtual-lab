@@ -5,6 +5,7 @@ import { Component } from '../core/Component.js';
 import { I } from '../core/App.js';
 import { AXIS_Y, MAT, mesh, labTable, opticalRail, carriage, lensMesh, whiteScreen, lampHousing, ICONS, canvasTexture } from '../core/Models.js';
 import { ThickLens, lensImaging, autocollimation, imagePosition } from '../physics/matrixOptics.js';
+import { spotOnScreen, whiteBlur } from '../physics/realLens.js';
 import { linFit, mean, uA, fmtU, texU, sig, gauss, rand, relErr, pct, clamp } from '../core/Stats.js';
 import { lineData } from '../core/Plot.js';
 import * as FIG from './figures.js';
@@ -28,6 +29,8 @@ export class LensExperiment {
     this.lampOn = false;
     this.lensOff = { y: rand(0.6, 1.1) * (Math.random() < 0.5 ? -1 : 1), z: rand(0.5, 1.0) * (Math.random() < 0.5 ? -1 : 1) };
     this.mirrorTilt = 0.07;
+    this.stopD = D_LENS; // 透镜前可变光阑的通光口径 cm（不加光阑时即透镜口径）
+    this.spotCache = new Map();
     this.showRays = false;
     this.obj = objectPattern();
   }
@@ -90,6 +93,7 @@ export class LensExperiment {
       controls: () => [
         { type: 'knob', label: '透镜高度（升降）', get: () => this.lensOff.y, set: (v) => (this.lensOff.y = v), min: -2, max: 2, step: 0.02, bigStep: 0.2, perRev: 0.5, digits: 2, unit: 'cm' },
         { type: 'knob', label: '透镜横向位置', get: () => this.lensOff.z, set: (v) => (this.lensOff.z = v), min: -2, max: 2, step: 0.02, bigStep: 0.2, perRev: 0.5, digits: 2, unit: 'cm' },
+        { type: 'select', label: '透镜前的光阑', get: () => String(this.stopD), set: (v) => { this.stopD = +v; this.spotCache.clear(); }, options: [{ value: String(D_LENS), label: `不加光阑（通光 ${D_LENS} cm）` }, { value: '2.5', label: '光阑 Φ2.5 cm' }, { value: '1.5', label: '光阑 Φ1.5 cm' }], sub: '口径越小，球差越小、像越清晰，但像也越暗。' },
         { type: 'note', html: '共轴细调：把像屏放在 L&gt;4f 处，移动透镜得到大像和小像，调节透镜高度/横向位置使大像中心与小像中心重合。' },
       ],
     }));
@@ -143,12 +147,39 @@ export class LensExperiment {
     if (xo == null || xL == null || xs == null) return null;
     if (!(xo < xL - 0.5 && xL + 0.5 < xs)) return null;
     const { A, B, d1 } = lensImaging(xo, xL, xs, this.lens);
-    const thMax = D_LENS / 2 / d1;
-    const blur = Math.hypot(Math.abs(B) * thMax, 0.006);
+    const thMax = this.stopD / 2 / d1;
+    // 弥散斑：对白光三个波段分别做精确光线追迹（含离焦、球差、色差），见 physics/realLens.js
+    const spots = this.spots(d1, xs - xL - this.lens.t / 2);
+    const blur = Math.max(0.006, whiteBlur(spots));
     const mag = A - B / d1; // 光束中心线放大率
     const cy = this.lensOff.y * (1 - mag), cz = this.lensOff.z * (1 - mag);
     const bright = clamp(225 * thMax * thMax / Math.max(0.05, mag * mag), 0, 3);
-    return { A, B, blur, mag, cy, cz, bright, d1 };
+    return { A, B, blur, spots, mag, cy, cz, bright, d1 };
+  }
+  spots(d1, d2) {
+    const k = d1.toFixed(4) + '|' + d2.toFixed(4) + '|' + this.stopD;
+    let v = this.spotCache.get(k);
+    if (!v) {
+      if (this.spotCache.size > 400) this.spotCache.clear();
+      v = spotOnScreen({ R1: this.lens.R, R2: -this.lens.R, t: this.lens.t, glass: 'K9', D: this.stopD }, d1, d2);
+      this.spotCache.set(k, v);
+    }
+    return v;
+  }
+  /** 像最清晰（白光弥散最小）的像屏位置：在近轴像附近做黄金分割搜索 */
+  sharpScreen(xo, xL) {
+    const xi = imagePosition(xo, xL, this.lens), d1 = xL - this.lens.t / 2 - xo;
+    const F = (xs) => whiteBlur(this.spots(d1, xs - xL - this.lens.t / 2));
+    let a = xi - Math.max(1.5, 0.06 * (xi - xL)), b = xi + 0.4;
+    for (let i = 0; i < 40; i++) { const m1 = a + 0.382 * (b - a), m2 = a + 0.618 * (b - a); if (F(m1) < F(m2)) b = m2; else a = m1; }
+    return (a + b) / 2;
+  }
+  /** 物屏、像屏固定时，在 x0 附近找像最清晰的透镜位置 */
+  sharpLens(xo, xs, x0) {
+    const F = (xL) => whiteBlur(this.spots(xL - this.lens.t / 2 - xo, xs - xL - this.lens.t / 2));
+    let a = x0 - 1.2, b = x0 + 1.2;
+    for (let i = 0; i < 40; i++) { const m1 = a + 0.382 * (b - a), m2 = a + 0.618 * (b - a); if (F(m1) < F(m2)) b = m2; else a = m1; }
+    return (a + b) / 2;
   }
 
   /** 求物屏与像屏之间能成清晰像的透镜位置（B=0 的根） */
@@ -205,13 +236,16 @@ export class LensExperiment {
       if (im) {
         const mag = im.mag;
         const sz = this.obj.sizeCm * Math.abs(mag) * s;
-        const blurPx = im.blur * s * 0.55;
-        g.filter = blurPx > 0.4 ? `blur(${blurPx.toFixed(1)}px)` : 'none';
+        // 红、绿、蓝三个波段各自的弥散不同（色差）：分别模糊后相加，清晰像的边缘会带彩色镶边
         g.globalAlpha = clamp(im.bright * 0.9, 0, 1);
         g.translate(W / 2 + im.cz * s, H / 2 - im.cy * s);
         g.scale(Math.sign(mag) || 1, Math.sign(mag) || 1);
-        for (let k = 0; k < (im.bright > 1.2 ? 2 : 1); k++) g.drawImage(this.obj.canvas, -sz / 2, -sz / 2, sz, sz);
-        foot = `放大率 β≈${mag.toFixed(2)}  弥散斑≈${(im.blur * 20).toFixed(2)} mm`;
+        for (const sp of im.spots) {
+          const blurPx = Math.max(0.006, sp.blur) * s * 0.55;
+          g.filter = blurPx > 0.4 ? `blur(${Math.min(80, blurPx).toFixed(1)}px)` : 'none';
+          for (let k = 0; k < (im.bright > 1.2 ? 2 : 1); k++) g.drawImage(this.tinted(sp.ch), -sz / 2, -sz / 2, sz, sz);
+        }
+        foot = `放大率 β≈${mag.toFixed(2)}  弥散斑≈${(im.blur * 20).toFixed(2)} mm（白光，含球差与色差）`;
       } else if (xs != null && xo != null && xs > xo) {
         // 无透镜或透镜不在物、屏之间：屏上只有一片模糊亮斑
         const d = xs - xo;
@@ -225,6 +259,19 @@ export class LensExperiment {
     g.restore();
     v.foot(foot);
     this.screenTex.needsUpdate = true;
+  }
+
+  /** 物屏图案的单色分量（用于三色分别模糊） */
+  tinted(ch) {
+    if (!this._tint) this._tint = {};
+    if (!this._tint[ch]) {
+      const src = this.obj.canvas, c = document.createElement('canvas'); c.width = src.width; c.height = src.height;
+      const g = c.getContext('2d'); g.drawImage(src, 0, 0);
+      g.globalCompositeOperation = 'multiply'; g.fillStyle = { r: '#ff0000', g: '#00ff00', b: '#0000ff' }[ch]; g.fillRect(0, 0, c.width, c.height);
+      g.globalCompositeOperation = 'destination-in'; g.drawImage(src, 0, 0);
+      this._tint[ch] = c;
+    }
+    return this._tint[ch];
   }
 
   drawObjView(objLit) {
@@ -336,8 +383,9 @@ export class LensExperiment {
 
   // ---------- 记录 ----------
   readPos(key) { return Math.round((this.pos(key) + gauss(0.015)) * 100) / 100; }
-  sharpWarn(blur) {
-    if (blur > 0.05) this.app.toast(`提示：当前像不够清晰（弥散斑约 ${(blur * 20).toFixed(1)} mm），读数误差会较大`, 'warn');
+  /** best：在当前条件下能达到的最小弥散（有球差时并不为零） */
+  sharpWarn(blur, best = 0) {
+    if (blur > Math.max(0.05, best * 1.5 + 0.01)) this.app.toast(`提示：当前像不够清晰（弥散斑约 ${(blur * 20).toFixed(1)} mm），读数误差会较大`, 'warn');
   }
 
   tables() {
@@ -356,7 +404,8 @@ export class LensExperiment {
           label: '记录三者位置', onClick: (t) => {
             const im = this.imaging();
             if (!im) { this.app.toast('请先在导轨上依次放置物屏、透镜、像屏并使屏上成像', 'warn'); return; }
-            this.sharpWarn(im.blur);
+            const best = this.imaging(this.sharpScreen(this.pos('object'), this.pos('lens')));
+            this.sharpWarn(im.blur, best ? best.blur : 0);
             t.addRow({ xo: this.readPos('object'), xL: this.readPos('lens'), xs: this.readPos('screen') });
           },
         }],
@@ -403,7 +452,8 @@ export class LensExperiment {
   recBessel(t, key) {
     const im = this.imaging();
     if (!im) { this.app.toast('请先放置物屏、透镜、像屏并成像', 'warn'); return; }
-    this.sharpWarn(im.blur);
+    const xs0 = this.pos('screen'), best = this.imaging(xs0, this.sharpLens(this.pos('object'), xs0, this.pos('lens')));
+    this.sharpWarn(im.blur, best ? best.blur : 0);
     if (key === 'x1' && Math.abs(im.mag) < 1) this.app.toast('注意：当前是缩小像，应记录到“小像”一栏', 'warn');
     if (key === 'x2' && Math.abs(im.mag) > 1) this.app.toast('注意：当前是放大像，应记录到“大像”一栏', 'warn');
     const xo = this.readPos('object'), xs = this.readPos('screen');
@@ -480,7 +530,7 @@ export class LensExperiment {
           for (const u of us) {
             const xL = xo + u;
             await app.moveTo('lens', xL, 700);
-            const xi = imagePosition(xo, xL, this.lens);
+            const xi = this.sharpScreen(xo, xL);
             if (xi > 99) continue;
             await app.moveTo('screen', Math.min(100, xi + 4), 600);
             await app.moveTo('screen', xi - 2.5, 600);
@@ -501,7 +551,7 @@ export class LensExperiment {
           const L0 = 4.3 * this.fTrue, L1 = Math.max(L0 + 2, Math.min(99 - xo, 5.6 * this.fTrue));
           for (const L of [L0, (L0 + L1) / 2, L1].map((v) => Math.round(v * 2) / 2)) {
             await app.moveTo('screen', xo + L, 700);
-            const [p1, p2] = this.focusPositions(xo, xo + L);
+            const [p1, p2] = this.focusPositions(xo, xo + L).map((p) => this.sharpLens(xo, xo + L, p));
             await app.moveTo('lens', p1 - 2, 600); await app.moveTo('lens', p1, 400);
             await app.record('bessel', 0);
             await app.moveTo('lens', p2 + 2, 700); await app.moveTo('lens', p2, 400);

@@ -98,15 +98,15 @@ export class App {
         <div class="tb-sep"></div>
         <div class="tb-group">
           <button class="btn primary" data-a="runall" title="从当前步骤开始自动完成全部实验">${I.play}一键运行</button>
-          <button class="btn" data-a="runstep" title="自动完成当前步骤">${I.step}自动完成本步</button>
+          <button class="btn" data-a="runstep" title="自动完成当前步骤">${I.step}<span class="lb">自动完成本步</span></button>
           <select data-a="speed" title="演示速度"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select>
           <select data-a="quality" title="画质：自动根据设备性能调节观察窗分辨率和三维像素比"><option value="auto">画质 自动</option><option value="high">画质 高</option><option value="mid">画质 中</option><option value="low">画质 低</option></select>
         </div>
         <div class="tb-sep"></div>
         <div class="tb-group">
-          <button class="btn" data-a="analyze">${I.chart}数据处理</button>
-          <button class="btn" data-a="report">${I.doc}实验报告</button>
-          <button class="btn" data-a="reset" title="重新开始（随机生成新的待测样品参数）">${I.reset}重做</button>
+          <button class="btn" data-a="analyze" title="数据处理">${I.chart}<span class="lb">数据处理</span></button>
+          <button class="btn" data-a="report" title="实验报告">${I.doc}<span class="lb">实验报告</span></button>
+          <button class="btn" data-a="reset" title="重新开始（随机生成新的待测样品参数）">${I.reset}<span class="lb">重做</span></button>
         </div>
       </header>
       <div class="main">
