@@ -249,7 +249,7 @@ export class SpectrometerExperiment {
     }));
 
     this.telView = app.addView({ id: 'tel', title: '望远镜视场', w: 270, h: 270, res: 1.2 });
-    this.verView = app.addView({ id: 'ver', title: '游标读数（A / B）', w: 270, h: 150, res: 2 });
+    this.verView = app.addView({ id: 'ver', title: '游标读数（A / B）', w: 360, h: 156, res: 2 });
 
     // 光线
     this.beamIn = new Beam(0xdcdcff, 0.25, 1.0); scene.add(this.beamIn.group);
@@ -359,12 +359,13 @@ export class SpectrometerExperiment {
     const { A, B } = this.readings();
     g.fillStyle = '#20262a'; g.fillRect(0, 0, W, H);
     const drawOne = (val, y0, name) => {
-      const ppd = 36 * (W / 540);
-      const x0 = W * 0.22;
+      // 游标 30 格（14.5°）必须完整落在窗口内，才能读出 0′–30′
+      const x0 = W * 0.1;
+      const ppd = (W - 12 - x0) / 15.2;
       const hh = H / 2 - 18;
       g.fillStyle = '#ddd8c6'; g.fillRect(8, y0 + 6, W - 16, hh);
       g.save(); g.beginPath(); g.rect(8, y0 + 6, W - 16, hh); g.clip();
-      g.fillStyle = '#111'; g.textAlign = 'center'; g.font = `${Math.round(H * 0.07)}px Arial`;
+      g.fillStyle = '#111'; g.textAlign = 'center'; g.font = `${Math.min(H * 0.068, ppd * 0.44).toFixed(1)}px "IBM Plex Mono", Consolas, monospace`;
       // 主尺：0.5° 分度
       const start = Math.floor((val - (x0 - 8) / ppd) * 2) / 2;
       for (let a = start; a < val + (W - x0) / ppd; a += 0.5) {
@@ -372,7 +373,7 @@ export class SpectrometerExperiment {
         const full = Math.abs(a - Math.round(a)) < 1e-6;
         const ai = ((Math.round(a * 2) / 2) % 360 + 360) % 360;
         const L = ai % 10 === 0 ? hh * 0.5 : full ? hh * 0.38 : hh * 0.25;
-        g.fillRect(x - 0.7, y0 + 6, 1.4, L);
+        g.fillRect(x - 0.45, y0 + 6, 0.9, L);
         if (full) g.fillText(String(Math.round(ai)), x, y0 + 6 + hh * 0.5 + H * 0.045);
       }
       // 游标：30 格对应主尺 29 格（14.5°）
@@ -381,7 +382,7 @@ export class SpectrometerExperiment {
       for (let j = 0; j <= 30; j++) {
         const x = x0 + (j * 29) / 60 * ppd;
         const L = j % 5 === 0 ? hh * 0.3 : hh * 0.18;
-        g.fillRect(x - 0.6, y0 + 6 + hh - L, 1.2, L);
+        g.fillRect(x - 0.45, y0 + 6 + hh - L, 0.9, L);
         if (j % 10 === 0) g.fillText(String(j), x, y0 + 6 + hh - L - 2);
       }
       g.fillStyle = '#c41e3a'; g.fillRect(x0 - 0.9, y0 + 6 + hh * 0.55, 1.8, hh * 0.45);

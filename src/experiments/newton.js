@@ -1,6 +1,7 @@
 // 实验三：牛顿环测平凸透镜曲率半径（读数显微镜）
 import * as THREE from 'three';
 import { Component } from '../core/Component.js';
+import { drawDrum } from '../core/Reticle.js';
 import { MAT, mesh, labTable, lampHousing, ICONS, canvasTexture, knobMesh, glowSprite } from '../core/Models.js';
 import { newtonIntensity, GLSL_FILM } from '../physics/interference.js';
 import { GPU, GLSL } from '../core/gpu.js';
@@ -280,10 +281,8 @@ export class NewtonExperiment {
     g.fillStyle = '#cfd6d1'; g.font = '11px "Microsoft YaHei"'; g.fillText('主尺 / mm', 70, 84);
     // 鼓轮
     const d = (x - mm) * 100;
-    g.fillStyle = '#d4d4d8'; g.fillRect(146, 12, 120, 56);
+    drawDrum(g, 152, 12, 114, 56, d);
     g.fillStyle = '#111';
-    for (let k = -8; k <= 8; k++) { const val = Math.floor(d) + k; const py = 40 + (k - (d - Math.floor(d))) * 3.3; if (py < 13 || py > 67) continue; const vv = ((val % 100) + 100) % 100; g.fillRect(146, py, vv % 5 === 0 ? 20 : 12, 1); if (vv % 10 === 0) { g.textAlign = 'left'; g.fillText(String(vv), 172, py + 3.5); } }
-    g.fillStyle = '#c41e3a'; g.fillRect(146, 39.5, 120, 1.2);
     g.fillStyle = '#cfd6d1'; g.textAlign = 'center'; g.fillText('鼓轮 × 0.01 mm', 206, 84);
     if (this.assist) { g.fillStyle = '#8fe3a5'; g.font = '12px "IBM Plex Mono", Consolas'; g.textAlign = 'left'; g.fillText(`${mm} + ${(d / 100).toFixed(3)} = ${x.toFixed(3)} mm`, 10, 102); }
     g.restore();

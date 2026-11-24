@@ -2,13 +2,14 @@
 import * as THREE from 'three';
 import { GPU, GLSL } from '../core/gpu.js';
 import { Component } from '../core/Component.js';
+import { drawMicroReticle, drawMicroDrum } from '../core/Reticle.js';
 import { AXIS_Y, MAT, mesh, labTable, opticalRail, carriage, lensMesh, lampHousing, glowSprite, ICONS, Beam, knobMesh } from '../core/Models.js';
 import { mean, uA, texU, gauss, rand, relErr, pct, sig } from '../core/Stats.js';
 
 const LINES = [[589.0e-6, 1], [589.6e-6, 0.5]];
 const LAMBDA = 589.3e-6; // mm
 const N_GLASS = 1.516;
-const EYE_FOV = 8; // 测微目镜视场 mm
+const EYE_FOV = 10; // 测微目镜圆形视场直径 mm（0–8 mm 固定刻度完整可见）
 const BACK = 0.015; // 测微目镜鼓轮空程 mm
 const H_EFF = 3; // 对条纹有贡献的狭缝有效长度 mm（狭缝与棱脊不平行时的等效展宽）
 const FR = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
@@ -192,7 +193,7 @@ export class BiprismExperiment {
 
     this.beamA = new Beam(0xffc23a, 0.06, 0.5); this.beamB = new Beam(0xffc23a, 0.06, 0.5); this.beamC = new Beam(0xffc23a, 0.06, 0.5);
     [this.beamA, this.beamB, this.beamC].forEach((b) => scene.add(b.group));
-    this.eyeView = app.addView({ id: 'eye', title: '测微目镜视场', w: 290, h: 220, res: 1.4 });
+    this.eyeView = app.addView({ id: 'eye', title: '测微目镜视场', w: 250, h: 250, res: 1.4 });
     this.readView = app.addView({ id: 'read', title: '固定刻度与鼓轮', w: 290, h: 100, res: 1.5 });
   }
 
@@ -270,15 +271,8 @@ export class BiprismExperiment {
     }
     g.putImageData(img, 0, 0);
     }
-    // 分划板：固定刻度 0–8 mm 与可移动叉丝
-    g.save();
-    g.filter = blurEye > 0.1 ? `blur(${Math.min(6, blurEye * 3).toFixed(1)}px)` : 'none';
-    g.strokeStyle = 'rgba(20,20,20,.85)'; g.fillStyle = 'rgba(20,20,20,.85)'; g.lineWidth = 1.2;
-    g.font = `${Math.round(H * 0.055)}px "IBM Plex Mono", Consolas`; g.textAlign = 'center';
-    for (let mm = 0; mm <= 8; mm++) { const x = W / 2 + (mm - 4) * pxmm; g.beginPath(); g.moveTo(x, H * 0.84); g.lineTo(x, H * 0.92); g.stroke(); g.fillText(String(mm), x, H * 0.98); }
-    const cx = W / 2 + (this.pos - 4) * pxmm;
-    g.beginPath(); g.moveTo(cx, 0); g.lineTo(cx, H * 0.8); g.moveTo(cx - 14, H * 0.4 - 14); g.lineTo(cx + 14, H * 0.4 + 14); g.moveTo(cx + 14, H * 0.4 - 14); g.lineTo(cx - 14, H * 0.4 + 14); g.stroke();
-    g.restore();
+    // 分划板：0–8 mm 固定刻度，十字叉丝与竖直双线随鼓轮移动；视度不对时分划板模糊
+    drawMicroReticle(g, W, H, { pxmm, pos: this.pos, blur: blurEye });
     let foot = '';
     if (!this.src) foot = this.lampOn ? '视场很暗：检查光源和狭缝' : '视场黑暗：钠光灯未打开';
     else if (!this.app.comp('biprism').placed) foot = '未放双棱镜：均匀照明';
@@ -290,18 +284,7 @@ export class BiprismExperiment {
   drawRead() {
     const v = this.readView, g = v.ctx, W = v.W;
     const sc = W / 290; g.save(); g.scale(sc, sc);
-    g.fillStyle = '#20262a'; g.fillRect(0, 0, 290, 100);
-    const x = this.drive, mm = Math.floor(x), d = (x - mm) * 100;
-    g.fillStyle = '#ece6d2'; g.fillRect(10, 10, 120, 50);
-    g.fillStyle = '#111'; g.font = '10px Arial'; g.textAlign = 'center';
-    for (let k = 0; k <= 8; k++) { const px = 16 + k * 13.5; g.fillRect(px, 10, 1, 14); g.fillText(String(k), px, 36); }
-    g.fillStyle = '#c41e3a'; g.fillRect(16 + x * 13.5 - 0.7, 10, 1.5, 32);
-    g.fillStyle = '#cfd6d1'; g.font = '11px "Microsoft YaHei"'; g.fillText('分划板固定刻度 / mm', 70, 76);
-    g.fillStyle = '#d4d4d8'; g.fillRect(150, 10, 120, 50); g.fillStyle = '#111';
-    for (let k = -7; k <= 7; k++) { const val = Math.floor(d) + k; const py = 35 + (k - (d - Math.floor(d))) * 3.3; if (py < 11 || py > 59) continue; const vv = ((val % 100) + 100) % 100; g.fillRect(150, py, vv % 5 === 0 ? 20 : 12, 1); if (vv % 10 === 0) { g.textAlign = 'left'; g.fillText(String(vv), 176, py + 3.5); } }
-    g.fillStyle = '#c41e3a'; g.fillRect(150, 34.5, 120, 1.2);
-    g.fillStyle = '#cfd6d1'; g.textAlign = 'center'; g.fillText('鼓轮 × 0.01 mm', 210, 76);
-    if (this.assist) { g.fillStyle = '#8fe3a5'; g.font = '12px "IBM Plex Mono", Consolas'; g.textAlign = 'left'; g.fillText(`${mm} + ${(d / 100).toFixed(3)} = ${x.toFixed(3)} mm`, 10, 94); }
+    drawMicroDrum(g, this.drive, this.assist);
     g.restore();
   }
 
