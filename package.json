@@ -1,0 +1,25 @@
+{
+  "name": "optics-virtual-lab",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "大学物理光学实验虚拟仿真平台",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:single": "vite build --mode single",
+    "preview": "vite preview",
+    "test": "npm run build:single && node tests/e2e.mjs",
+    "test:quick": "node tests/e2e.mjs --monkey 150"
+  },
+  "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "katex": "^0.19.1",
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.49.1",
+    "vite": "^8.3.8",
+    "vite-plugin-singlefile": "^2.3.4"
+  }
+}
