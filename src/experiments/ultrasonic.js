@@ -7,6 +7,7 @@ import { drawMicroReticle, drawMicroDrum } from '../core/Reticle.js';
 import { AXIS_Y, MAT, mesh, labTable, opticalRail, carriage, lensMesh, laserMesh, Beam, ICONS, meterBox } from '../core/Models.js';
 import { linFit, texU, gauss, rand, relErr, pct, sig } from '../core/Stats.js';
 import { lineData } from '../core/Plot.js';
+import * as FIG from './figures.js';
 
 const LAMBDA = 632.8e-6; // mm
 const EYE_FOV = 10; // 测微目镜圆形视场直径 mm（0–8 mm 固定刻度完整可见）
@@ -392,6 +393,7 @@ export class UltrasonicExperiment {
   principle() {
     return `<h3>1. 超声光栅</h3><p>压电陶瓷晶片在高频电压驱动下振动，在液体中激发超声波，经槽底反射形成驻波。液体密度、从而折射率随空间周期性变化，周期等于超声波长 $\\Lambda$。光垂直穿过液槽时，波面受到周期性的相位调制，液体相当于一块<b>相位光栅</b>，光栅常数 $\\Lambda=v/\\nu$。</p>
 <h3>2. 拉曼–奈斯衍射</h3><p>相位调制深度为 $v_{RN}$ 时，第 $k$ 级衍射光强 $I_k=J_k^2(v_{RN})$（$J_k$ 为 $k$ 阶贝塞尔函数），衍射角满足 $\\Lambda\\sin\\theta_k=k\\lambda$。在会聚透镜后焦面上，相邻光点间距</p>$$\\Delta x=\\frac{\\lambda f}{\\Lambda}\\quad\\Rightarrow\\quad v=\\Lambda\\nu=\\frac{\\lambda f\\nu}{\\Delta x}$$
+${FIG.ultrasonicFig()}
 <h3>3. 谐振与垂直入射</h3><p>只有信号频率接近晶片的固有频率时，振幅才足够大，看到多级衍射；光不垂直入射时，各级光点不再对称。</p>
 <h3>4. 本仿真的计算模型</h3><p>换能器按品质因数 $Q≈50$ 的谐振曲线响应；各级光强用自编的贝塞尔函数级数计算；光点大小由高斯光束的焦斑和目镜离焦量决定。声速随温度变化：水采用 Marczak 经验公式，乙醇、甘油采用线性近似。温度、谐振频率每次随机生成。</p>`;
   }

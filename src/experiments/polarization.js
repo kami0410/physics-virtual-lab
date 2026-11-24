@@ -6,6 +6,7 @@ import { AXIS_Y, MAT, mesh, labTable, opticalRail, carriage, laserMesh, Beam, IC
 import { sourceStokes, polarizerM, retarderM, applyM, ellipseOf, rad, deg } from '../physics/polarization.js';
 import { linFit, fmtU, texU, gauss, rand, pct, sig } from '../core/Stats.js';
 import { fnData } from '../core/Plot.js';
+import * as FIG from './figures.js';
 
 const P0 = 1000; // 激光功率 μW
 const RANGES = [20, 200, 2000]; // μW
@@ -510,7 +511,9 @@ export class PolarizationExperiment {
 
   principle() {
     return `<h3>1. 马吕斯定律</h3><p>线偏振光通过检偏器，透射光强</p>$$I=I_0\\cos^2\\theta$$<p>$\\theta$ 为入射光振动方向与检偏器透振方向的夹角。$\\theta=90^\\circ$ 时消光。</p>
+${FIG.malusFig()}
 <h3>2. 波片</h3><p>波片的 o 光与 e 光产生相位差 $\\delta=\\dfrac{2\\pi}{\\lambda}(n_o-n_e)d$。$\\delta=\\pi$ 为 1/2 波片：线偏振光入射时出射仍为线偏振光，若入射振动方向与快轴夹角为 $\\alpha$，出射光振动面转过 $2\\alpha$。$\\delta=\\pi/2$ 为 1/4 波片：出射光一般为椭圆偏振光，长短轴之比为 $\\cot\\alpha$；$\\alpha=45^\\circ$ 时为圆偏振光，$\\alpha=0,90^\\circ$ 时仍为线偏振光。</p>
+${FIG.polarizationChain()}
 <h3>3. 本仿真的计算模型（斯托克斯—穆勒矩阵）</h3><p>光的偏振态用斯托克斯矢量 $S=(S_0,S_1,S_2,S_3)^T$ 表示，可同时描述自然光、部分偏振光和完全偏振光。每个元件对应一个 4×4 穆勒矩阵，出射光为</p>$$S_{out}=M_{P_2}\\,M_{W}\\,M_{P_1}\\,S_{in}$$
 <p>偏振片按实际的二向色性模型计算（主透射率 $p=0.85$，消光比 $p/q=1000$），因此消光位置的光强不为零；波片的相位延迟带有约 2% 的制造偏差；光源是偏振度约 30% 的部分偏振光。转盘的 0 刻度与元件主轴之间的夹角随机生成，需要通过实验确定。</p>`;
   }

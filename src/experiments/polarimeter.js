@@ -5,6 +5,7 @@ import { Component } from '../core/Component.js';
 import { MAT, mesh, labTable, lampHousing, glowSprite, ICONS, knobMesh, canvasTexture } from '../core/Models.js';
 import { linFit, mean, stdev, gauss, rand, relErr, pct, texU } from '../core/Stats.js';
 import { lineData } from '../core/Plot.js';
+import * as FIG from './figures.js';
 
 const AY = 20; // 旋光仪光轴高度
 const SPEC20 = 66.53; // 蔗糖 20 °C、589.3 nm 的比旋光度 °·mL·g⁻¹·dm⁻¹
@@ -412,7 +413,9 @@ export class PolarimeterExperiment {
 
   principle() {
     return `<h3>1. 旋光现象</h3><p>线偏振光通过某些物质（石英、糖溶液等）后振动面转过一个角度 $\\varphi$。对溶液</p>$$\\varphi=[\\alpha]\\,l\\,c$$<p>$l$ 为光程长（dm），$c$ 为浓度（g/mL），$[\\alpha]$ 为比旋光度，与波长和温度有关。蔗糖为右旋物质，589.3 nm、20 °C 时 $[\\alpha]\\approx66.5^\\circ\\cdot\\mathrm{mL\\cdot g^{-1}\\cdot dm^{-1}}$。</p>
+${FIG.polarimeterChain()}
 <h3>2. 半荫法与三分视场</h3><p>人眼难以准确判断“完全消光”。旋光仪在起偏镜后放一条石英片（半荫片），使视场中间部分的振动面与两侧相差一个小角度 $2\\theta$。转动检偏器，当它的透振方向与两振动面夹角的平分线垂直时，三部分<b>同样暗</b>；稍有偏离，一侧变亮、一侧变暗，对比非常灵敏。以此“暗度相等”位置为测量位置，放入样品前后读数之差即旋光角。</p>
+${FIG.halfShadeFig()}
 <h3>3. 双游标</h3><p>刻度盘转轴与盘心不重合时，单个游标的读数有周期性偏心误差。两个游标相隔 180°，偏心误差大小相等、符号相反，取平均即可消除。</p>
 <h3>4. 本仿真的计算模型</h3><p>两部分视场的光强 $I_{1,2}=I_0\\left[\\sin^2(\\theta_A-\\varphi\\pm\\theta)+\\varepsilon\\right]$，显示亮度按人眼的近似对数响应映射；比旋光度含温度修正 $[\\alpha]_t=[\\alpha]_{20}[1-3.7\\times10^{-4}(t-20)]$；另有零点误差、刻度盘偏心、配液误差和目镜视度。</p>`;
   }

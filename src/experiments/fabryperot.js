@@ -6,6 +6,7 @@ import { Component } from '../core/Component.js';
 import { MAT, mesh, labTable, lampHousing, glowSprite, ICONS, knobMesh } from '../core/Models.js';
 import { BeamDraw } from '../core/beams.js';
 import { mean, uA, texU, gauss, rand, relErr, pct, sig } from '../core/Stats.js';
+import * as FIG from './figures.js';
 
 const L1 = 588.995e-6, L2 = 589.592e-6; // mm
 const LBAR = (L1 + L2) / 2;
@@ -446,6 +447,7 @@ export class FabryPerotExperiment {
     return `<h3>1. 多光束干涉</h3><p>F-P 干涉仪由两块内表面镀高反射膜（反射率 $R$）、严格平行的平面镜组成，间距为 $d$。光在两镜间多次反射，透射光的光强为</p>
 $$I=\\frac{I_0}{1+F\\sin^2(\\delta/2)},\\qquad \\delta=\\frac{4\\pi d\\cos\\theta}{\\lambda},\\quad F=\\frac{4R}{(1-R)^2}$$
 <p>$R$ 越大，亮纹越细锐。扩展光源照明时形成定域在无穷远的等倾圆环；精细度 $\\mathcal F=\\pi\\sqrt R/(1-R)$ 为相邻亮纹间距与亮纹半宽度之比。</p>
+${FIG.fabryPerotFig()}
 <h3>2. 平行度的调节</h3><p>两镜不平行时，通光口径内不同位置的 $d$ 不同。眼睛移向间距大的一侧，中心级次 $2d/\\lambda$ 增大，圆环从中心冒出；眼睛移动时圆环不涨缩，说明两镜面已平行。眼瞳内的间距差会使圆环变宽。</p>
 <h3>3. 测钠双线波长差</h3><p>钠光含 $\\lambda_1$、$\\lambda_2$ 两条谱线，形成两套圆环。中心处两者的级次差为 $2d(1/\\lambda_1-1/\\lambda_2)$，每当它变化 1，两套圆环由重合到再次重合：</p>
 $$\\Delta d=\\frac{\\lambda_1\\lambda_2}{2(\\lambda_2-\\lambda_1)}\\ \\Rightarrow\\ \\Delta\\lambda\\approx\\frac{\\bar\\lambda^2}{2\\Delta d}$$

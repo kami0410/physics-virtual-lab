@@ -6,6 +6,7 @@ import { Component } from '../core/Component.js';
 import { MAT, mesh, labTable, laserMesh, Beam, ICONS, meterBox, rotatorMesh, canvasTexture } from '../core/Models.js';
 import { mean, uA, texU, gauss, rand, relErr, pct, sig } from '../core/Stats.js';
 import { fnData } from '../core/Plot.js';
+import * as FIG from './figures.js';
 
 const YB = 14; // 光束高度 cm
 const I0 = 1000 * 0.5 * 0.85; // 随机偏振 1 mW 激光经偏振片后 μW
@@ -535,6 +536,7 @@ export class BrewsterExperiment {
     return `<h3>1. 菲涅耳公式</h3><p>光从空气以入射角 $\\theta$ 射到折射率为 $n$ 的介质表面，折射角 $\\theta_t$ 满足 $\\sin\\theta=n\\sin\\theta_t$。振动方向垂直于入射面（s 光）和平行于入射面（p 光）的反射率分别为</p>
 $$R_s=\\frac{\\sin^2(\\theta-\\theta_t)}{\\sin^2(\\theta+\\theta_t)},\\qquad R_p=\\frac{\\tan^2(\\theta-\\theta_t)}{\\tan^2(\\theta+\\theta_t)}$$
 <h3>2. 布儒斯特定律</h3><p>当 $\\theta+\\theta_t=90^\\circ$ 时 $R_p=0$，反射光只剩 s 分量，成为线偏振光。此时</p>$$\\tan\\theta_B=n$$
+${FIG.brewsterFig()}
 <h3>3. 测量方法</h3><p>①自准直法定零点：反射光沿原路返回激光器出口小孔时，入射角为 0。②p 光入射，转动载物台使反射光最弱，读出 $\\theta_B$。偏振片刻线有误差时残留的 s 分量会抬高极小值，因此要交替微调偏振片和入射角，使反射光真正消失。③测 $R_p(\\theta)$、$R_s(\\theta)$ 并与理论曲线比较。</p>
 <h3>4. 本仿真的计算模型</h3><p>探头读数 $P=P_0[\\cos^2\\psi\\,R_p+\\sin^2\\psi\\,R_s]\\,g$，$\\psi$ 为偏振片真实透振方向与入射面的夹角，$g$ 为探头光阑对反射光斑的接收效率（由探测臂对准误差和样品俯仰误差决定）；另加约 0.005 μW 的暗噪声。样品折射率每次随机生成。</p>`;
   }

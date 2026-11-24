@@ -66,6 +66,12 @@ export class App {
     this.renderInspector();
     this.leftPrinciple.innerHTML = `<div class="principle">${renderMath(this.exp.principle())}</div>`;
     this.exp.afterPrinciple && this.exp.afterPrinciple(this.leftPrinciple);
+    // 点光路图放大查看
+    this.leftPrinciple.onclick = (e) => {
+      const f = e.target.closest('figure.diag'); if (!f) return;
+      const c = f.cloneNode(true); c.style.maxWidth = '680px';
+      this.modal('光路图', c.outerHTML);
+    };
     this.renderCamButtons();
     this.bindPointer();
     const cams = this.exp.cameras();

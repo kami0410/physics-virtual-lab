@@ -7,6 +7,7 @@ import { drawMicroReticle, drawMicroDrum } from '../core/Reticle.js';
 import { AXIS_Y, MAT, mesh, labTable, opticalRail, carriage, lampHousing, glowSprite, ICONS, Beam, knobMesh } from '../core/Models.js';
 import { linFit, mean, uA, texU, gauss, rand, relErr, pct, sig } from '../core/Stats.js';
 import { lineData } from '../core/Plot.js';
+import * as FIG from './figures.js';
 
 const LINES = [[589.0e-6, 1], [589.6e-6, 0.5]];
 const LAMBDA = 589.3e-6; // mm
@@ -441,6 +442,7 @@ export class YoungExperiment {
   principle() {
     return `<h3>1. 双缝干涉</h3><p>单缝 S 发出的光照到相距 $d$ 的双缝 S₁、S₂ 上，两缝成为相干的次波源（分波前）。在距双缝 $D$ 处，光程差 $\\delta\\approx dx/D$，</p>$$I(x)=I_0\\left(\\frac{\\sin u}{u}\\right)^2\\left[1+V\\cos\\frac{2\\pi d x}{\\lambda D}\\right],\\qquad u=\\frac{\\pi a x}{\\lambda D}$$
 <p>暗纹间距 $\\Delta x=\\lambda D/d$。$\\left(\\sin u/u\\right)^2$ 是单缝（缝宽 $a$）的衍射包络，当 $d/a$ 为整数时对应级次的明纹缺失。</p>
+${FIG.youngFig()}
 <h3>2. 空间相干性</h3><p>单缝有一定宽度 $b$ 时，缝上各点各自产生一套错开的条纹，叠加后衬比度</p>$$V=\\left|\\frac{\\sin u'}{u'}\\right|,\\qquad u'=\\frac{\\pi b d}{\\lambda R}$$<p>$R$ 为单缝到双缝的距离。$b<\\lambda R/d$ 时才能看到条纹。单缝与双缝不平行时，相当于单缝变宽。</p>
 <h3>3. 测量方法</h3><p>用测微目镜测 ${N_SP} 个条纹间距的总宽度，Δx = |x₂−x₁|/${N_SP}。改变 $D$ 测几组，$\\Delta x$–$D$ 直线的斜率为 $\\lambda/d$。用已知 $d_A$ 的双缝求出 $\\lambda$ 后，就可以测未知双缝的间距。</p>
 <h3>4. 本仿真的计算模型</h3><p>目镜视场中的光强按上式逐点计算，钠双线（589.0/589.6 nm，强度 2:1）非相干叠加；衬比度由单缝宽度、单缝与双缝的夹角和距离 $R$ 决定；零级位置由单缝–双缝中心连线决定。读数含 0.0015 mm 的随机误差和 ${BACK} mm 的鼓轮空程。</p>`;

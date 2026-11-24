@@ -6,6 +6,7 @@ import { Component } from '../core/Component.js';
 import { drawMicroReticle, drawMicroDrum } from '../core/Reticle.js';
 import { AXIS_Y, MAT, mesh, labTable, opticalRail, carriage, lensMesh, lampHousing, glowSprite, ICONS, Beam, knobMesh } from '../core/Models.js';
 import { mean, uA, texU, gauss, rand, relErr, pct, sig } from '../core/Stats.js';
+import * as FIG from './figures.js';
 
 const LINES = [[589.0e-6, 1], [589.6e-6, 0.5]];
 const LAMBDA = 589.3e-6; // mm
@@ -463,6 +464,7 @@ export class BiprismExperiment {
 
   principle() {
     return `<h3>1. 分波前干涉</h3><p>双棱镜由两个折射角 $\\alpha$ 很小的薄棱镜组成。从狭缝 S 发出的光经上下两半棱镜折射后，好像从两个虚光源 $S_1$、$S_2$ 发出，二者相干，在重叠区产生干涉。每半棱镜的偏向角 $\\delta=(n-1)\\alpha$，虚光源间距 $d=2a(n-1)\\alpha$（$a$ 为狭缝到棱镜的距离）。</p>
+${FIG.biprismFig()}
 <h3>2. 条纹间距</h3>$$\\Delta x=\\frac{D}{d}\\lambda\\quad\\Rightarrow\\quad\\lambda=\\frac{d}{D}\\Delta x$$<p>$D$ 为虚光源（狭缝平面）到观察平面的距离。</p>
 <h3>3. 空间相干性</h3><p>宽度为 $b$ 的缝光源可看成许多不相干的线光源，各自的条纹互相错开。条纹衬比度</p>$$V=\\left|\\frac{\\sin u}{u}\\right|,\\qquad u=\\frac{\\pi b d'}{\\lambda a},\\quad d'=d\\,\\frac{D-a}{D}$$<p>$d'$ 是到达同一观察点的两束光在棱镜平面上的间距（不是虚光源间距 $d$）。当 $b\\ge\\lambda a/d'$ 时条纹几乎消失。两半棱镜的厚度不同，零级条纹位于狭缝与棱脊的连线上，棱脊偏离光轴 $e$ 时零级移到 $eD/a$ 处。狭缝与棱脊不平行时，狭缝不同高度处的点相对棱脊横向错开，相当于缝宽增大，同样会使条纹模糊。</p>
 <h3>4. 二次成像法</h3><p>物（两个虚光源）与像屏（分划板）间距 $D>4f$ 时，透镜有两个成像位置，放大率互为倒数，故 $d=\\sqrt{d_1d_2}$。</p>

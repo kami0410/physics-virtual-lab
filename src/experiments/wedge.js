@@ -9,6 +9,7 @@ import { GPU, GLSL } from '../core/gpu.js';
 import { NewtonExperiment } from './newton.js';
 import { mean, uA, texU, gauss, rand, relErr, pct, sig } from '../core/Stats.js';
 import { lineData } from '../core/Plot.js';
+import * as FIG from './figures.js';
 
 const LAMBDA = 589.3e-6;
 const FOV = 2.4;
@@ -287,6 +288,7 @@ export class WedgeExperiment extends NewtonExperiment {
   principle() {
     return `<h3>1. 劈尖干涉</h3><p>两块平板玻璃一端相接、另一端夹一细丝，形成夹角很小的空气劈尖。单色光垂直入射时，空气层上下表面的反射光干涉，暗纹条件</p>$$2e+\\frac\\lambda2=(2k+1)\\frac\\lambda2\\ \\Rightarrow\\ e_k=\\frac{k\\lambda}{2}$$<p>厚度相同处干涉情况相同，条纹是平行于棱边的等间距直条纹。相邻暗纹对应的厚度差为 $\\lambda/2$，间距 $l=\\dfrac{\\lambda}{2\\theta}$。</p>
 <h3>2. 细丝直径</h3><p>$\\theta\\approx\\tan\\theta=D/L$，所以 $D=\\dfrac{L\\lambda}{2l}$。条纹总数 $N=L/l$ 很大，逐条数不现实，因此先测条纹间距，再测劈尖长度。</p>
+${FIG.wedgeFig()}
 <h3>3. 本仿真的计算模型</h3><p>程序对视场中每一点按样品转角求出到棱边的距离 $u$、空气层厚度 $e=u\\,D/L$，对钠 D 双线作双光束干涉叠加。由于双线的“拍”，条纹衬比度沿劈尖缓慢变化。样品转角使条纹与镜筒移动方向不垂直时，测得的间距会偏大 $1/\\cos\\varphi$ 倍。</p>`;
   }
 }

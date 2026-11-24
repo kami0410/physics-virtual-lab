@@ -9,6 +9,7 @@ import { GLASSES, sellmeier } from '../physics/glass.js';
 import { SpectrometerExperiment } from './spectrometer.js';
 import { linFit, gauss, rand, relErr, pct, dms, texU } from '../core/Stats.js';
 import { fnData } from '../core/Plot.js';
+import * as FIG from './figures.js';
 
 const YA = 24;
 const R2D = 180 / Math.PI, D2R = Math.PI / 180;
@@ -354,6 +355,7 @@ export class PrismExperiment extends SpectrometerExperiment {
   principle() {
     return `<h3>1. 自准法测顶角</h3><p>望远镜已调到聚焦无穷远且光轴垂直于仪器转轴。分别使望远镜光轴垂直于三棱镜的两个光学面（十字反射像与上叉丝交点重合），两次望远镜方位之差 $\\varphi$ 就是两面法线的夹角，顶角 $A=180^\\circ-\\varphi$。</p>
 <h3>2. 最小偏向角法测折射率</h3><p>单色平行光经棱镜两次折射，出射光与入射光的夹角称为偏向角 $\\delta$。当光线在棱镜内平行于底面（入射角等于出射角）时 $\\delta$ 取最小值 $\\delta_{min}$，此时</p>$$n=\\frac{\\sin\\frac{A+\\delta_{min}}{2}}{\\sin\\frac A2}$$<p>在最小偏向角附近，$\\delta$ 对入射角的变化最不敏感（一阶导数为零），因此测量结果最稳定。</p>
+${FIG.prismFig()}
 <h3>3. 色散</h3><p>透明介质的折射率随波长变化。可见光区的正常色散可用柯西公式近似：$n=a+\\dfrac{b}{\\lambda^2}$。更精确的是 Sellmeier 公式 $n^2=1+\\sum_i\\dfrac{B_i\\lambda^2}{\\lambda^2-C_i}$，它来自介质中束缚电子（紫外吸收）与晶格振动（红外吸收）的共振模型，玻璃厂的数据表都用它给出折射率。</p>
 <h3>4. 本仿真的计算模型</h3><p>程序对汞灯每条谱线作二维矢量折射光线追迹（斯涅尔定律，含全反射判断），出射方向随载物台转角连续变化，最小偏向角由光线追迹自然产生，而不是直接代公式。棱镜玻璃取 F2、SF2、SF5 三种火石玻璃之一，色散按 SCHOTT 数据表的 Sellmeier 系数计算（另加 ±3×10⁻⁴ 以内的批次偏差），顶角、光学面与底面的垂直度都带有随机加工误差。望远镜、载物台和刻度盘的调节模型与“分光计”实验相同。</p>`;
   }

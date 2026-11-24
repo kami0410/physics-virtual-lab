@@ -8,6 +8,7 @@ import { newtonIntensity, GLSL_FILM } from '../physics/interference.js';
 import { GPU, GLSL } from '../core/gpu.js';
 import { linFit, mean, uA, fmtU, texU, sig, gauss, rand, relErr, pct, clamp, successiveDiff } from '../core/Stats.js';
 import { lineData } from '../core/Plot.js';
+import * as FIG from './figures.js';
 
 const LAMBDA = 589.3e-6;
 const FOV = 2.4; // 显微镜视场直径 (mm，物方)
@@ -433,6 +434,7 @@ export class NewtonExperiment {
 $$\\delta=2e+\\frac{\\lambda}{2}$$<p>其中 $\\lambda/2$ 来自光在空气–玻璃界面反射时的半波损失。厚度相同处干涉情况相同，因此条纹是以接触点为中心的同心圆环。</p>
 <h3>2. 暗环半径</h3><p>由几何关系 $r^2=2Re-e^2\\approx 2Re$，暗纹条件 $\\delta=(2k+1)\\lambda/2$ 给出</p>$$r_k^2=kR\\lambda,\\qquad D_k^2=4kR\\lambda$$
 <p>实际接触处常有灰尘或弹性形变，存在附加厚度 $e_0$，环心难以确定，因此测量两环直径并取差值：</p>$$R=\\frac{D_m^2-D_n^2}{4(m-n)\\lambda}$$
+${FIG.newtonRings()}
 <h3>3. 本仿真的计算模型</h3><p>程序对显微镜视场内每一点计算空气层厚度 $e=r^2/2R+e_0$，按双光束干涉叠加强度</p>$$I=a_1^2+a_2^2-2a_1a_2\\cos\\frac{4\\pi e}{\\lambda}$$
 <p>并对钠 D 双线（589.0 nm、589.6 nm，强度 2:1）作非相干叠加。显微镜离焦用模糊处理表示，鼓轮丝杠含 ${(BACK * 100).toFixed(0)} 格空程，叉丝取向和环心位置均可调。</p>`;
   }

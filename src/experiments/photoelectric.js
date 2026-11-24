@@ -6,6 +6,7 @@ import { AXIS_Y, MAT, mesh, labTable, opticalRail, carriage, lampHousing, glowSp
 import { rgbCss, rgbHex } from '../physics/color.js';
 import { linFit, gauss, rand, relErr, pct, texU, sig } from '../core/Stats.js';
 import { lineData } from '../core/Plot.js';
+import * as FIG from './figures.js';
 
 const APS = [2, 4, 8]; // 光阑直径 mm
 const RANGES = [1e-8, 1e-9, 1e-10, 1e-11, 1e-12, 1e-13]; // 电流量程 A
@@ -362,6 +363,7 @@ export class PhotoelectricExperiment {
 
   principle() {
     return `<h3>1. 光电效应方程</h3><p>频率为 $\\nu$ 的光子能量 $h\\nu$ 被阴极中的电子吸收，电子逸出时的最大初动能</p>$$\\tfrac12mv_{max}^2=h\\nu-W$$<p>在光电管两极加反向电压 $U$，当 $eU_a=\\tfrac12mv_{max}^2$ 时光电流为零，$U_a$ 称为截止电压：</p>$$U_a=\\frac he\\nu-\\frac We$$<p>$U_a$–$\\nu$ 为直线，斜率 $h/e$，与光强无关。</p>
+${FIG.photoelectricFig()}
 <h3>2. 实际光电管的电流</h3><p>测得的电流是阴极光电流、阳极反向电流（阳极受杂散光照射发射的电子）和暗电流之和。零电流点处阴极光电流并不为零，而是与阳极反向电流相抵，因此零电流法测得的 $U_a$ 略小于真实值；由于这一偏差与 $U_a$ 近似成比例，会使斜率略偏小。阳极反向电流很小时，零电流法简便而有效。</p>
 <h3>3. 本仿真的计算模型</h3><p>阴极光电流在反向电压区按 $(U+U_a)^2$ 增长，正向电压区按指数规律趋于饱和；饱和电流与谱线强度、量子效率、光阑面积成正比，与灯–管距离平方成反比。另加阳极反向电流、漏电流和微电流计的零点漂移与读数噪声。</p>`;
   }

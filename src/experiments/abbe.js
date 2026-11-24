@@ -6,6 +6,7 @@ import { AXIS_Y, MAT, mesh, labTable, opticalRail, carriage, laserMesh, lensMesh
 import { fft2, fIdx } from '../physics/fourier.js';
 import { linFit, gauss, rand, relErr, pct, texU } from '../core/Stats.js';
 import { lineData } from '../core/Plot.js';
+import * as FIG from './figures.js';
 
 const N = 256, P = 8; // 采样点数；光栅周期（像素）
 const LAM = 632.8e-6; // mm
@@ -748,6 +749,7 @@ export class AbbeExperiment {
 
   principle() {
     return `<h3>1. 阿贝成像原理</h3><p>相干光照明下，透镜成像分两步：物的衍射光在透镜后焦面上形成夫琅禾费衍射图样——物的<b>空间频谱</b>；频谱面上各衍射级作为新的次波源，在像面上相干叠加成像。频谱面坐标与空间频率的关系为</p>$$x=\\lambda f\\,\\nu_x,\\qquad y=\\lambda f\\,\\nu_y$$<p>周期为 $d$ 的光栅只有离散频率 $\\nu=k/d$，频谱为一排等间距光点，间距 $\\Delta x=\\lambda f/d$。</p>
+${FIG.abbeFig()}
 <h3>2. 空间滤波</h3><p>在频谱面放置光阑（滤波器）改变频谱，像随之改变。狭缝：方向滤波；小孔：低通滤波，去除细节和噪声；挡光点：高通滤波，突出边缘。</p>
 <h3>3. 本仿真的计算方法</h3><p>物的复振幅透过率在 256×256 网格上采样，用自编的二维 FFT 得到频谱 $T(\\nu_x,\\nu_y)$；乘以滤波器函数 $H$ 和像屏离焦引起的二次相位因子 $\\exp[i\\pi\\lambda\\delta(\\nu_x^2+\\nu_y^2)]$（$\\delta$ 为物方等效离焦量），再做逆 FFT 得到像面复振幅，强度 $|g|^2$ 按放大率 $s/u$ 倒立显示。入射光不严格平行时，频谱面移到光源经 L₁、L 所成的像处；滤波器偏离频谱面时，每个衍射斑扩展为圆斑，按圆斑透过滤波器的比例计算其透过率（几何近似）。</p>`;
   }

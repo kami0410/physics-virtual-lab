@@ -8,6 +8,7 @@ import { michelsonPattern, michelsonSpots, GLSL_MICHELSON, GLSL_SPOTS, michelson
 import { GPU } from '../core/gpu.js';
 import { linFit, mean, uA, fmtU, texU, sig, gauss, rand, relErr, pct, clamp, successiveDiff } from '../core/Stats.js';
 import { lineData } from '../core/Plot.js';
+import * as FIG from './figures.js';
 
 const YB = 14; // 光束高度 cm
 const HALF = 40; // 屏视场半宽 mm
@@ -588,8 +589,10 @@ export class MichelsonExperiment {
 
   principle() {
     return `<h3>1. 仪器结构</h3><p>光源发出的光被分光板 G₁ 分为强度相近的两束：一束经补偿板 G₂ 射向动镜 M₁，另一束射向定镜 M₂，两束光反射后在 G₁ 处重新会合发生干涉。M₂ 经 G₁ 所成的虚像 M₂′ 与 M₁ 构成一个厚度为 $d$ 的“空气薄膜”。</p>
+${FIG.michelsonLayout()}
 <h3>2. 等倾干涉</h3><p>当 M₁ 与 M₂′ 严格平行时，倾角为 $\\theta$ 的光线两束光的光程差为</p>$$\\Delta=2d\\cos\\theta$$
 <p>相同倾角对应同一级条纹，因此在屏上形成同心圆环。圆心处 $\\theta=0$，光程差最大，满足 $2d=k\\lambda$ 时为亮点。</p>
+${FIG.michelsonFilm()}
 <h3>3. 测量波长</h3><p>M₁ 移动 $\\Delta d$，中心处每“冒出”或“缩进”一个条纹，光程差改变 $\\lambda$：</p>$$\\lambda=\\frac{2\\Delta d}{\\Delta N}$$
 <p>$d$ 增大时条纹从中心冒出且变密；$d$ 减小时条纹向中心缩进且变疏。</p>
 <h3>4. 本仿真的计算模型</h3><p>扩束镜把激光会聚成点光源 S，经 M₁、M₂ 反射后等效为屏后两个相干虚点光源 S₁、S₂，它们沿轴相距 $2d$，M₂ 的倾角 $\\varepsilon$ 使 S₂ 横向偏移 $\\delta=2\\varepsilon L$。程序对屏上每一点精确计算</p>$$\\Delta=r_1-r_2=\\frac{r_1^2-r_2^2}{r_1+r_2},\\qquad I=I_0\\left[1+V\\cos\\frac{2\\pi\\Delta}{\\lambda}\\right]$$

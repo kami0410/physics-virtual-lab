@@ -7,6 +7,7 @@ import { AXIS_Y, MAT, mesh, labTable, opticalRail, carriage, whiteScreen, laserM
 import { fresnel1D, slitApertures, sinc2 } from '../physics/diffraction.js';
 import { linFit, mean, uA, fmtU, texU, sig, gauss, rand, relErr, pct, clamp } from '../core/Stats.js';
 import { fnData } from '../core/Plot.js';
+import * as FIG from './figures.js';
 
 const P0 = 1.5; // 激光功率 mW
 const BEAM_W = 0.75; // 光束半径 mm
@@ -468,6 +469,7 @@ export class SlitExperiment {
     return `<h3>1. 菲涅耳衍射与夫琅禾费衍射</h3><p>光通过宽度为 $a$ 的狭缝后，屏上光场由菲涅耳–基尔霍夫衍射积分给出。菲涅耳数</p>$$F=\\frac{a^2}{\\lambda L}$$<p>$F\\gtrsim1$ 时为近场（菲涅耳）衍射，图样与缝的几何投影相近，边缘有振荡；$F\\ll1$ 时为远场（夫琅禾费）衍射。</p>
 <h3>2. 夫琅禾费单缝衍射</h3>$$I(\\theta)=I_0\\left(\\frac{\\sin u}{u}\\right)^2,\\qquad u=\\frac{\\pi a\\sin\\theta}{\\lambda}$$
 <p>暗纹条件 $a\\sin\\theta=k\\lambda\\ (k=\\pm1,\\pm2,\\dots)$；中央明纹宽度是其他明纹的两倍；次极大光强依次约为中央的 4.72%、1.65%、0.83%。小角度下 $\\sin\\theta\\approx x/L$，故</p>$$a=\\frac{k\\lambda L}{x_k}$$
+${FIG.slitFig()}
 <h3>3. 本仿真的计算模型</h3><p>程序不直接套用 sinc² 公式，而是对狭缝内的入射高斯光束作数值积分：</p>$$U(x)=\\frac{1}{\\sqrt{i\\lambda L}}\\int_{-a/2}^{a/2}A(\\xi)\\,e^{\\,i\\pi(x-\\xi)^2/\\lambda L}\\,d\\xi$$
 <p>采用复合辛普森公式，步长按被积函数的相位变化自适应选取，因此同一模型可以连续地给出从菲涅耳衍射到夫琅禾费衍射的全部图样，也能计算双缝。探头读数对 ${DET_W} mm 宽的探头狭缝取平均，并加入暗电流噪声，光功率计按量程显示有效位数。</p>`;
   }

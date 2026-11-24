@@ -6,6 +6,7 @@ import { MAT, mesh, labTable, lampHousing, ICONS, canvasTexture, knobMesh, Beam,
 import { rgbCss, rgbHex } from '../physics/color.js';
 import { gratingEnvelope } from '../physics/diffraction.js';
 import { mean, uA, fmtU, texU, sig, gauss, rand, relErr, pct, clamp, dms } from '../core/Stats.js';
+import * as FIG from './figures.js';
 
 const YA = 24; // 光轴高度 cm
 const FIELD = 1.6; // 望远镜视场半角 (°)
@@ -568,6 +569,7 @@ export class SpectrometerExperiment {
     return `<h3>1. 分光计的三个调节要求</h3><p>① 望远镜聚焦于无穷远（接收平行光）；② 望远镜光轴与平行光管光轴都垂直于仪器转轴；③ 平行光管出射平行光。</p>
 <h3>2. 自准直法与各半调节法</h3><p>阿贝目镜下方的绿十字经物镜成平行光，被平面镜反射后再会聚在分划板上。十字像清晰说明分划板位于物镜焦面上；十字像与上叉丝重合，说明望远镜光轴垂直于镜面。双面镜正反两面都满足时，望远镜光轴才垂直于仪器转轴。若某面十字像偏离上叉丝 $h$，由于偏差同时来自望远镜俯仰 $\\tau$ 与镜面法线倾角 $\\varepsilon$：</p>$$h_A=2(\\varepsilon-\\tau),\\qquad h_B=2(-\\varepsilon-\\tau)$$<p>所以每次各调一半最快收敛。</p>
 <h3>3. 光栅方程</h3><p>平行光垂直入射到光栅常数为 $d$ 的透射光栅上，第 $k$ 级主极大满足</p>$$d\\sin\\theta_k=k\\lambda$$<p>斜入射（入射角 $i$）时为 $d(\\sin\\theta-\\sin i)=k\\lambda$。取 ±1 级的平均可以减小入射角误差的影响。</p>
+${FIG.gratingFig()}
 <h3>4. 双游标读数</h3><p>刻度盘中心与转轴不重合时，单个游标读数含偏心差 $e\\sin\\varphi$，两个相隔 180° 的游标误差大小相等、符号相反，取平均即可消除：</p>$$\\theta=\\tfrac14\\left(|A_+-A_-|+|B_+-B_-|\\right)$$
 <h3>5. 本仿真的计算模型</h3><p>程序按光栅方程计算汞灯各谱线各级的出射方向，强度由单缝衍射因子 $\\left(\\frac{\\sin u}{u}\\right)^2$ 调制（缝宽取 0.42d）；十字反射像的位置由镜面法线方位、仰角和望远镜俯仰按反射定律计算；刻度盘带有约 2′ 的偏心误差。</p>`;
   }

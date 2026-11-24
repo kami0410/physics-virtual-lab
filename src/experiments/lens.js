@@ -7,6 +7,7 @@ import { AXIS_Y, MAT, mesh, labTable, opticalRail, carriage, lensMesh, whiteScre
 import { ThickLens, lensImaging, autocollimation, imagePosition } from '../physics/matrixOptics.js';
 import { linFit, mean, uA, fmtU, texU, sig, gauss, rand, relErr, pct, clamp } from '../core/Stats.js';
 import { lineData } from '../core/Plot.js';
+import * as FIG from './figures.js';
 
 const D_LENS = 4.0; // 透镜通光口径 cm
 const PX = 30; // 像屏观察窗：每 cm 像素
@@ -608,10 +609,13 @@ export class LensExperiment {
     return `<h3>1. 透镜成像公式</h3><p>在近轴条件下，薄透镜的物距 $u$、像距 $v$ 与焦距 $f$ 满足高斯公式</p>
 $$\\frac{1}{u}+\\frac{1}{v}=\\frac{1}{f}\\quad\\Rightarrow\\quad f=\\frac{uv}{u+v}$$
 <p>横向放大率 $\\beta=-v/u$，像为倒立实像。</p>
+${FIG.lensImaging()}
 <h3>2. 二次成像法（贝塞尔法）</h3><p>物屏与像屏相距 $L$（$L>4f$），透镜在两位置 $x_1,x_2$ 都能成清晰像，由成像公式对称性得</p>
 $$f=\\frac{L^2-d^2}{4L},\\quad d=|x_2-x_1|$$
 <p>该方法只需测量透镜的移动距离，避免了确定透镜光心（主面）位置的误差。</p>
+${FIG.lensBessel()}
 <h3>3. 自准直法</h3><p>物位于透镜焦平面时，出射光为平行光，经平面镜反射后在物平面上成等大倒立实像，此时物到透镜的距离即为焦距。</p>
+${FIG.lensAutocollimation()}
 <h3>4. 本仿真的计算模型</h3><p>程序把待测透镜建模为 K9 玻璃（$n=1.5163$）双凸<b>厚透镜</b>，用光线传输矩阵（ABCD 矩阵）计算从物平面到像屏的系统矩阵：</p>
 $$\\begin{pmatrix}y'\\\\\\theta'\\end{pmatrix}=T(d_2)\\,R_2\\,T(t)\\,R_1\\,T(d_1)\\begin{pmatrix}y\\\\\\theta\\end{pmatrix}=\\begin{pmatrix}A&B\\\\C&D\\end{pmatrix}\\begin{pmatrix}y\\\\\\theta\\end{pmatrix}$$
 <p>其中 $R_i=\\begin{pmatrix}1&0\\\\\\frac{n_1-n_2}{n_2R}&\\frac{n_1}{n_2}\\end{pmatrix}$ 为球面折射矩阵。成像清晰的条件为 $B=0$，放大率为 $A$；物点发出的、充满透镜口径 $D$ 的光束在屏上的弥散斑半径 $r=|B|\\cdot\\frac{D}{2d_1}$，程序据此对像作模糊处理，从而再现“前后移动像屏寻找最清晰位置”的真实体验。透镜光心偏离光轴时，像中心位置 $y_c=\\delta(1-\\beta)$，用于共轴调节。</p>`;

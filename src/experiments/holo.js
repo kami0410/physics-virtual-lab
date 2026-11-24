@@ -5,6 +5,7 @@ import { Component } from '../core/Component.js';
 import { MAT, mesh, labTable, laserMesh, meterBox, canvasTexture, ICONS } from '../core/Models.js';
 import { OptBench, BeamDraw } from '../core/beams.js';
 import { mean, gauss, rand, clamp } from '../core/Stats.js';
+import * as FIG from './figures.js';
 
 const H = 14; // 光束高度 cm
 const LAM = 0.6328; // μm
@@ -880,6 +881,7 @@ export class HoloExperiment {
 
   principle() {
     return `<h3>1. 记录</h3><p>激光分成两束：物光照明物体，物体的漫反射光 $O$ 射到干板上；参考光 $R$ 直接照到干板上。干板记录的是两者的干涉条纹：</p>$$I=|R|^2+|O|^2+R^*O+RO^*$$<p>条纹的明暗记录了物光的振幅，条纹的位置记录了物光的位相，所以叫“全”息。</p>
+${FIG.holoFig()}
 <h3>2. 再现</h3><p>冲洗后的干板振幅透过率与曝光量成线性关系时，用原参考光照明，透射光中含有 $|R|^2O$ 项，即原来的物光波：透过干板能在原处看到物体的三维虚像，移动头部可以看到不同侧面（视差）。</p>
 <h3>3. 实验条件</h3><p>(1) 光程差小于相干长度：多纵模 He-Ne 激光相邻纵模频差 $c/2L$，相干性随光程差周期变化，在 $\\Delta L=0$ 附近最好；<br>(2) 光强比 $K=I_r/I_o$ 取 3～6：太小时物光自身的干涉产生噪声，太大时条纹可见度 $2\\sqrt K/(1+K)$ 下降；<br>(3) 曝光量合适：使干板工作在 $t_a$–$E$ 曲线的线性段；<br>(4) 曝光时稳定：条纹间距约 $\\lambda/(2\\sin(\\theta/2))\\approx 1\\ \\mu\\text{m}$，光程变化 $\\lambda/4$ 就会抹平条纹。</p>
 <h3>4. 本仿真的计算模型</h3><p>按各元件的位置和镜架转角计算两路光程、光斑偏离和干板处的光强（高斯光束扩束、朗伯漫反射）。曝光期间逐时累加参考光、物光、杂散光的曝光量和干涉项，干涉项乘以纵模相干因子 $\\cos^2(\\pi\\Delta L/2L)$（三个纵模、强度 1:2:1 时的可见度；两个等强纵模为 $|\\cos(\\pi\\Delta L/2L)|$）和振动因子。冲洗按 $t_a=1/(1+x^3)$ 的特性曲线求调制，振幅型 $\\eta=(\\Delta t/2)^2$，漂白后 $\\eta=J_1^2(\\Delta\\varphi)$。再现画面由透视投影得到，叠加激光散斑。</p>`;

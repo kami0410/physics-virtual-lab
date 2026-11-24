@@ -4,6 +4,7 @@ import { meta, thumb } from './scope.meta.js';
 import { Component } from '../core/Component.js';
 import { AXIS_Y, MAT, mesh, labTable, opticalRail, carriage, lensMesh, ICONS, glowSprite } from '../core/Models.js';
 import { mean, gauss, rand, relErr, pct } from '../core/Stats.js';
+import * as FIG from './figures.js';
 
 const X_FAR = -8000; // 远处标尺的位置 mm（导轨零点左侧 8 m）
 const NEAR = 250; // 明视距离 mm
@@ -443,6 +444,7 @@ export class ScopeExperiment {
   principle() {
     return `<h3>1. 视角放大率</h3><p>人眼对物体细节的分辨取决于物体对眼睛的张角。光学仪器的视角放大率 $\\Gamma=\\omega'/\\omega$：$\\omega'$ 是通过仪器看到的像的张角，$\\omega$ 是不用仪器时物体的张角（望远镜：物体在原处；显微镜：物体放在明视距离 25 cm 处）。</p>
 <h3>2. 开普勒望远镜</h3><p>物镜（长焦 $f_1$）把远处物体成实像于其后焦面，目镜（短焦 $f_2$）把这个实像当作物来放大。物镜后焦点与目镜前焦点重合时，镜筒长 $L=f_1+f_2$，出射平行光，$\\Gamma=f_1/f_2$，像是倒立的。物镜经目镜所成的像叫<b>出瞳</b>，眼睛放在出瞳处视场最大。</p>
+${FIG.keplerFig()}
 <h3>3. 显微镜</h3><p>物镜（短焦 $f_o$）把物体成放大实像，目镜再放大：</p>$$\\Gamma\\approx\\frac{\\Delta}{f_o}\\cdot\\frac{250\\ \\text{mm}}{f_e}$$<p>$\\Delta$ 为光学筒长。</p>
 <h3>4. 比较法</h3><p>一只眼通过仪器看标尺的像，另一只眼直接看标尺（或明视距离处的直尺），两个像在大脑中重叠。放大像中 $N$ 格对应直接看到的 $n$ 格，则 $\\Gamma=n/N$（显微镜还要乘以两种标尺分度之比）。</p>
 <h3>5. 本仿真的计算模型</h3><p>眼睛看到的画面由<b>反向光线追迹</b>得到：对视场中每个方向，从眼瞳中心出发反向经过各透镜到达物面，取该处标尺的颜色。因此像的倒正、大小、视场（透镜通光口径造成的渐晕）都自动得到。由物点到眼睛的 ABCD 矩阵求出射光的会聚度，超出人眼调节范围（25 cm 到无穷远）的部分按 3 mm 瞳孔换算为模糊。透镜实际焦距与标称值有 ±2% 的随机偏差。</p>`;
