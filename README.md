@@ -195,6 +195,17 @@ npm run build:single
 | [开发说明](docs/development.md) | 目录结构、实验模块怎么写、测试 |
 | [致谢与来源](CREDITS.md) | 用到的开源组件、收录的代码、公式与数据出处 |
 
+## 致谢
+
+本项目的物理模型和界面大部分是自己写的，也站在了许多开源项目的肩膀上，在此致谢：
+
+- **程序里用到的组件**：[three.js](https://github.com/mrdoob/three.js)（三维渲染）、[KaTeX](https://github.com/KaTeX/KaTeX)（公式排版）、[spice-ts](https://github.com/mfiumara/spice-ts)（电路仿真）、[IBM Plex Mono](https://github.com/IBM/plex)（等宽字体）、[Anthropic SDK](https://github.com/anthropics/anthropic-sdk-typescript)（AI 助教接入 Claude）
+- **收录并改写的代码**：[Optica Viva](https://github.com/iiogurt/Optica_Viva)（光学玻璃库、透镜精确追迹）、[Magpylib](https://github.com/magpylib/magpylib)（电流环磁场）、[geomagnetism](https://github.com/naturalatlas/geomagnetism)（世界地磁模型）
+- **借鉴了思路**：[ray-optics](https://github.com/ricktu288/ray-optics)、[LightPipes](https://github.com/opticspy/lightpipes)、[diffractsim](https://github.com/rafael-fuente/diffractsim)、[woscope](https://github.com/m1el/woscope)、[JAmodel](https://github.com/romanszewczyk/JAmodel) 等
+- **数据**：CIE 色匹配函数、[refractiveindex.info](https://refractiveindex.info) 玻璃目录、NOAA / 英国地质调查局的 WMM2025 地磁模型、NIST 热电偶参考表、IAPWS 水的表面张力等
+
+每一项的版本、许可证、用在哪里、改了什么，以及所有公式和数据的文献出处，都列在 [CREDITS.md](CREDITS.md) 里。
+
 ## 许可
 
 本项目采用 [PolyForm Noncommercial License 1.0.0](LICENSE)，简单说：

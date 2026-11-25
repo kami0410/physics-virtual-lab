@@ -145,7 +145,12 @@ function renderHome() {
         <li><span><b>运行环境。</b>Chrome / Edge / Firefox 等支持 WebGL 2 的浏览器；集成显卡、4 GB 内存即可流畅运行，推荐 1920×1080 分辨率。</span></li>
       </ol>
     </section>
-    <div class="colophon"><span>计算核心：矩阵光学 · 非序列光线追迹 · 角谱法衍射 · 穆勒矩阵 · 电路改进节点法与牛顿迭代</span><span>开源组件：three.js（MIT）· KaTeX（MIT）· IBM Plex Mono（OFL-1.1）· Optica Viva 透镜追迹与玻璃库（MIT）</span><span>数据：CIE 1931 色匹配函数（Wyman 等 2013 解析拟合）· refractiveindex.info 玻璃目录（CC0）</span></div>
+    <div class="colophon">
+      <span>计算核心（自研）：光线与高斯光束追迹 · 角谱法衍射 · 穆勒矩阵 · 电路改进节点法 · 周期稳态打靶法 · 振动与输运的数值积分</span>
+      <span>开源组件：three.js（MIT）· KaTeX（MIT）· IBM Plex Mono（OFL-1.1）· spice-ts 电路仿真（MIT）· Anthropic SDK（Apache-2.0）</span>
+      <span>收录代码：Optica Viva 玻璃库与透镜追迹（MIT）· Magpylib 电流环磁场（BSD-2-Clause）· geomagnetism 世界地磁模型（Apache-2.0）</span>
+      <span>数据：CIE 1931 色匹配函数（Wyman 等 2013）· refractiveindex.info 玻璃目录（CC0）· WMM2025 地磁系数（NOAA/BGS）· 完整来源见 <a href="https://github.com/kami0410/physics-virtual-lab/blob/main/CREDITS.md" target="_blank" rel="noopener">致谢与来源</a></span>
+    </div>
   </div></div>`;
   root.querySelectorAll('.toc-row').forEach((c) => {
     const go = () => (location.hash = `#/exp/${c.dataset.id}`);
