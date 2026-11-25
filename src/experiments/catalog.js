@@ -25,6 +25,8 @@ import * as KelvinExperiment_M from './kelvin.meta.js';
 import * as CalibExperiment_M from './calib.meta.js';
 import * as OscilloscopeExperiment_M from './oscilloscope.meta.js';
 import * as RlcExperiment_M from './rlc.meta.js';
+import * as SolarCellExperiment_M from './solar.meta.js';
+import * as RlcSteadyExperiment_M from './rlcss.meta.js';
 import * as PotentiometerExperiment_M from './potentiometer.meta.js';
 import * as HallExperiment_M from './hall.meta.js';
 import * as HelmholtzExperiment_M from './helmholtz.meta.js';
@@ -34,8 +36,15 @@ import * as TrifilarExperiment_M from './trifilar.meta.js';
 import * as StokesExperiment_M from './stokes.meta.js';
 import * as SoundExperiment_M from './sound.meta.js';
 import * as ThermCondExperiment_M from './thermcond.meta.js';
+import * as QuasiSteadyExperiment_M from './quasi.meta.js';
+import * as SpecHeatExperiment_M from './specheat.meta.js';
 import * as FranckHertzExperiment_M from './franckhertz.meta.js';
+import * as DensityExperiment_M from './density.meta.js';
+import * as BohrExperiment_M from './bohr.meta.js';
 import * as PendulumExperiment_M from './pendulum.meta.js';
+import * as SnakePendulumExperiment_M from './snake.meta.js';
+import * as MusicExperiment_M from './music.meta.js';
+import * as ChladniExperiment_M from './chladni.meta.js';
 import * as StringWaveExperiment_M from './stringwave.meta.js';
 import * as SurfaceExperiment_M from './surface.meta.js';
 import * as AirTrackExperiment_M from './airtrack.meta.js';
@@ -74,19 +83,28 @@ export const CATALOG = [
   E(EFieldExperiment_M, () => import('./efield.js').then((m) => m.EFieldExperiment)),
   E(OscilloscopeExperiment_M, () => import('./oscilloscope.js').then((m) => m.OscilloscopeExperiment)),
   E(RlcExperiment_M, () => import('./rlc.js').then((m) => m.RlcExperiment)),
+  E(RlcSteadyExperiment_M, () => import('./rlcss.js').then((m) => m.RlcSteadyExperiment)),
+  E(SolarCellExperiment_M, () => import('./solar.js').then((m) => m.SolarCellExperiment)),
   E(PotentiometerExperiment_M, () => import('./potentiometer.js').then((m) => m.PotentiometerExperiment)),
   E(HallExperiment_M, () => import('./hall.js').then((m) => m.HallExperiment)),
   E(HelmholtzExperiment_M, () => import('./helmholtz.js').then((m) => m.HelmholtzExperiment)),
   E(HysteresisExperiment_M, () => import('./hysteresis.js').then((m) => m.HysteresisExperiment)),
+  E(DensityExperiment_M, () => import('./density.js').then((m) => m.DensityExperiment)),
   E(PendulumExperiment_M, () => import('./pendulum.js').then((m) => m.PendulumExperiment)),
+  E(BohrExperiment_M, () => import('./bohr.js').then((m) => m.BohrExperiment)),
   E(AirTrackExperiment_M, () => import('./airtrack.js').then((m) => m.AirTrackExperiment)),
   E(StringWaveExperiment_M, () => import('./stringwave.js').then((m) => m.StringWaveExperiment)),
+  E(ChladniExperiment_M, () => import('./chladni.js').then((m) => m.ChladniExperiment)),
+  E(MusicExperiment_M, () => import('./music.js').then((m) => m.MusicExperiment)),
+  E(SnakePendulumExperiment_M, () => import('./snake.js').then((m) => m.SnakePendulumExperiment)),
   E(YModulusExperiment_M, () => import('./ymodulus.js').then((m) => m.YModulusExperiment)),
   E(TrifilarExperiment_M, () => import('./trifilar.js').then((m) => m.TrifilarExperiment)),
   E(StokesExperiment_M, () => import('./stokes.js').then((m) => m.StokesExperiment)),
   E(SurfaceExperiment_M, () => import('./surface.js').then((m) => m.SurfaceExperiment)),
   E(SoundExperiment_M, () => import('./sound.js').then((m) => m.SoundExperiment)),
   E(ThermCondExperiment_M, () => import('./thermcond.js').then((m) => m.ThermCondExperiment)),
+  E(SpecHeatExperiment_M, () => import('./specheat.js').then((m) => m.SpecHeatExperiment)),
+  E(QuasiSteadyExperiment_M, () => import('./quasi.js').then((m) => m.QuasiSteadyExperiment)),
   E(FranckHertzExperiment_M, () => import('./franckhertz.js').then((m) => m.FranckHertzExperiment)),
   E(ExpansionExperiment_M, () => import('./expansion.js').then((m) => m.ExpansionExperiment)),
   E(GammaExperiment_M, () => import('./gamma.js').then((m) => m.GammaExperiment)),

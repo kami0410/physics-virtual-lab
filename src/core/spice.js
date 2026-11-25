@@ -73,8 +73,20 @@ export class LinearNet {
         parts.push({ type: 'V', a, b, w: e.w, r: e.r || 0, src: e.src ?? e });
       }
     }
+    // 只由电容（和无内阻电压源）组成的回路：各电容的 UIC 初值互相矛盾，电路也没有意义上的独立状态。
+    // 按容量从大到小加入，闭合回路的那只（最小的）串一个 1 Ω 引线电阻，回路就有了独立状态。
+    const extra = [], up = new Map();
+    const g = (x) => { if (!up.has(x)) up.set(x, x); while (up.get(x) !== x) x = up.get(x); return x; };
+    const loopers = [...parts.filter((p) => p.type === 'V' && !(p.r > 0)), ...parts.filter((p) => p.type === 'C').sort((p, q) => q.C - p.C)];
+    for (const p of loopers) {
+      const ra = g(p.a), rb = g(p.b);
+      if (ra !== rb) { up.set(ra, rb); continue; }
+      if (p.type !== 'C') continue;
+      const m = `cl${extra.length + 1}`;
+      extra.push(m); parts.push({ type: 'R', a: m, b: p.b, R: 1 }); p.b = m;
+    }
     this.parts = parts;
-    this.nodes = [...names.values()];
+    this.nodes = [...names.values(), ...extra];
     this.states = parts.filter((p) => p.type === 'C' || p.type === 'L');
     this.sources = parts.filter((p) => p.type === 'V');
     parts.forEach((p, i) => (p.id = i + 1));

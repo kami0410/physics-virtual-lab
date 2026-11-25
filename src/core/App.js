@@ -394,7 +394,9 @@ export class App {
     }
     if (!comp.labelObj) {
       comp.labelObj = this.stage.makeLabel('');
-      comp.labelObj.position.set(0, comp.labelY ?? 34, 0);
+      // 固定仪器的模型常常在组件内部平移到台面上某处：标签跟着模型走，而不是停在组件原点
+      const o = comp.zone === 'none' ? comp.root.children[0] : null;
+      comp.labelObj.position.set(o ? o.position.x : 0, comp.labelY ?? 34, o ? o.position.z : 0);
       comp.root.add(comp.labelObj);
     }
     comp.labelObj.visible = comp.showLabel !== false;

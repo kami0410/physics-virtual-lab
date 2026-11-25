@@ -190,7 +190,7 @@ async function pool(tasks, k) {
 
 const browser = await launch();
 const home = await browser.newPage();
-await home.goto(URL0);
+await home.goto(URL0); await home.waitForSelector('[data-id]', { timeout: 60000 });
 let ids = await home.$$eval('[data-id]', (els) => els.map((e) => e.dataset.id));
 await home.close();
 if (ONLY) ids = ids.filter((i) => ONLY.split(',').includes(i));

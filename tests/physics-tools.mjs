@@ -443,5 +443,66 @@ for (const lam of [656.3, 430]) {
   const em = ((2 * Math.PI * C_LIGHT) / (d * B)) * (D2(K, 0.5) - D2(K, -0.5)) / (D2(K - 1, 0) - D2(K, 0));
   near('塞曼效应：由圆环直径公式反求 e/m', em / EM_TRUE, 1, 3e-3);
 }
+{
+  // 纯电容回路（电容箱两端各并一只示波器输入电容）：UIC 初值不能互相矛盾，结果应与相量法一致
+  const { LinearNet, periodicSteady } = await import('../src/core/spice.js');
+  const f = 1000, R = 1000, C = 1e-7, Ci = 2e-11;
+  const net = new LinearNet([{ type: 'V', a: 'g', b: '0', w: { shape: 'sine', f, amp: 1 }, r: 50 }, { type: 'C', a: 'g', b: 'x', C }, { type: 'R', a: 'x', b: '0', R },
+    { type: 'C', a: 'g', b: '0', C: Ci }, { type: 'C', a: 'x', b: '0', C: Ci }]);
+  const r = await periodicSteady(net, { vr: ['x', '0'] });
+  const w = 2 * Math.PI * f, ph = Math.atan(1 / (w * (R + 50) * C)), A = R / Math.hypot(R + 50, 1 / (w * C));
+  let e = 0; for (let i = 0; i < 200; i++) { const t = i / f / 200; e = Math.max(e, Math.abs(A * Math.sin(w * t + ph) - r.at('vr', t))); }
+  check('电容回路：RC 串联的电流超前角 tanφ = 1/ωRC（相量法对照）', e < 2e-3, `${e}`);
+}
+{
+  const { steady, BohrWheel } = await import('../src/physics/bohr.js');
+  const w0 = 4, beta = 0.05, w = 3.7, a0 = (3 * Math.PI) / 180;
+  const b = new BohrWheel({ w0, beta, c: 0 }); b.drive = true; b.w = w; b.a0 = a0;
+  b.advance(250);
+  const s = steady(w, w0, beta, a0);
+  near('波尔共振：数值积分的稳态振幅 = 解析解', b.lastA / ((s.A * 180) / Math.PI), 1, 1e-3);
+  near('波尔共振：稳态相位差 = 解析解', b.phase, (s.phi * 180) / Math.PI, 0.3);
+  const d = new BohrWheel({ w0, beta: 0.03, c: 0 }); d.th = 0.5; d.advance(20);
+  const p = d.peaks, lam = Math.log(p[1].A / p[2].A);
+  near('波尔共振：阻尼振动对数减缩 = βT', lam / (0.03 * (p[2].t - p[1].t)), 1, 1e-3);
+}
+{
+  const { emfT, tempT } = await import('../src/physics/coolmetal.js');
+  near('T 型热电偶 E(100 °C)（NIST）', emfT(100), 4.279, 1e-3);
+  near('T 型热电偶 E(200 °C)（NIST）', emfT(200), 9.288, 1e-3);
+  near('T 型热电偶反函数', tempT(emfT(98.5)), 98.5, 1e-6);
+}
+{
+  // 自由方板（ν = 0.3）的频率参数 λ = ωa²√(ρh/D)，A. W. Leissa, Vibration of Plates (NASA SP-160) 表 4.30：13.468、19.596、24.270、34.80（二重）
+  const { plateModes, jacobiEigen } = await import('../src/physics/chladni.js');
+  const f = plateModes({ nu: 0.3, N: 16, clamp: false }).modes.map((m) => m.lam);
+  near('自由方板 λ₁（Leissa 13.468）', f[0], 13.468, 0.01);
+  near('自由方板 λ₂（Leissa 19.596）', f[1], 19.596, 0.01);
+  near('自由方板 λ₃（Leissa 24.270）', f[2], 24.27, 0.01);
+  check('自由方板 λ₄ = λ₅（简并，Leissa 34.80）', Math.abs(f[3] - 34.8) < 0.05 && Math.abs(f[4] - f[3]) < 1e-6, `${f[3]}, ${f[4]}`);
+  const { val } = jacobiEigen(Float64Array.from([4, 1, 0, 1, 3, 1, 0, 1, 2]), 3);
+  near('雅可比法：3×3 矩阵特征值之和 = 迹', val.reduce((a, b) => a + b, 0), 9, 1e-12);
+}
+{
+  const { noteFreq, pluckRel, hannMag, cents } = await import('../src/physics/music.js');
+  near('十二平均律：C4 = 261.63 Hz', noteFreq(0), 261.6256, 1e-3);
+  near('十二平均律：八度频率比 2', noteFreq(12) / noteFreq(0), 2, 1e-12);
+  near('音分：纯五度 3/2 = 701.96 音分', cents(1.5, 1), 701.955, 1e-3);
+  check('L/3 处拨弦，3、6 次谐波为零', pluckRel(3, 1 / 3) < 1e-12 && pluckRel(6, 1 / 3) < 1e-12);
+  near('中点拨弦：3 次谐波为基波的 1/3', pluckRel(3, 0.5), 1 / 3, 1e-12);
+  near('汉宁窗频谱：偏离 1 个分辨单元处为峰值的一半', hannMag(1), 0.5, 1e-9);
+  near('汉宁窗频谱：连续性', hannMag(1 + 1e-6), 0.5, 1e-5);
+}
+{
+  const { cellI, withLoad, withSupply, cellUoc, KB, QE } = await import('../src/physics/solarcell.js');
+  const c = { I0: 1e-9, n: 1.35, Rs: 0.1, Rsh: 6000, T: 298.15, IL: 0.09 }, a = (c.n * KB * c.T) / QE;
+  const U = 0.45, I = cellI(U, c);
+  near('太阳能电池：单二极管方程的解满足原方程', c.IL - c.I0 * Math.expm1((U + I * c.Rs) / a) - (U + I * c.Rs) / c.Rsh, I, 1e-10);
+  near('太阳能电池：开路电压 ≈ (nkT/q)ln(I_L/I₀)', cellUoc(c), a * Math.log(c.IL / c.I0 + 1), 3e-3);
+  const w = withLoad(5, c);
+  near('太阳能电池：接 5 Ω 负载时 U = IR', w.U / w.I, 5, 1e-6);
+  const s = withSupply(1, 3.5, { ...c, IL: 0 });
+  near('太阳能电池：外加电源时 E = U + IR', s.U + s.I * 3.5, 1, 1e-6);
+}
 console.log(fails ? `\n工具物理验证：${fails} 项未通过，${passes} 项通过` : `工具物理验证：全部 ${passes} 项通过`);
 process.exit(fails ? 1 : 0);
