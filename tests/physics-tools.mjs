@@ -606,5 +606,20 @@ K1 L1 L2 ${M / L}
     near(`相量解与 spice-ts 交流分析一致（${f / 1e3} kHz 负载电压）`, wptSolve(f, o).U2, r.ac.voltage('7')[0].magnitude, 1e-9);
   }
 }
+{
+  const { force, eqCurrent, zeroPowerGap, linCoef, step, ringMeasure } = await import('../src/physics/maglev.js');
+  const p = { A: 9e-4, N: 600, i0: 2.5, delta: 0.004 }, m = force(0.0064, 0, p) / 9.8;
+  near('零功率间隙：永磁吸力 = 重力', zeroPowerGap(m * 9.8, p), 0.0064, 1e-12);
+  near('平衡电流使吸力 = 重力', force(0.006, eqCurrent(0.006, m * 9.8, p), p), m * 9.8, 1e-9);
+  const L = linCoef(0.006, 0.1, p), h = 1e-7;
+  near('负刚度 k_x = −∂F/∂g', L.kx, -(force(0.006 + h, 0.1, p) - force(0.006 - h, 0.1, p)) / (2 * h), 1e-3);
+  near('电流刚度 k_i = ∂F/∂i', L.ki, (force(0.006, 0.1 + 1e-6, p) - force(0.006, 0.1 - 1e-6, p)) / 2e-6, 1e-6);
+  // 闭环小扰动：数值积分测得的 ω_n² 与线性理论 (k_iK_p − k_x)/m 一致
+  const ie = eqCurrent(0.006, m * 9.8, p), Lq = linCoef(0.006, ie, p), c = { mode: 'pos', Kp: 800, Kd: 1, Ki: 160, Kz: 0, imax: 3, tau: 3e-4 };
+  const s = { g: 0.006, v: 0.01, i: ie, I: ie / 160, gs: 0.006 }, pts = [];
+  for (let k = 0; k < 25000; k++) { step(s, c, p, m, 9.8, 1e-4); if (k % 10 === 0) pts.push([k * 1e-4, s.g - s.gs]); }
+  const r = ringMeasure(pts), w2 = (2 * Math.PI * r.fd) ** 2 + (r.fd * Math.log(r.r)) ** 2;
+  near('闭环振荡 ω_n² = (k_iK_p − k_x)/m（含电流环惯性与积分，0.5% 内）', w2 / ((Lq.ki * 800 - Lq.kx) / m), 1, 0.005);
+}
 console.log(fails ? `\n工具物理验证：${fails} 项未通过，${passes} 项通过` : `工具物理验证：全部 ${passes} 项通过`);
 process.exit(fails ? 1 : 0);
