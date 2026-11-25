@@ -1,9 +1,10 @@
 # 启动与安装
 
-有三种用法，按需要选一种：
+有四种用法，按需要选一种：
 
 | 用法 | 适合 | 需要 Node.js | AI 助教 |
 |---|---|---|---|
+| [在线版](https://kami0410.github.io/physics-virtual-lab/) | 先看看、临时用、手机平板上用 | 不需要 | 大部分服务能直连；智谱不能用 |
 | [一键启动](#一键启动) | 自己的电脑上长期用 | 需要 | 全部服务都能用（内置中转） |
 | [离线单文件版](#离线单文件版) | 拷给同学、机房、没网的电脑 | 不需要 | 大部分服务能直连；智谱需要另开中转 |
 | [部署到网站](#部署到网站) | 老师给全班用、手机上用 | 只在构建时需要 | 同单文件版 |
@@ -101,6 +102,8 @@ npm run build:single
 ```bash
 npm run build
 ```
+
+本仓库的 [在线版](https://kami0410.github.io/physics-virtual-lab/) 就是这样部署的：每次推送到 main 分支，GitHub Actions 会自动构建并发布到 GitHub Pages（见 `.github/workflows/pages.yml`）。fork 本仓库后，在仓库 Settings → Pages 里把 Source 设为 “GitHub Actions”，就能得到自己的一份。
 
 把生成的 `dist/` 文件夹整个上传到任何静态网站空间即可，例如学校的 Web 服务器、GitHub Pages、Gitee Pages、Cloudflare Pages、Netlify 等。不需要数据库，也不需要后端程序。
 

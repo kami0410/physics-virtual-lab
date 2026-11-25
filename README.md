@@ -8,11 +8,15 @@
 
 64 个实验 · 力学 / 热学 / 电磁学 / 光学 / 近代物理 · 可完全离线运行 · 个人与教学免费使用
 
+### [▶ 在线体验：打开网页就能做实验](https://kami0410.github.io/physics-virtual-lab/)
+
+<sub>电脑、平板、手机的浏览器都可以，不用安装；打开过一次后断网也能用</sub>
+
 [快速开始](#快速开始) · [实验清单](#实验清单) · [AI 助教](#ai-助教) · [详细文档](#文档) · [许可](#许可)
 
 </div>
 
-![首页](docs/images/home.jpg)
+[![首页](docs/images/home.jpg)](https://kami0410.github.io/physics-virtual-lab/)
 
 ## 这是什么
 
@@ -25,13 +29,17 @@
 - **卡住了有办法**：每一步都能“自动完成本步”，或者“一键运行”看一遍规范操作；也可以叫 [AI 助教](#ai-助教) 帮你找原因。
 
 <p align="center">
-<img src="docs/images/michelson.jpg" width="49%" alt="迈克尔逊干涉仪">
-<img src="docs/images/holo.jpg" width="49%" alt="全息照相">
+<a href="https://kami0410.github.io/physics-virtual-lab/#/exp/michelson"><img src="docs/images/michelson.jpg" width="49%" alt="迈克尔逊干涉仪"></a>
+<a href="https://kami0410.github.io/physics-virtual-lab/#/exp/holo"><img src="docs/images/holo.jpg" width="49%" alt="全息照相"></a>
 </p>
 
 <p align="center"><sub>左：迈克尔逊干涉仪，白光干涉条纹、测微手轮三级读数、逐条记录的数据表。右：全息照相，拿走物体后透过全息图看到的再现像</sub></p>
 
 ## 快速开始
+
+**最快的方式：直接打开 [在线版](https://kami0410.github.io/physics-virtual-lab/)**，什么都不用装。下面是在自己电脑上运行的方法，适合长期使用、离线使用，或者要接入只能经中转访问的 AI 服务（如智谱）。
+
+### 在自己电脑上运行
 
 需要先装 [Node.js](https://nodejs.org/zh-cn)（选 LTS 版，一路“下一步”即可）。然后下载本仓库：点页面上方绿色的 **Code → Download ZIP**，解压到任意文件夹。
 
@@ -50,7 +58,7 @@ npm install
 npm run dev        # 打开 http://127.0.0.1:5173
 ```
 
-### 不想装 Node.js？用离线单文件版
+### 离线单文件版（不用装 Node.js）
 
 在一台装了 Node.js 的电脑上运行一次：
 
@@ -208,7 +216,7 @@ npm run build:single
 
 ## 许可
 
-本项目采用 [PolyForm Noncommercial License 1.0.0](LICENSE)，简单说：
+Copyright © 2026 kami0410。本项目采用 [PolyForm Noncommercial License 1.0.0](LICENSE)，简单说：
 
 | | |
 |---|---|

@@ -34,6 +34,11 @@ const VENDORED = [
   ['Magpylib 电流环磁场算法（https://github.com/magpylib/magpylib）', 'licenses/magpylib-LICENSE.txt', 'BSD-2-Clause'],
   ['geomagnetism 世界地磁模型计算程序（https://github.com/naturalatlas/geomagnetism）', 'licenses/geomagnetism-LICENSE.txt', 'Apache-2.0'],
 ];
+/** 本项目自己的许可声明（PolyForm Noncommercial 要求随副本附带许可条款或其网址，以及 Required Notice 行） */
+const OWN_NOTICE = `大学物理实验虚拟仿真 https://github.com/kami0410/physics-virtual-lab
+Required Notice: Copyright © 2026 kami0410 (https://github.com/kami0410/physics-virtual-lab)
+本程序按 PolyForm Noncommercial License 1.0.0 授权：个人学习、研究、教学及非营利机构可免费使用、修改和转发，不得用于商业用途。
+许可全文：https://polyformproject.org/licenses/noncommercial/1.0.0`;
 const licenseText = () => BUNDLED.map(([name, file]) => {
   const pkg = JSON.parse(fs.readFileSync(`node_modules/${name}/package.json`, 'utf8'));
   return `==== ${name} ${pkg.version}（${pkg.license}）====
@@ -52,6 +57,8 @@ const licenseNotice = (emitFile) => ({
     handler(html) {
       const body = licenseText().replace(/--/g, '- -'); // HTML 注释里不能出现 --
       return html.replace(/^(<!doctype html>\s*)/i, `$1<!--
+${OWN_NOTICE}
+
 本程序包含以下开源组件，按各自许可证使用：
 
 ${body}
@@ -59,7 +66,7 @@ ${body}
 `);
     },
   },
-  generateBundle() { if (emitFile) this.emitFile({ type: 'asset', fileName: 'THIRD-PARTY-LICENSES.txt', source: licenseText() }); },
+  generateBundle() { if (emitFile) this.emitFile({ type: 'asset', fileName: 'THIRD-PARTY-LICENSES.txt', source: `${OWN_NOTICE}\n\n${licenseText()}` }); },
 });
 
 /** 生成 Service Worker：首次访问后缓存全部资源，之后断网也能打开任意实验 */
