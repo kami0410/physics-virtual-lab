@@ -39,7 +39,9 @@ export function useEnvProxy() {
 }
 
 /**
- * @param {{allow?: string[], any?: boolean, log?: (line: string) => void}} o
+ * sameOrigin（内置在 Vite 开发/预览服务器里时）：只接受本页面自己发来的同源请求，不发跨域许可；
+ * 因此也可以转发到本机的 http 服务（如 127.0.0.1:3425 上不支持跨域的本地模型），别的网站借不到它。
+ * @param {{allow?: string[], any?: boolean, sameOrigin?: boolean, log?: (line: string) => void}} o
  * @returns {(req: http.IncomingMessage, res: http.ServerResponse) => Promise<void>} req.url 为去掉前缀后的部分
  */
 export function relayHandler(o = {}) {
@@ -47,10 +49,11 @@ export function relayHandler(o = {}) {
   const ALLOW = new Set([...DEFAULT_HOSTS, ...(o.allow || []).map((s) => s.trim().toLowerCase()).filter(Boolean)]);
   const log = o.log || (() => {});
   const allowed = (u) => {
+    if (o.sameOrigin && loop(u.hostname) && /^https?:$/.test(u.protocol)) return true;
     if (ALLOW.has(u.host.toLowerCase()) || ALLOW.has(u.hostname.toLowerCase())) return u.protocol === 'https:' || loop(u.hostname);
     return !!o.any && u.protocol === 'https:' && !loop(u.hostname);
   };
-  const cors = (req) => ({
+  const cors = (req) => (o.sameOrigin ? {} : {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': req.headers['access-control-request-headers'] || '*',
@@ -58,9 +61,19 @@ export function relayHandler(o = {}) {
     'Access-Control-Expose-Headers': '*',
     'Access-Control-Max-Age': '86400',
   });
+  /** 同源模式：请求必须来自本页面——Host 是本机地址（防 DNS 重绑定），带 Origin 时必须与 Host 一致 */
+  const foreign = (req) => {
+    if (!o.sameOrigin) return false;
+    const host = String(req.headers.host || '');
+    if (!loop(host.replace(/:\d+$/, ''))) return true;
+    const org = req.headers.origin;
+    if (!org) return false;
+    try { return new URL(org).host !== host; } catch { return true; }
+  };
   const json = (req, res, code, obj) => { res.writeHead(code, { ...cors(req), 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
 
   return async (req, res) => {
+    if (foreign(req)) return json(req, res, 403, { error: { message: '内置中转只接受本页面的请求' } });
     if (req.method === 'OPTIONS') { res.writeHead(204, cors(req)); return res.end(); }
     const path = (req.url || '/').replace(/^\/+/, '');
     if (!path || path === '__relay') return json(req, res, 200, { relay: RELAY_ID, v: 1 });
@@ -93,7 +106,7 @@ export function relayHandler(o = {}) {
 /** Vite 插件：npm run dev / npm run preview 时在同一服务器的 /__ai-relay/ 下提供中转 */
 export function viteAiRelay() {
   const mount = (srv) => {
-    const h = relayHandler({ log: (l) => srv.config.logger.info(`[AI 中转] ${l}`, { timestamp: false }) });
+    const h = relayHandler({ sameOrigin: true, log: (l) => srv.config.logger.info(`[AI 中转] ${l}`, { timestamp: false }) });
     srv.middlewares.use('/__ai-relay', (req, res) => { h(req, res); });
   };
   return { name: 'physlab-ai-relay', configureServer: mount, configurePreviewServer: mount };

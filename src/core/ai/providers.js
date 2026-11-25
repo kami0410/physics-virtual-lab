@@ -79,7 +79,7 @@ export function netHint(base) {
     if (isRelayUrl(u)) return `连不上中转（${u.host}）。${HOW}${lna}`;
     if (u.port === '11434') return `连不上本机 Ollama。确认 Ollama 正在运行；它默认只接受本机网页的请求，要先退出 Ollama，设置环境变量 OLLAMA_ORIGINS=* 后再启动。${lna}`;
     if (u.port === '1234') return `连不上本机 LM Studio。确认已在 Developer 页启动服务器，并在 Server Settings 里打开 “Enable CORS”。${lna}`;
-    return `连不上本机服务 ${u.host}：确认服务在运行，并且允许跨域访问（返回 Access-Control-Allow-Origin）。不能改设置的服务可以经本机中转访问（独立运行中转时加 --allow ${u.host}，地址写成 ${RELAY}/${base.replace(/\/+$/, '')}）。${lna}`;
+    return `连不上本机服务 ${u.host}：确认服务在运行。服务不允许跨域访问（不返回 Access-Control-Allow-Origin）时，用 npm run dev 打开本页面，助教会自动经内置中转访问它；或者独立运行中转时加 --allow ${u.host}，再把接口地址前面加上 ${RELAY}/。${lna}`;
   }
   const nb = NO_BROWSER.find((x) => x.re.test(u.hostname));
   if (nb) return `${nb.name}只允许它自己的网页跨域访问，浏览器里不能直连，需要经本机中转。${HOW}${lna}`;
@@ -114,8 +114,20 @@ const viaRelay = new Set();
 /** 发请求：本机地址直连；已知不允许网页访问、或上次直连失败的主机走中转；直连失败时自动找中转重试 */
 async function routedFetch(url, init) {
   const u = new URL(url);
-  if (isLoop(u.hostname) || isRelayUrl(u)) return netFetch(url, url, init);
+  if (isRelayUrl(u)) return netFetch(url, url, init);
   const relayed = async (r) => { viaRelay.add(u.host); return netFetch(r + '/', `${r}/${url}`, init); };
+  // 本机服务（Ollama、LM Studio、其他本地模型）：先直连；不允许跨域时，只能借同源的内置中转（npm run dev / preview）
+  if (isLoop(u.hostname)) {
+    const own = async () => { const r = await findRelay(); return r && typeof location !== 'undefined' && r.startsWith(location.origin + '/') ? r : null; };
+    if (viaRelay.has(u.host)) { const r = await own(); if (r) return relayed(r); }
+    try { return await fetch(url, init); } catch (err) {
+      if (err && err.name === 'AbortError') throw err;
+      if (init && init.signal && init.signal.aborted) throw err;
+      const r = await own();
+      if (r) return relayed(r);
+      throw netError(url, err);
+    }
+  }
   if (viaRelay.has(u.host) || NO_BROWSER.some((x) => x.re.test(u.hostname))) {
     const r = await findRelay();
     if (r) return relayed(r);
@@ -131,7 +143,7 @@ async function routedFetch(url, init) {
 }
 /** 当前某个接口地址实际怎么走（设置框里显示） */
 export async function routeOf(base) {
-  try { const u = new URL(base); if (isLoop(u.hostname) || isRelayUrl(u)) return { via: 'direct' }; if (viaRelay.has(u.host) || NO_BROWSER.some((x) => x.re.test(u.hostname))) { const r = await findRelay(); return { via: r ? 'relay' : 'none', relay: r }; } } catch { /* 忽略 */ }
+  try { const u = new URL(base); if (isRelayUrl(u)) return { via: 'direct' }; if (viaRelay.has(u.host) || NO_BROWSER.some((x) => x.re.test(u.hostname))) { const r = await findRelay(); return { via: r ? 'relay' : 'none', relay: r }; } } catch { /* 忽略 */ }
   return { via: 'direct' };
 }
 
