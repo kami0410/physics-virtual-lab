@@ -1,9 +1,15 @@
 {
-  "name": "optics-virtual-lab",
+  "name": "physics-virtual-lab",
   "private": true,
   "version": "1.0.0",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
-  "description": "大学物理实验虚拟仿真平台",
+  "description": "大学物理实验虚拟仿真：64 个可动手操作的三维实验，浏览器运行，可离线",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kami0410/physics-virtual-lab.git"
+  },
+  "homepage": "https://github.com/kami0410/physics-virtual-lab#readme",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
