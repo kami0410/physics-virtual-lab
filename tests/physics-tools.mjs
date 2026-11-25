@@ -561,5 +561,13 @@ for (const lam of [656.3, 430]) {
   near('WMM2025：(43°N, 93°E, 65 km) 水平分量 24300.8 nT', b.h, 24300.76, 1);
   near('WMM2025：(43°N, 93°E, 65 km) 磁倾角 64.10°', b.incl, 64.1, 0.01);
 }
+{
+  const { circleFraction, coupleFraction, farField, spotDiameter } = await import('../src/physics/fiber.js');
+  near('高斯光斑全部落在大圆内：份额 → 1', circleFraction(6.4, 25, 0), 1, 1e-6);
+  near('同心圆份额 = 1 − exp(−2a²/w²)', circleFraction(20, 15, 0), 1 - Math.exp((-2 * 225) / 400), 2e-4);
+  check('偏心越大份额越小', coupleFraction(20, 0, 0, { w0: 6.4, zR: 203, a: 25 }) > coupleFraction(25, 0, 0, { w0: 6.4, zR: 203, a: 25 }));
+  near('远场边缘（5% 强度点）在 sinθ = NA', farField(Math.asin(0.21), 0.21), 0.05, 1e-9);
+  near('光斑直径 D = 2z·tan(arcsin NA)', spotDiameter(50, 0.2), 100 * Math.tan(Math.asin(0.2)), 1e-12);
+}
 console.log(fails ? `\n工具物理验证：${fails} 项未通过，${passes} 项通过` : `工具物理验证：全部 ${passes} 项通过`);
 process.exit(fails ? 1 : 0);

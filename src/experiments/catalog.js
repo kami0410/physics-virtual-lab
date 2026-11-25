@@ -18,6 +18,7 @@ import * as PolarizationExperiment_M from './polarization.meta.js';
 import * as BrewsterExperiment_M from './brewster.meta.js';
 import * as PolarimeterExperiment_M from './polarimeter.meta.js';
 import * as HoloExperiment_M from './holo.meta.js';
+import * as FiberExperiment_M from './fiber.meta.js';
 import * as PhotoelectricExperiment_M from './photoelectric.meta.js';
 import * as VoltAmpExperiment_M from './voltamp.meta.js';
 import * as BridgeExperiment_M from './bridge.meta.js';
@@ -80,6 +81,7 @@ export const CATALOG = [
   E(BrewsterExperiment_M, () => import('./brewster.js').then((m) => m.BrewsterExperiment)),
   E(PolarimeterExperiment_M, () => import('./polarimeter.js').then((m) => m.PolarimeterExperiment)),
   E(HoloExperiment_M, () => import('./holo.js').then((m) => m.HoloExperiment)),
+  E(FiberExperiment_M, () => import('./fiber.js').then((m) => m.FiberExperiment)),
   E(PhotoelectricExperiment_M, () => import('./photoelectric.js').then((m) => m.PhotoelectricExperiment)),
   E(VoltAmpExperiment_M, () => import('./voltamp.js').then((m) => m.VoltAmpExperiment)),
   E(BridgeExperiment_M, () => import('./bridge.js').then((m) => m.BridgeExperiment)),
