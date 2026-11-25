@@ -569,5 +569,14 @@ for (const lam of [656.3, 430]) {
   near('远场边缘（5% 强度点）在 sinθ = NA', farField(Math.asin(0.21), 0.21), 0.05, 1e-9);
   near('光斑直径 D = 2z·tan(arcsin NA)', spotDiameter(50, 0.2), 100 * Math.tan(Math.asin(0.2)), 1e-12);
 }
+{
+  const { reverseCurrent, openVoltage, riseTime, junctionC, VT } = await import('../src/physics/photodiode.js');
+  const o = { Iph: 0, Is: 2e-9, n: 1.1, Ig: 0, Rsh: Infinity, T: 300 };
+  const v1 = openVoltage(1e15, { ...o, Iph: 1e-6 }), v2 = openVoltage(1e15, { ...o, Iph: 1e-5 });
+  near('开路电压：照度增大 10 倍，U_oc 增加 nV_T ln10', v2 - v1, 1.1 * VT(300) * Math.log(10), 1e-4);
+  near('大反偏时反向电流 → I_ph + I_s', reverseCurrent(5, { ...o, Iph: 3e-6 }), 3e-6 + 2e-9, 1e-12);
+  near('单极点上升时间 = τ ln 9', riseTime(1e-6, 1e-12) / 1e-6, Math.log(9), 1e-5);
+  near('结电容：U = 3V_bi 时减半', junctionC(2.1, 60e-12, 0.7) / 60e-12, 0.5, 1e-12);
+}
 console.log(fails ? `\n工具物理验证：${fails} 项未通过，${passes} 项通过` : `工具物理验证：全部 ${passes} 项通过`);
 process.exit(fails ? 1 : 0);
