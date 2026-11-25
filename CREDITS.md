@@ -9,7 +9,7 @@
 | [three.js](https://github.com/mrdoob/three.js) | 0.187 | MIT | 三维渲染 |
 | [KaTeX](https://github.com/KaTeX/KaTeX) | 0.19 | MIT | 公式排版（含字体） |
 | [IBM Plex Mono](https://github.com/IBM/plex)（经 @fontsource 打包） | 5.3 | SIL OFL 1.1 | 读数、数据表等宽字体 |
-| [spice-ts](https://github.com/mfiumara/spice-ts)（`@spice-ts/core`，Copyright (c) 2025-present Mattia Fiumara） | 0.4.0 | MIT | 电路仿真引擎（SPICE 网表、梯形积分瞬态分析、直流工作点）。示波器、RC/RLC 暂态等交流实验用它计算电路；只在进入这些实验时才加载。`src/core/spice.js` 负责把接线转成网表并用打靶法求周期稳态 |
+| [spice-ts](https://github.com/mfiumara/spice-ts)（`@spice-ts/core`，Copyright (c) 2025-present Mattia Fiumara） | 0.4.0 | MIT | 电路仿真引擎（SPICE 网表、梯形积分瞬态分析、直流工作点）。示波器、RC/RLC 暂态等交流实验用它计算电路；只在进入这些实验时才加载。无线输电实验的耦合谐振电路用相量法求解，测试中用它的交流分析（含 K 互感耦合）逐点核对。`src/core/spice.js` 负责把接线转成网表并用打靶法求周期稳态 |
 | [Anthropic TypeScript SDK](https://github.com/anthropics/anthropic-sdk-typescript)（`@anthropic-ai/sdk`） | 1.14.0 | Apache-2.0（1.0 之前的部分为 MIT，两份许可全文都随程序附上） | AI 助教接入 Claude 时使用（流式输出、工具调用）。只有学生在助教设置里选了 Claude 并发起提问时才加载；OpenAI 兼容格式与 Gemini 格式由 `src/core/ai/providers.js` 直接用 fetch 实现，不依赖其他 SDK |
 
 构建时，这些组件的版权与许可全文会自动写入 `index.html` 开头的注释。多文件版还会另外生成 `THIRD-PARTY-LICENSES.txt`（见 `vite.config.js` 里的 `licenseNotice`）。
@@ -56,6 +56,7 @@
 - **弹簧振子**：均匀弹簧按连续弹性体求解，基频满足 β tan β = m_s/M，ω = β√(k/m_s)，轻弹簧极限下有效质量趋于 m_s/3（`src/physics/spring.js`）。
 - **光纤的传输特性**：耦合份额为高斯光斑与纤芯圆的交叠积分（离焦时光斑按高斯光束规律展宽），远场光强取 (1 − (sinθ/NA₀)²)^0.7、以 5% 强度点定义数值孔径，弯曲损耗取 Δ = A·e^(−R/R₀)（`src/physics/fiber.js`）。
 - **光敏二极管**：反向电流 I = SE + I_s(1 − e^(−U/nV_T)) + I_g√U + U/R_sh；开路电压按电压表内阻求解；结电容 C_j ∝ (1 + U/V_bi)^(−1/2)，脉冲响应取 RC 与载流子渡越时间的两极点阶跃响应（`src/physics/photodiode.js`）。
+- **磁耦合谐振式无线输电**：同轴圆环互感用麦克斯韦（诺依曼积分）的椭圆积分公式，椭圆积分用算术–几何平均（AGM）计算；平面螺旋线圈按同心圆环叠加；两耦合 RLC 回路按相量法求稳态，线圈交流电阻计入趋肤效应（`src/physics/wpt.js`）。
 - **地磁场**：世界地磁模型 WMM2025（NOAA/NCEI 与英国地质调查局，2024），由 `tests/physics-tools.mjs` 用官方测试值核对。
 - **电路中的纯电容回路**：周期稳态打靶法要求各电容初值相互独立，回路中最小的电容串 1 Ω 引线电阻（`src/core/spice.js`），由 `tests/physics-tools.mjs` 与相量法对照。
 - 菲涅耳公式、马吕斯定律、贝塞尔函数、斯托克斯–穆勒矩阵等都是标准物理公式，由 `tests/physics.mjs` 做数值验证。

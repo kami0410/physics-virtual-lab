@@ -578,5 +578,33 @@ for (const lam of [656.3, 430]) {
   near('单极点上升时间 = τ ln 9', riseTime(1e-6, 1e-12) / 1e-6, Math.log(9), 1e-5);
   near('结电容：U = 3V_bi 时减半', junctionC(2.1, 60e-12, 0.7) / 60e-12, 0.5, 1e-12);
 }
+{
+  const { ellipKE, loopM, coilL, coilM, wptSolve } = await import('../src/physics/wpt.js');
+  const { simulate } = await import('@spice-ts/core');
+  near('完全椭圆积分 K(0.5)', ellipKE(0.5).K, 1.685750354812596, 1e-12);
+  near('完全椭圆积分 E(0.5)', ellipKE(0.5).E, 1.467462209339427, 1e-12);
+  const a = 0.05, d = 1;
+  near('远距离两圆环互感 → 磁偶极子近似 μ₀πa⁴/(2d³)', loopM(a, a, d) / ((4e-7 * Math.PI * Math.PI * a ** 4) / (2 * d ** 3)), 1, 0.01);
+  const c = { N: 8, r0: 0.05, p: 0.005, rw: 0.00075 }, L = coilL(c), M = coilM(c, 0.08);
+  const o = { Vs: 1, Rs: 1, R1: 0.3, R2: 0.3, f0r: 5e5, L1: L, L2: L, C1: 10e-9, C2: 10e-9, RL: 5, M };
+  for (const f of [420e3, 466e3, 510e3]) {
+    const sk = Math.sqrt(f / 5e5);
+    const net = `wpt
+V1 1 0 AC 1
+RS 1 2 1
+R1 2 3 ${0.3 * sk}
+C1 3 4 10e-9
+L1 4 0 ${L}
+L2 5 0 ${L}
+C2 5 6 10e-9
+R2 6 7 ${0.3 * sk}
+RL 7 0 5
+K1 L1 L2 ${M / L}
+.ac lin 1 ${f} ${f}
+.end`;
+    const r = await simulate(net);
+    near(`相量解与 spice-ts 交流分析一致（${f / 1e3} kHz 负载电压）`, wptSolve(f, o).U2, r.ac.voltage('7')[0].magnitude, 1e-9);
+  }
+}
 console.log(fails ? `\n工具物理验证：${fails} 项未通过，${passes} 项通过` : `工具物理验证：全部 ${passes} 项通过`);
 process.exit(fails ? 1 : 0);

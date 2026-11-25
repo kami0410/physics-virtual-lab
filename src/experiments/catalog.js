@@ -32,6 +32,7 @@ import * as RlcSteadyExperiment_M from './rlcss.meta.js';
 import * as PotentiometerExperiment_M from './potentiometer.meta.js';
 import * as HallExperiment_M from './hall.meta.js';
 import * as HelmholtzExperiment_M from './helmholtz.meta.js';
+import * as WptExperiment_M from './wpt.meta.js';
 import * as GeomagExperiment_M from './geomag.meta.js';
 import * as HysteresisExperiment_M from './hysteresis.meta.js';
 import * as CurieExperiment_M from './curie.meta.js';
@@ -97,6 +98,7 @@ export const CATALOG = [
   E(PotentiometerExperiment_M, () => import('./potentiometer.js').then((m) => m.PotentiometerExperiment)),
   E(HallExperiment_M, () => import('./hall.js').then((m) => m.HallExperiment)),
   E(HelmholtzExperiment_M, () => import('./helmholtz.js').then((m) => m.HelmholtzExperiment)),
+  E(WptExperiment_M, () => import('./wpt.js').then((m) => m.WptExperiment)),
   E(GeomagExperiment_M, () => import('./geomag.js').then((m) => m.GeomagExperiment)),
   E(HysteresisExperiment_M, () => import('./hysteresis.js').then((m) => m.HysteresisExperiment)),
   E(CurieExperiment_M, () => import('./curie.js').then((m) => m.CurieExperiment)),
