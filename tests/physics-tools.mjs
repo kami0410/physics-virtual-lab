@@ -504,5 +504,18 @@ for (const lam of [656.3, 430]) {
   const s = withSupply(1, 3.5, { ...c, IL: 0 });
   near('太阳能电池：外加电源时 E = U + IR', s.U + s.I * 3.5, 1, 1e-6);
 }
+{
+  const { richardson, anodeCurrent, cathodeField, richardsonLine, K_EV } = await import('../src/physics/thermionic.js');
+  const o = { phi: 4.54, AS: 1.5, r1: 0.0025, r2: 0.42, kc: 1e3 };
+  const pts = [1800, 1900, 2000, 2100].map((T) => ({ T, I: richardson(T, o.phi, o.AS) }));
+  near('理查森直线法：由理想数据反求逸出功', richardsonLine(pts).phi, 4.54, 1e-9);
+  near('理查森直线：5.04×10³ 系数（e/(2.303k)）', 1 / (K_EV * Math.LN10), 5040, 1);
+  // 肖特基效应：Δφ = √(eE/4πε₀)，换成 E 以 V/cm 计时 ln(Ia/I) = 4.39·√E/T
+  const e = 1.602176634e-19, eps0 = 8.8541878128e-12, E = cathodeField(100, o.r1, o.r2), T = 2000;
+  const dphi = Math.sqrt((e * E * 100) / (4 * Math.PI * eps0)); // eV（E 换成 V/m）
+  near('肖特基系数 4.39 与 √(eE/4πε₀)/kT 一致', Math.log(anodeCurrent(100, T, o) / richardson(T, o.phi, o.AS)), dphi / (K_EV * T), 2e-3);
+  const a = anodeCurrent(0.01, 2000, { ...o, kc: 5.6e-5 });
+  near('低阳极电压时受空间电荷限制（3/2 次方律）', a / (5.6e-5 * 0.01 ** 1.5), 1, 1e-3);
+}
 console.log(fails ? `\n工具物理验证：${fails} 项未通过，${passes} 项通过` : `工具物理验证：全部 ${passes} 项通过`);
 process.exit(fails ? 1 : 0);

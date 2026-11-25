@@ -55,6 +55,7 @@ import * as PnExperiment_M from './pn.meta.js';
 import * as ExpansionExperiment_M from './expansion.meta.js';
 import * as EMRatioExperiment_M from './emratio.meta.js';
 import * as ZeemanExperiment_M from './zeeman.meta.js';
+import * as WorkFunctionExperiment_M from './workfn.meta.js';
 
 const E = (M, load) => ({ meta: M.meta, thumb: M.thumb, load });
 export const CATALOG = [
@@ -111,5 +112,6 @@ export const CATALOG = [
   E(PnExperiment_M, () => import('./pn.js').then((m) => m.PnExperiment)),
   E(EMRatioExperiment_M, () => import('./emratio.js').then((m) => m.EMRatioExperiment)),
   E(ZeemanExperiment_M, () => import('./zeeman.js').then((m) => m.ZeemanExperiment)),
+  E(WorkFunctionExperiment_M, () => import('./workfn.js').then((m) => m.WorkFunctionExperiment)),
   E(MillikanExperiment_M, () => import('./millikan.js').then((m) => m.MillikanExperiment)),
 ];

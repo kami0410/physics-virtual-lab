@@ -49,6 +49,7 @@
 - **克拉尼图形**：Kirchhoff 薄板的瑞利–里茨解，基函数为勒让德多项式之积，中心固定用罚函数施加，特征值用雅可比旋转法（`src/physics/chladni.js`）。自由方板的频率参数与 A. W. Leissa, *Vibration of Plates*, NASA SP-160 (1969) 的表列值对照验证。
 - **乐音**：十二平均律以 A4 = 440 Hz 为标准（ISO 16）；拨弦谐波按三角形初始位移的模式展开、琴码处横向力给出；频谱为汉宁窗的解析变换（`src/physics/music.js`）。
 - **太阳能电池**：单二极管等效电路模型（含串联、并联电阻），二分法求工作点（`src/physics/solarcell.js`）。
+- **热电子发射**：理查森–杜什曼公式 I = AST²e^(−eφ/kT)，肖特基效应 ln(I_a/I) = 0.439√E/T（E 以 V/m 计），低阳极电压处用圆筒二极管的蔡尔德–朗缪尔 3/2 次方律限流；理查森直线法的系数 e/(2.303k) = 5.040×10³ K/V 由 `tests/physics-tools.mjs` 验证（`src/physics/thermionic.js`）。
 - **电路中的纯电容回路**：周期稳态打靶法要求各电容初值相互独立，回路中最小的电容串 1 Ω 引线电阻（`src/core/spice.js`），由 `tests/physics-tools.mjs` 与相量法对照。
 - 菲涅耳公式、马吕斯定律、贝塞尔函数、斯托克斯–穆勒矩阵等都是标准物理公式，由 `tests/physics.mjs` 做数值验证。
 
