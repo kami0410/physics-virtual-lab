@@ -248,6 +248,8 @@ body:has(.modal-mask) .toasts { top: auto; bottom: 6px; }
 .lbl small { color: var(--laser); font-family: var(--mono); font-size: 11px; }
 .lbl.sel { background: var(--ink); color: var(--paper); }
 .lbl.sel small { color: #ffb3bf; }
+.vp-empty { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2; pointer-events: none; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 22px; border: 1px dashed rgba(233,237,230,.38); border-radius: var(--r); background: rgba(23,27,26,.55); color: rgba(233,237,230,.72); font-size: 13px; text-align: center; max-width: 80%; }
+.vp-empty b { font-family: var(--serif); font-size: 16px; letter-spacing: .12em; color: var(--engrave); font-weight: 600; }
 .vtools { position: absolute; left: 10px; top: 10px; display: flex; gap: 4px; flex-wrap: wrap; z-index: 3; }
 .vtools .btn { background: rgba(23,27,26,.78); color: #d9ded8; border-color: rgba(217,222,216,.22); }
 .vtools .btn:hover { background: rgba(40,46,44,.92); border-color: rgba(217,222,216,.5); }

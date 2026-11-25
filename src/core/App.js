@@ -421,6 +421,11 @@ export class App {
 
   renderShelf() {
     const items = [...this.comps.values()].filter((c) => !c.fixed);
+    // 实验台上还一件仪器都没有：在三维视图中央给出起手提示
+    const bare = items.length > 0 && ![...this.comps.values()].some((c) => c.placed);
+    let tip = this.vp.querySelector('.vp-empty');
+    if (bare && !tip) { tip = h('div', 'vp-empty', `<b>实验台是空的</b><span>${this.mq && this.mq.matches ? '切到“器材”，轻点仪器放上实验台' : '从右侧器材柜把仪器拖到台面上，或单击仪器自动放置'}</span>`); this.vp.append(tip); }
+    if (tip) tip.hidden = !bare;
     this.shelfEl.innerHTML = '';
     if (!items.length) { this.shelfEl.innerHTML = '<div class="empty-tip" style="grid-column:1/3">本实验主要仪器已就位。</div>'; return; }
     for (const c of items) {

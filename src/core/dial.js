@@ -7,7 +7,7 @@ export function dialAngle(theta, center) { const span = Math.PI / 2; return cent
 export function drawDialFace(ctx, x0, y0, w, h, { kind, divs, center, cls, unit, theta = null, range = null, title = '' }) {
   ctx.save(); ctx.translate(x0, y0);
   ctx.fillStyle = '#f1ede2'; ctx.fillRect(0, 0, w, h);
-  const cx = w / 2, cy = h * 0.92, R = Math.min(w * 0.46, h * 0.78);
+  const cx = w / 2, cy = h * 0.92, R = Math.min(w * 0.46, h * 0.7); // 顶端刻度数字（半径 1.2R 处）留在画面内
   const span = Math.PI / 2;
   const ang = (f) => (center ? f * span : (f - 0.5) * span); // f: 满偏比例（中心零为 -0.5..0.5）
   ctx.strokeStyle = '#111'; ctx.fillStyle = '#111'; ctx.lineCap = 'butt';
