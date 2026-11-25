@@ -34,6 +34,7 @@ import * as HallExperiment_M from './hall.meta.js';
 import * as HelmholtzExperiment_M from './helmholtz.meta.js';
 import * as WptExperiment_M from './wpt.meta.js';
 import * as MaglevExperiment_M from './maglev.meta.js';
+import * as DaqExperiment_M from './daq.meta.js';
 import * as GeomagExperiment_M from './geomag.meta.js';
 import * as HysteresisExperiment_M from './hysteresis.meta.js';
 import * as CurieExperiment_M from './curie.meta.js';
@@ -101,6 +102,7 @@ export const CATALOG = [
   E(HelmholtzExperiment_M, () => import('./helmholtz.js').then((m) => m.HelmholtzExperiment)),
   E(WptExperiment_M, () => import('./wpt.js').then((m) => m.WptExperiment)),
   E(MaglevExperiment_M, () => import('./maglev.js').then((m) => m.MaglevExperiment)),
+  E(DaqExperiment_M, () => import('./daq.js').then((m) => m.DaqExperiment)),
   E(GeomagExperiment_M, () => import('./geomag.js').then((m) => m.GeomagExperiment)),
   E(HysteresisExperiment_M, () => import('./hysteresis.js').then((m) => m.HysteresisExperiment)),
   E(CurieExperiment_M, () => import('./curie.js').then((m) => m.CurieExperiment)),

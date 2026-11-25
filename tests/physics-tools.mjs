@@ -621,5 +621,16 @@ K1 L1 L2 ${M / L}
   const r = ringMeasure(pts), w2 = (2 * Math.PI * r.fd) ** 2 + (r.fd * Math.log(r.r)) ** 2;
   near('闭环振荡 ω_n² = (k_iK_p − k_x)/m（含电流环惯性与积分，0.5% 内）', w2 / ((Lq.ki * 800 - Lq.kx) / m), 1, 0.005);
 }
+{
+  const { quantize, lsb, aliasFreq, spectrum, sineFit } = await import('../src/physics/daq.js');
+  near('8 位 ±5 V 的 LSB = 39.0625 mV', lsb(8), 0.0390625, 1e-15);
+  near('量化截在满码', quantize(9, 8), 127 * 0.0390625, 1e-15);
+  near('混叠：f_s = 1000 Hz 时 1130 Hz → 130 Hz', aliasFreq(1130, 1000), 130, 1e-12);
+  const x = Array.from({ length: 4096 }, (_, i) => 2 * Math.sin((2 * Math.PI * 123.4 * i) / 1000 + 0.7));
+  near('汉宁窗频谱峰值插值（123.4 Hz）', spectrum(x, 1000).peak, 123.4, 0.02);
+  const q = x.map((v) => quantize(v * 2, 10));
+  near('满量程正弦的量化残差 ≈ LSB/√12（10 位）', sineFit(q, 123.4, 1000).rms / (lsb(10) / Math.sqrt(12)), 1, 0.04);
+  near('正弦拟合幅度', sineFit(x, 123.4, 1000).amp, 2, 1e-9);
+}
 console.log(fails ? `\n工具物理验证：${fails} 项未通过，${passes} 项通过` : `工具物理验证：全部 ${passes} 项通过`);
 process.exit(fails ? 1 : 0);
