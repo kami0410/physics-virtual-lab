@@ -212,5 +212,116 @@ for (const lam of [656.3, 430]) {
   near('单透镜单色弥散 ∝ 口径³', r2 / r1, 8, 0.25);
 }
 
+// ---------- 7. 交流电路（spice-ts 打靶法周期稳态）与示波器触发 ----------
+{
+  const { LinearNet, periodicSteady } = await import('../src/core/spice.js');
+  const { ScopeEngine, defaultSettings } = await import('../src/core/scopeEngine.js');
+  const T = 1e-3, f = 1 / T, sq = (amp, off = 0, ff = f) => ({ shape: 'square', f: ff, amp, off, rise: 1e-12 });
+  const maxErr = (fn, t0, t1, n = 600) => { let m = 0; for (let i = 1; i < n; i++) { const t = t0 + ((t1 - t0) * i) / n; m = Math.max(m, fn(t)); } return m; };
+  // RC 方波稳态：高电平半周期 u = 1 − (1 − V0)e^{−t/τ}，V0 = −tanh(T/4τ)
+  for (const [R, C, Rs] of [[1000, 1e-7, 50], [1e4, 1e-6, 0]]) {
+    const net = new LinearNet([{ type: 'V', a: 'g', b: '0', w: sq(1), r: Rs }, { type: 'R', a: 'g', b: 'x', R }, { type: 'C', a: 'x', b: '0', C }]);
+    const r = await periodicSteady(net, { vc: ['x', '0'] });
+    const tau = (R + Rs) * C, V0 = -Math.tanh(T / 4 / tau);
+    check(`RC 方波周期稳态（τ = ${(tau / T).toFixed(2)} T）`, maxErr((t) => Math.abs(1 - (1 - V0) * Math.exp(-t / tau) - r.at('vc', t)), 0, T / 2) < 1e-4);
+  }
+  // 交流耦合：平均值为零，平顶下降 2·tanh(T/4τ)（τ = 0.1 s 远大于周期，直接求稳态而不必等暂态衰减）
+  {
+    const net = new LinearNet([{ type: 'V', a: 'g', b: '0', w: sq(1, 2), r: 50 }, { type: 'C', a: 'g', b: 'y', C: 0.1e-6 }, { type: 'R', a: 'y', b: '0', R: 1e6 }]);
+    const r = await periodicSteady(net, { vy: ['y', '0'] });
+    let m = 0; for (let i = 0; i < 4096; i++) m += r.at('vy', (i / 4096) * T) / 4096;
+    check('交流耦合后平均值为零', Math.abs(m) < 1e-4, m);
+    const t1 = T / 1000, t2 = T / 2 - T / 1000, tau = 0.1 + 50 * 0.1e-6, top = 2 / (1 + Math.exp(-T / 2 / tau));
+    near('交流耦合方波的平顶下降', r.at('vy', t1) - r.at('vy', t2), top * (Math.exp(-t1 / tau) - Math.exp(-t2 / tau)), 2e-5);
+  }
+  // RLC 欠阻尼阶跃响应（含 50 Ω 内阻）
+  {
+    const T2 = 20e-3, L = 10e-3, C = 1e-7, Rt = 70;
+    const net = new LinearNet([{ type: 'V', a: 'g', b: '0', w: sq(0.5, 0.5, 1 / T2), r: 50 }, { type: 'L', a: 'g', b: 'm', L }, { type: 'R', a: 'm', b: 'k', R: 20 }, { type: 'C', a: 'k', b: '0', C }]);
+    const r = await periodicSteady(net, { vc: ['k', '0'] });
+    const a = Rt / 2 / L, wd = Math.sqrt(1 / (L * C) - a * a);
+    const eR = maxErr((t) => Math.abs(1 - Math.exp(-a * t) * (Math.cos(wd * t) + (a / wd) * Math.sin(wd * t)) - r.at('vc', t)), 0, 1e-3);
+    check('RLC 欠阻尼阶跃响应', eR < 5e-4, eR);
+    near('直流分量（.op）', r.dc.vc, 0.5, 1e-5);
+  }
+  // 两个不同频率的源：叠加；RC 低通在 ωRC = 1 处幅值 1/√2、相移 −45°
+  {
+    const net = new LinearNet([{ type: 'V', a: 'g', b: '0', w: { shape: 'sine', f, amp: 1 } }, { type: 'R', a: 'g', b: 'x', R: 1 / (2 * Math.PI * f * 1e-7) }, { type: 'C', a: 'x', b: '0', C: 1e-7 },
+      { type: 'V', a: 'h', b: '0', w: { shape: 'sine', f: 333.3, amp: 0.5 }, r: 50 }, { type: 'R', a: 'h', b: '0', R: 1000 }]);
+    const r = await periodicSteady(net, { vc: ['x', '0'], vh: ['h', '0'] });
+    check('RC 低通：幅值 1/√2、相移 −45°', maxErr((t) => Math.abs(Math.SQRT1_2 * Math.sin(2 * Math.PI * f * t - Math.PI / 4) - r.at('vc', t)), 0, T) < 1e-4);
+    check('第二个源按叠加原理独立计算', r.groups.length === 2 && maxErr((t) => Math.abs((0.5 * 1000) / 1050 * Math.sin(2 * Math.PI * 333.3 * t) - r.at('vh', t)), 0, 3e-3) < 1e-4);
+  }
+  // 导线合并、悬空节点
+  {
+    const net = new LinearNet([{ type: 'V', a: 'g', b: 'e', w: { shape: 'dc', off: 3 } }, { type: 'W', a: 'e', b: '0' }, { type: 'R', a: 'g', b: 'x', R: 1000 }, { type: 'W', a: 'x', b: 'y' }, { type: 'R', a: 'y', b: '0', R: 2000 }], ['e']);
+    const r = await periodicSteady(net, { v: ['x', '0'], nc: ['zz', '0'] });
+    near('导线并入同一节点后的分压', r.dc.v, 2, 1e-5);
+    check('未接入电路的节点电位为 0', r.dc.nc === 0);
+  }
+  // 示波器：单一频率信号的触发点间隔等于周期，且落在触发电平上
+  {
+    const sig = { groups: [{ T, data: { ch1: Float64Array.from({ length: 4096 }, (_, i) => Math.sin((2 * Math.PI * i) / 4096)) } }], dc: { ch1: 0.2 } };
+    sig.at = (name, t) => { const d = sig.groups[0].data[name], u = ((((t / T) % 1) + 1) % 1) * d.length, i = Math.floor(u); return d[i % d.length] * (1 - (u - i)) + d[(i + 1) % d.length] * (u - i) + 0.2; };
+    const s = defaultSettings(); s.ch[0].vdiv = 7; s.trig.level = 0.7; // 0.7 V
+    const e = new ScopeEngine(s); e.setSignal(sig);
+    const t1 = e.nextTrigger(0.0123), t2 = e.nextTrigger(t1 + 1e-9);
+    near('触发间隔 = 信号周期', t2 - t1, T, 1e-9);
+    near('触发点电平', sig.at('ch1', t1), 0.7, 1e-3);
+    check('上升沿触发', sig.at('ch1', t1 + 1e-5) > sig.at('ch1', t1));
+    s.trig.level = 2; e._tc = null;
+    check('电平超出信号范围时不触发', e.nextTrigger(0.0123) === null);
+  }
+}
+
+// ---------- 8. 直流电路、圆电流磁场、磁滞模型 ----------
+{
+  const { solveCircuit } = await import('../src/core/circuit.js');
+  const { loopH, coilsB, axisB, MU0 } = await import('../src/physics/loopfield.js');
+  const { JAMaterial, SAMPLES, simulateLoop, loopParams } = await import('../src/physics/hysteresis.js');
+  const { westonE } = await import('../src/experiments/potentiometer.js');
+  // 改进节点法：两个电压源各自的电流（曾经错位成下一个电源的电流）
+  {
+    const E1 = { type: 'V', a: 'p1', b: 'g', E: 2, r: 1 }, E2 = { type: 'V', a: 'p2', b: 'g', E: 1, r: 0 };
+    const s = solveCircuit([E1, E2, { type: 'R', a: 'p1', b: 'm', R: 10 }, { type: 'R', a: 'm', b: 'g', R: 10 }, { type: 'R', a: 'p2', b: 'g', R: 5 }]);
+    near('MNA 节点电压', s.v('m') - s.v('g'), 2 * 10 / 21, 1e-7);
+    near('MNA 电源 1 的电流', s.cur(E1), -2 / 21, 1e-7);
+    near('MNA 电源 2 的电流', s.cur(E2), -0.2, 1e-7);
+  }
+  // 圆电流环：轴线上与教材公式一致；离轴处与毕奥–萨伐尔数值积分一致；远场趋于磁偶极子
+  {
+    let e = 0;
+    for (const z of [0, 0.02, 0.07, 0.3]) e = Math.max(e, Math.abs(loopH(0.1, 0, z)[1] * MU0 / axisB(0.1, 1, z) - 1));
+    check('电流环轴线磁场 = μ0IR²/2(R²+z²)^1.5', e < 1e-12, e);
+    const bs = (R, rho, z, n = 6000) => { let Br = 0, Bz = 0; const da = 2 * Math.PI / n; for (let i = 0; i < n; i++) { const a = (i + 0.5) * da, px = R * Math.cos(a), py = R * Math.sin(a), dlx = -R * Math.sin(a) * da, dly = R * Math.cos(a) * da, rx = rho - px, ry = -py, r3 = Math.pow(rx * rx + ry * ry + z * z, 1.5); Br += (dly * z) / r3; Bz += (dlx * ry - dly * rx) / r3; } return [Br / (4 * Math.PI), Bz / (4 * Math.PI)]; };
+    let eo = 0;
+    for (const [rho, z] of [[0.05, 0.02], [0.12, -0.04], [0.098, 0.003], [0.3, 0.2]]) { const a = loopH(0.1, rho, z), b = bs(0.1, rho, z); eo = Math.max(eo, Math.hypot(a[0] - b[0], a[1] - b[1]) / Math.hypot(b[0], b[1])); }
+    check('电流环离轴磁场 = 毕奥–萨伐尔数值积分', eo < 1e-6, eo);
+    near('远场趋于磁偶极子 μ0m/2πz³', loopH(0.1, 0, 5)[1] * MU0 / (MU0 * Math.PI * 0.01 / (2 * Math.PI * 125)), 1, 1e-3);
+    const R = 0.1, H = (x) => coilsB([{ R, N: 100, I: 1, z: -R / 2 }, { R, N: 100, I: 1, z: R / 2 }], 0, 0, x)[2];
+    near('亥姆霍兹线圈中心 (4/5)^1.5 μ0NI/R', H(0) / (Math.pow(0.8, 1.5) * MU0 * 100 / R), 1, 1e-12);
+    check('亥姆霍兹线圈中心附近 B 的变化是四阶小量', Math.abs(H(0.05 * R) / H(0) - 1) < 1e-5, H(0.05 * R) / H(0) - 1);
+  }
+  // 标准电池温度公式
+  near('Wolff 公式：20 °C 时等于 E20', westonE(1.0186, 20), 1.0186, 1e-12);
+  near('Wolff 公式：25 °C', westonE(1.0186, 25), 1.0186 - 221.8e-6, 1e-9);
+  // Jiles–Atherton 磁滞回线：对称、闭合、损耗为正；缓慢减小交变场能退磁
+  {
+    const cir = (U) => ({ U, f: 50, R1: 2.5, N1: 50, N2: 150, l: 0.06, S: 8e-5, R2: 1e4, C: 2e-5 });
+    const m = new JAMaterial(SAMPLES[1]), st = {};
+    const a = simulateLoop(m, cir(2), st, { periods: 4 }), b = simulateLoop(m, cir(2), st, { periods: 1 });
+    const pa = loopParams(a.H, a.B), pb = loopParams(b.H, b.B);
+    check('稳态回线逐周期重复', Math.abs(pa.Hc - pb.Hc) / pa.Hc < 2e-3 && Math.abs(pa.Br - pb.Br) / pa.Br < 2e-3, `${pa.Hc} ${pb.Hc}`);
+    check('回线关于原点对称', Math.abs(Math.max(...a.B) + Math.min(...a.B)) < 1e-3 * Math.max(...a.B));
+    check('矫顽力、剩磁为正，且 Br < Bm', pa.Hc > 50 && pa.Br > 0.05 && pa.Br < pa.Bm, JSON.stringify(pa));
+    let loss = 0; for (let i = 0; i < a.H.length; i++) { const j = (i + 1) % a.H.length; loss += 0.5 * (a.H[i] + a.H[j]) * (a.B[j] - a.B[i]); }
+    check('每周期磁滞损耗 ∮H dB > 0', loss > 0, loss);
+    near('积分电容电压换算的 B 与样品 B 一致（R2C ≫ T）', Math.max(...a.y) * 1e4 * 2e-5 / (150 * 8e-5) / Math.max(...a.B), 1, 0.02);
+    for (let U = 3; U > 0; U -= 0.05) simulateLoop(m, cir(U), st, { periods: 2 });
+    m.stepTo(0, true);
+    check('退磁后剩余磁化 < 5% Ms', Math.abs(m.M) < 0.05 * m.Ms, m.M / m.Ms);
+  }
+}
+
 console.log(fails ? `\n工具物理验证：${fails} 项未通过，${passes} 项通过` : `工具物理验证：全部 ${passes} 项通过`);
 process.exit(fails ? 1 : 0);

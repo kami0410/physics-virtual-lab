@@ -66,7 +66,7 @@ export function solveCircuit(elems, { guess = null, dt = 0 } = {}) {
       if (e.type === 'R') g(e._a, e._b, 1 / Math.max(e.R, 1e-6));
       else if (e.type === 'I') isrc(e._a, e._b, e.I);
       else if (e.type === 'V') {
-        const k = e._k - 1;
+        const k = e._k; // 第 k 个电压源的电流是第 N+k 个未知量（0 起算）
         if (e._a) { A[e._a - 1][k] += 1; A[k][e._a - 1] += 1; }
         if (e._b) { A[e._b - 1][k] -= 1; A[k][e._b - 1] -= 1; }
         A[k][k] -= e.r || 0; b[k] = e.E;

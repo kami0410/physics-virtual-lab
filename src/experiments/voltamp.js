@@ -4,6 +4,7 @@ import { meta, thumb } from './voltamp.meta.js';
 import { Circuit, benchTable, analogMeter, dcSupply, rheostat, knifeSwitch, partBoard, drawDialFace } from '../core/circuit.js';
 import { mean, gauss, rand, relErr, pct, clamp } from '../core/Stats.js';
 import { fnData } from '../core/Plot.js';
+import { voltampFig } from './circuitFigs.js';
 
 const AM_RANGES = [1.5, 3, 15, 75, 150].map((m) => ({ label: `${m}mA`, full: m / 1000, R: 0.075 / (m / 1000) }));
 const VM_RANGES = [1.5, 3, 7.5, 15].map((v) => ({ label: `${v}V`, full: v }));
@@ -310,6 +311,7 @@ export class VoltAmpExperiment {
 
   principle() {
     return `<h3>1. 伏安法</h3><p>测出电阻两端电压 $U$ 和通过的电流 $I$，$R=U/I$。电表有内阻，接法不同会带来系统误差。</p>
+${voltampFig()}
 <h3>2. 电流表外接</h3><p>电压表直接并在 $R_x$ 两端，电流表测得的是 $R_x$ 与电压表电流之和，$U/I$ 是 $R_x$ 与 $R_V$ 的并联值，偏小。修正：</p>$$R_x=\\frac{U}{I-U/R_V}$$
 <h3>3. 电流表内接</h3><p>电压表并在 $R_x$ 与电流表串联的两端，测得的电压多了电流表上的压降，$U/I=R_x+R_A$，偏大。修正：$R_x=U/I-R_A$。</p>
 <p>$R_x\\ll\\sqrt{R_AR_V}$ 时外接误差小，$R_x\\gg\\sqrt{R_AR_V}$ 时内接误差小。</p>

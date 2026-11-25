@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { meta, thumb } from './calib.meta.js';
 import { Circuit, benchTable, analogMeter, dcSupply, rheostat, knifeSwitch, resistanceBox, drawDialFace } from '../core/circuit.js';
 import { mean, gauss, rand, relErr, pct, clamp } from '../core/Stats.js';
+import { calibFig } from './circuitFigs.js';
 
 const IG = 100e-6; // 表头满偏电流（标称）
 const MU_DIVS = 100;
@@ -300,6 +301,7 @@ export class CalibExperiment {
   principle() {
     return `<h3>1. 表头</h3><p>磁电式表头允许通过的最大电流（满偏电流 $I_g$）很小，线圈有内阻 $R_g$。要测较大的电流或电压，需要扩大量程。</p>
 <h3>2. 替代法测内阻</h3><p>表头与标准表串联，读 $I_0$；用电阻箱换下表头，调电阻箱使电路电流仍为 $I_0$，则电阻箱示值等于 $R_g$。结果与标准表的准确度无关，只取决于电阻箱和判断“相等”的灵敏度。</p>
+${calibFig()}
 <h3>3. 改装成电流表</h3><p>表头并联分流电阻 $R_s$，量程扩大为 $I=nI_g$：</p>$$R_s=\\frac{R_g}{n-1}$$
 <h3>4. 改装成电压表</h3><p>表头串联分压电阻 $R_m$，量程为 $U$：</p>$$R_m=\\frac{U}{I_g}-R_g$$
 <h3>5. 校准</h3><p>改装表与标准表同时测同一量，修正值 $\\Delta=x_s-x$。以示值为横坐标、修正值为纵坐标，相邻点用直线连接成折线，即校准曲线；使用改装表时按曲线修正。最大修正值加上标准表本身的最大允许误差，再除以量程，得到改装表的标定误差，向上取到国家标准规定的等级（0.1、0.2、0.5、1.0、1.5、2.5、5.0）。</p>

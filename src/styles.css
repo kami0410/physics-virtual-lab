@@ -248,7 +248,7 @@ select, input[type=number], input[type=text] {
 .vw.zoomed canvas { cursor: grab; }
 .vw.zoomed canvas:active { cursor: grabbing; }
 .vw.min .vcv, .vw.min .vfoot { display: none; }
-.vw .vfoot { font-size: 11.5px; color: #b9c7bf; padding: 4px 9px; font-family: var(--mono); background: var(--enamel-3); min-height: 22px; }
+.vw .vfoot { font-size: 11.5px; color: #b9c7bf; padding: 4px 9px; font-family: var(--mono); background: var(--enamel-3); min-height: 22px; width: 0; min-width: 100%; box-sizing: border-box; }
 .vw.big { position: fixed; z-index: 50; left: 50%; top: 50%; transform: translate(-50%, -50%); }
 .view-mask { position: fixed; inset: 0; background: rgba(15,18,17,.7); z-index: 49; }
 .caption { position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); max-width: 70%; background: rgba(0,0,0,.72); color: #f5f5f0; padding: 7px 16px; border-radius: 2px; font-size: 15px; line-height: 1.6; z-index: 4; text-align: center; pointer-events: none; transition: opacity .3s; letter-spacing: .02em; }
@@ -283,7 +283,7 @@ table.dt td { padding: 1px 4px; border-bottom: 1px solid var(--grid-strong); tex
 table.dt td + td { border-left: 1px solid var(--grid); }
 table.dt td.idx { color: var(--ink-3); width: 36px; font-family: var(--mono); font-size: 12px; }
 table.dt td.calc { color: var(--ink-2); font-family: var(--mono); padding: 0 8px; background: rgba(211,226,215,.25); }
-table.dt td.lbl { color: var(--ink); padding: 0 8px; }
+table.dt td.lbl { color: var(--ink); padding: 0 8px; transform: none; box-shadow: none; background: none; border-radius: 0; font-size: inherit; white-space: normal; line-height: inherit; }
 table.dt td.empty { color: var(--ink-3); padding: 16px; font-size: 12.5px; }
 table.dt input { width: 96px; height: 24px; background: transparent; border: 1px solid transparent; border-radius: 2px; color: #13306b; text-align: center; font-family: var(--mono); font-size: 13px; }
 table.dt input:hover { border-color: var(--rule-2); }

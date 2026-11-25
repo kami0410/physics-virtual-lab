@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { meta, thumb } from './bridge.meta.js';
 import { Circuit, benchTable, analogMeter, dcSupply, rheostat, knifeSwitch, partBoard, resistanceBox, drawDialFace } from '../core/circuit.js';
 import { mean, gauss, rand, relErr, pct } from '../core/Stats.js';
+import { bridgeFig } from './circuitFigs.js';
 
 const G_PER_DIV = 1.0e-6; // 检流计每格电流 A
 const G_DIVS = 60; // ±30 格
@@ -276,7 +277,7 @@ export class BridgeExperiment {
   }
 
   principle() {
-    return `<h3>1. 电桥平衡</h3><p>四个电阻 $R_1$、$R_2$、$R_x$、$R_0$ 接成四边形，一条对角线接电源，另一条接检流计。调 $R_0$ 使检流计中无电流（电桥平衡），此时两个中点等电位：</p>$$R_1R_0=R_2R_x\\quad\\Rightarrow\\quad R_x=\\frac{R_1}{R_2}R_0$$<p>平衡与电源电压无关，检流计只作“零”指示，所以电桥的准确度主要取决于 $R_0$ 和比例臂。</p>
+    return `<h3>1. 电桥平衡</h3>${bridgeFig()}<p>四个电阻 $R_1$、$R_2$、$R_x$、$R_0$ 接成四边形，一条对角线接电源，另一条接检流计。调 $R_0$ 使检流计中无电流（电桥平衡），此时两个中点等电位：</p>$$R_1R_0=R_2R_x\\quad\\Rightarrow\\quad R_x=\\frac{R_1}{R_2}R_0$$<p>平衡与电源电压无关，检流计只作“零”指示，所以电桥的准确度主要取决于 $R_0$ 和比例臂。</p>
 <h3>2. 交换法</h3><p>交换 $R_x$ 与 $R_0$ 再调平衡，得 $R_x=\\dfrac{R_2}{R_1}R_0'$。两式相乘：$R_x=\\sqrt{R_0R_0'}$，比例臂的误差被消除。</p>
 <h3>3. 灵敏度</h3><p>$S=\\dfrac{\\Delta n}{\\Delta R_0/R_0}$。检流计能分辨的最小偏转约 0.2 格，由此引起的相对误差约 $0.2/S$。提高电源电压、选用灵敏的检流计、使各臂阻值相近都可以提高灵敏度。</p>
 <h3>4. 检流计的保护</h3><p>远离平衡时检流计可能过载。先串联大的保护电阻、用跃接法短暂接通，接近平衡后再逐步减小保护电阻。</p>

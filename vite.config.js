@@ -23,10 +23,12 @@ const BUNDLED = [
   ['three', 'three/LICENSE'],
   ['katex', 'katex/LICENSE'],
   ['@fontsource/ibm-plex-mono', '@fontsource/ibm-plex-mono/LICENSE'],
+  ['@spice-ts/core', '@spice-ts/core/LICENSE'],
 ];
 /** 直接收录进源码的第三方文件（src/physics/glasscat.js、lensTrace.js、glassdb.js 来自 Optica Viva） */
 const VENDORED = [
-  ['Optica Viva（https://github.com/iiogurt/Optica_Viva）', 'licenses/Optica_Viva-LICENSE.txt'],
+  ['Optica Viva（https://github.com/iiogurt/Optica_Viva）', 'licenses/Optica_Viva-LICENSE.txt', 'MIT'],
+  ['Magpylib 电流环磁场算法（https://github.com/magpylib/magpylib）', 'licenses/magpylib-LICENSE.txt', 'BSD-2-Clause'],
 ];
 const licenseText = () => BUNDLED.map(([name, file]) => {
   const pkg = JSON.parse(fs.readFileSync(`node_modules/${name}/package.json`, 'utf8'));
@@ -34,7 +36,7 @@ const licenseText = () => BUNDLED.map(([name, file]) => {
 
 ${fs.readFileSync(`node_modules/${file}`, 'utf8').trim()}
 `;
-}).concat(VENDORED.map(([name, file]) => `==== ${name}（MIT）====
+}).concat(VENDORED.map(([name, file, lic]) => `==== ${name}（${lic}）====
 
 ${fs.readFileSync(file, 'utf8').trim()}
 `)).join('\n');
@@ -93,9 +95,28 @@ self.addEventListener('fetch', (e) => {
   },
 });
 
+/**
+ * spice-ts 只在 .step 参数扫描时才启用并行 worker（失败会自动退回串行）。本项目用不到它：
+ * 把 worker 的引用换成“不可用”，免得构建时多输出一个 900 KB 的 worker 文件，也不去解析 node 专用模块。
+ */
+function spiceNoWorker() {
+  return {
+    name: 'spice-no-worker',
+    enforce: 'pre',
+    transform(code, id) {
+      if (!id.includes('@spice-ts')) return null;
+      const out = code
+        .replace(/new Worker\(new URL\("\.\/step-worker-browser\.js",import\.meta\.url\),\{type:"module"\}\)/g, '(()=>{throw new Error("no worker")})()')
+        .replace(/import\("worker_threads"\)/g, 'Promise.reject(new Error("no worker_threads"))')
+        .replace(/import\("url"\)/g, 'Promise.reject(new Error("no url"))');
+      return out === code ? null : { code: out, map: null };
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => ({
   base: './',
-  plugins: mode === 'single' ? [katexWoff2Only(), viteSingleFile(), licenseNotice(false)] : [katexWoff2Only(), serviceWorker(), licenseNotice(true)],
+  plugins: mode === 'single' ? [spiceNoWorker(), katexWoff2Only(), viteSingleFile(), licenseNotice(false)] : [spiceNoWorker(), katexWoff2Only(), serviceWorker(), licenseNotice(true)],
   publicDir: mode === 'single' ? false : 'public',
   build: {
     outDir: mode === 'single' ? 'dist-single' : 'dist',
