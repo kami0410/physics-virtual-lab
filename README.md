@@ -60,13 +60,11 @@ npm run dev        # 打开 http://127.0.0.1:5173
 
 ### 离线单文件版（不用装 Node.js）
 
-在一台装了 Node.js 的电脑上运行一次：
+**[⬇ 下载离线版 physics-virtual-lab.html](https://github.com/kami0410/physics-virtual-lab/releases/latest/download/physics-virtual-lab.html)**（约 5 MB，[所有版本](https://github.com/kami0410/physics-virtual-lab/releases/latest)）
 
-```bash
-npm run build:single
-```
+一个文件就是完整的实验室，64 个实验、三维模型、公式字体都在里面。下载后双击，用 Chrome / Edge / Firefox 打开就能用，不需要联网、不需要安装。拷到 U 盘、发到群里都行。
 
-得到 `dist-single/index.html` 一个文件（约 5 MB，所有内容都在里面）。把它拷到 U 盘、发到群里，任何电脑用 Chrome / Edge / Firefox 双击打开就能用，不需要联网。
+想自己从源码生成：运行 `npm run build:single`，得到 `dist-single/index.html`。
 
 > 安装、启动遇到问题（下载慢、端口被占用、Mac 打不开等），看 [启动与安装](docs/getting-started.md)。
 

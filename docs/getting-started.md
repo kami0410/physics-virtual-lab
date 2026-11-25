@@ -82,7 +82,9 @@ npm config set registry https://registry.npmmirror.com
 
 适合拷到 U 盘、发给同学、在机房或没有网络的电脑上用。
 
-在任何一台装了 Node.js 的电脑上，进入项目文件夹运行：
+**直接下载**：[physics-virtual-lab.html](https://github.com/kami0410/physics-virtual-lab/releases/latest/download/physics-virtual-lab.html)（每个[发布版本](https://github.com/kami0410/physics-virtual-lab/releases/latest)都附有这个文件）。
+
+**自己生成**：在任何一台装了 Node.js 的电脑上，进入项目文件夹运行：
 
 ```bash
 npm install            # 第一次需要
