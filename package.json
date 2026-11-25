@@ -9,6 +9,7 @@
     "build": "vite build",
     "build:single": "vite build --mode single",
     "preview": "vite preview",
+    "relay": "node tools/ai-relay.mjs",
     "test": "node tests/physics.mjs && node tests/physics-tools.mjs && npm run build:single && node tests/tutor-ai.mjs && node tests/e2e.mjs",
     "test:physics": "node tests/physics.mjs && node tests/physics-tools.mjs",
     "test:quick": "node tests/e2e.mjs --monkey 150"

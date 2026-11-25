@@ -381,13 +381,14 @@ export class Tutor {
         <label><span>接口地址</span><input data-k="base" spellcheck="false" placeholder="https://…"/></label>
         <label><span>模型名</span><input data-k="model" spellcheck="false" placeholder="服务商提供的模型名"/></label>
         <label><span>密钥</span><input data-k="key" type="password" spellcheck="false" autocomplete="off"/></label>
-        <p class="tt-fine">密钥只保存在这台电脑的浏览器里，请求由浏览器直接发给你填的接口地址，不经过任何第三方。服务商不允许网页直接访问时，可以填自己的转发地址。本机 Ollama 需要先设置环境变量 OLLAMA_ORIGINS=* 再启动。</p>
+        <p class="tt-fine tt-svc" hidden></p>
+        <p class="tt-fine">密钥只保存在这台电脑的浏览器里，请求由浏览器直接发给你填的接口地址，不经过任何第三方。服务商不允许网页直接访问（浏览器报网络错误）时，在本机运行中转 <span class="mono">npm run relay</span>，把地址写成 <span class="mono">http://127.0.0.1:8787/</span> 加原地址。</p>
         <div class="tt-test"></div></div>`, [
-        { label: '测试连接', onClick: async () => { const t = m.body.querySelector('.tt-test'); t.textContent = '正在连接…'; try { const r = await this.ping(read()); t.textContent = '连接成功：' + r.slice(0, 80); } catch (err) { t.textContent = '连接失败：' + err.message; } } },
+        { label: '测试连接', onClick: async () => { const t = m.body.querySelector('.tt-test'); t.classList.remove('err'); t.textContent = '正在连接…'; try { const r = await this.ping(read()); t.textContent = '连接成功：' + r.slice(0, 80); } catch (err) { t.classList.add('err'); t.textContent = '连接失败：' + err.message; } } },
         { label: '保存', cls: 'primary', onClick: (close) => { saveCfg(read()); this.conv = null; close(); this.renderChatNote(); } },
       ]);
       const q = (k) => m.body.querySelector(`[data-k=${k}]`);
-      const fill = (o) => { for (const k of ['preset', 'format', 'base', 'model', 'key']) if (o[k] != null) q(k).value = o[k]; const p = PRESETS.find((x) => x.id === q('preset').value); q('key').placeholder = p ? p.keyHint : ''; };
+      const fill = (o) => { for (const k of ['preset', 'format', 'base', 'model', 'key']) if (o[k] != null) q(k).value = o[k]; const p = PRESETS.find((x) => x.id === q('preset').value); q('key').placeholder = p ? p.keyHint : ''; const nt = m.body.querySelector('.tt-svc'); nt.textContent = (p && p.note) || ''; nt.hidden = !(p && p.note); };
       const read = () => ({ preset: q('preset').value, format: q('format').value, base: q('base').value.trim(), model: q('model').value.trim(), key: q('key').value.trim() });
       fill(c);
       q('preset').onchange = () => { const p = PRESETS.find((x) => x.id === q('preset').value); fill({ format: p.format, base: p.base, model: p.model, key: p.noKey ? '' : q('key').value }); };
