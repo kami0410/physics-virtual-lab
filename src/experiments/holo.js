@@ -178,7 +178,7 @@ export class HoloExperiment {
       { name: '全景', pos: [-10, 120, 120], target: [-8, 8, -15] },
       { name: '干板架', pos: [-14, 34, 26], target: [2, 14, -14] },
       { name: '物光路', pos: [50, 40, 10], target: [15, 12, -25] },
-      { name: '再现观察', pos: [6, 24, -78], target: [3, 14, 0] },
+      { name: '再现观察', pos: [2, 16.5, -42], target: [4.5, 14, 12] },
     ];
   }
 
@@ -321,6 +321,28 @@ export class HoloExperiment {
       ],
     }));
 
+    // 再现虚像：在物体记录时的位置发出的物光波，只能透过全息图（干板窗口）看到
+    app.stage.renderer.localClippingEnabled = true;
+    this.clipPl = [0, 1, 2, 3, 4].map(() => new THREE.Plane());
+    const ghost = (this.ghost = new THREE.Group());
+    const Lr = new THREE.Vector3(E2[0] - OBJ[0], 4, E2[1] - OBJ[1]).normalize(); // 记录时的照明方向
+    const gmat = (opt) => new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, clippingPlanes: this.clipPl, ...opt });
+    const faceN = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+    const gcube = new THREE.Mesh(new THREE.BoxGeometry(CUBE.s, CUBE.s, CUBE.s), [3, 4, 1, 6, 2, 5].map((n, i) => {
+      const nv = new THREE.Vector3(...faceN[i]).applyAxisAngle(new THREE.Vector3(0, 1, 0), CUBE.rot);
+      return gmat({ map: dieTexture(n), color: new THREE.Color(0xff2a1a).multiplyScalar(0.18 + 0.82 * Math.max(0, nv.dot(Lr))) });
+    }));
+    gcube.position.set(CUBE.c[0], H + CUBE.c[1], CUBE.c[2]); gcube.rotation.y = CUBE.rot; ghost.add(gcube);
+    const sg2 = new THREE.SphereGeometry(BALL.r, 40, 24), nrm = sg2.attributes.normal, col = new Float32Array(nrm.count * 3);
+    for (let i = 0; i < nrm.count; i++) { const l = 0.12 + 0.88 * Math.max(0, nrm.getX(i) * Lr.x + nrm.getY(i) * Lr.y + nrm.getZ(i) * Lr.z); col[3 * i] = l; col[3 * i + 1] = l * 0.16; col[3 * i + 2] = l * 0.1; }
+    sg2.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    const gball = new THREE.Mesh(sg2, gmat({ vertexColors: true })); gball.position.set(BALL.c[0], H + BALL.c[1], BALL.c[2]); ghost.add(gball);
+    this.ghostMats = [...gcube.material, gball.material];
+    // 每次渲染前按相机位置更新“眼睛—干板四边”构成的视锥：锥外和干板前方的部分被裁掉
+    const upd = (r, sc, cam) => this.updClip(cam.position);
+    gcube.onBeforeRender = upd; gball.onBeforeRender = upd;
+    ghost.visible = false; scene.add(ghost);
+
     // 光束
     this.beamDraw = new BeamDraw(scene, { max: 40 });
     this.objGlow = new THREE.PointLight(0xff2a1a, 0, 30, 1.5); scene.add(this.objGlow);
@@ -328,6 +350,22 @@ export class HoloExperiment {
     this.vAlign = app.addView({ id: 'align', title: '干板架处的白屏（左） · 物体处（右）', w: 300, h: 150, res: 1 });
     this.vEye = app.addView({ id: 'eye', title: '透过干板看到的景象', w: 300, h: 220, res: 1 });
   }
+
+  /** 再现虚像的裁剪：只保留从眼睛（相机）透过干板窗口能看到、且在干板后方的部分 */
+  updClip(E) {
+    const P0 = new THREE.Vector3(PL[0], H, PL[1]);
+    const C = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => new THREE.Vector3(PL[0] + (a * PLATE_W) / 2, H + (b * PLATE_H) / 2, PL[1]));
+    for (let i = 0; i < 4; i++) {
+      const n = C[i].clone().sub(E).cross(C[(i + 1) % 4].clone().sub(E)).normalize();
+      if (n.dot(P0.clone().sub(E)) < 0) n.negate();
+      this.clipPl[i].setFromNormalAndCoplanarPoint(n, E);
+    }
+    this.clipPl[4].setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 0, E.z < PL[1] ? 1 : -1), P0);
+  }
+  /** 再现像亮度（相对 I_N）：衍射效率 × 照到全息图上的参考光 */
+  imgB(o = this.optics()) { return this.slotHas('plate') && this.holo ? (this.holo.eta * o.Ir) / I_N : 0; }
+  /** 暗室中眼睛的适应增益（瞳孔放大、暗适应）；开灯时为 1 */
+  adapt(peak) { return this.room ? 1 : clamp(0.6 / Math.max(peak, 1e-3), 0.5, 6); }
 
   onRemove(c) { if (c.key === 'meter' || c.key === 'plate') this.app.changed(); }
   onPlace(c) {
@@ -348,6 +386,8 @@ export class HoloExperiment {
     if (this.shOpen) { this.shOpen = false; this.app.toast('快门原来是常开的，已先关闭', 'warn'); }
     if (!this.slotHas('plate')) this.app.toast('干板架上没有干板', 'warn');
     this.expLeft = this.tSet; this.expCount++;
+    const oc = this.app.comp('obj');
+    if (oc.placed) this.recPose = { x: oc.root.position.x, z: oc.root.position.z, rot: oc.root.rotation.y };
     this.app.changed();
   }
 
@@ -425,6 +465,7 @@ export class HoloExperiment {
     this.shCtrl.setText(this.expLeft > 0 ? this.expLeft.toFixed(1) : this.tSet.toFixed(1), 's', this.expLeft > 0 ? '曝光中' : this.shOpen ? '常开' : '关闭');
     if (this.on('meter')) { const m = this.meter(); this.mbox.setText(m == null ? '----' : m.toFixed(2), 'μW', ''); }
     this.drawBeams();
+    this.drawGhost();
     this.drawAlign();
     this.drawEye();
   }
@@ -437,6 +478,18 @@ export class HoloExperiment {
     const o = this.optics(), ob = this.pos('obj');
     this.objGlow.position.set(ob[0], H + 3, ob[1] - 3);
     this.objGlow.intensity = this.on('obj') && o.Io > 0 ? Math.min(60, o.Io * 40) : 0;
+  }
+
+  drawGhost() {
+    const o = this.optics(), B = this.imgB(o);
+    const show = B > 1e-3;
+    this.ghost.visible = show;
+    if (!show) return;
+    const p = this.recPose || { x: OBJ[0], z: OBJ[1], rot: 0 };
+    this.ghost.position.set(p.x, 0, p.z); this.ghost.rotation.y = p.rot;
+    const Breal = this.on('obj') ? o.Io / I_N : 0;
+    const op = 1 - Math.exp(-2.2 * B * this.adapt(Math.max(B, Breal)));
+    for (const m of this.ghostMats) m.opacity = op;
   }
 
   /** 调光路用的观察窗：干板架白屏 + 物体 */
@@ -603,18 +656,19 @@ export class HoloExperiment {
     const hasPlate = this.slotHas('plate'), hasMeter = this.slotHas('meter');
     const Tp = hasMeter ? 0 : hasPlate ? (this.holo ? this.holo.tp : 0.55) : 1;
     const Breal = o.Io / I_N;
-    const Bimg = hasPlate && this.holo ? (this.holo.eta * o.Ir) / I_N : 0;
+    const Bimg = this.imgB(o);
     const haze = hasPlate && this.holo ? (this.holo.noise * o.Ir) / I_N : 0;
     const room = this.room;
     const S = this.speckle, N = S.N;
     const sx0 = Math.round(this.alpha * 9), sy0 = Math.round(this.beta * 9);
     const img = g.createImageData(W, Hh), d = img.data;
-    const tone = (b) => 1 - Math.exp(-1.7 * b);
+    const G = this.adapt(Math.max(Breal * Tp, Bimg, haze * 0.2));
+    const tone = (b) => 1 - Math.exp(-1.4 * G * b);
     for (let y = 0; y < Hh; y++) for (let x = 0; x < W; x++) {
       const k = (y * W + x) * 4;
       const win = inside(x, y);
       const s = sh[k] / 255, sg = gh[k] / 255;
-      const sp = S.d[(((y + sy0) % N) + N) % N * N + (((x + sx0) % N) + N) % N];
+      const sp = 0.45 + 0.55 * S.d[((((y >> 1) + sy0) % N) + N) % N * N + ((((x >> 1) + sx0) % N) + N) % N];
       const sp2 = S.d[(((y * 3 + 17) >> 1) % N) * N + (((x * 3 + sx0) >> 1) % N + N) % N];
       let red = s * Breal * (win ? Tp : 1) * sp;
       if (win) red += sg * Bimg * sp + haze * sp2 * 0.2;
@@ -833,6 +887,7 @@ export class HoloExperiment {
           await app.autoPlace('eye', { slot: 'view' }); await app.view('再现观察');
           await app.tween(() => this.alpha, (v) => (this.alpha = v), -10, 900);
           await app.tween(() => this.alpha, (v) => (this.alpha = v), 8, 1400);
+          await app.tween(() => this.alpha, (v) => (this.alpha = v), 1, 700);
         },
       },
       {
