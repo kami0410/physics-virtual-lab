@@ -104,9 +104,9 @@ export class App {
     page.innerHTML = `
       <header class="topbar">
         <button class="btn" data-a="exit" title="返回实验目录">${I.back}目录</button>
-        <div class="title"><b>${m.title}</b><small>${m.subtitle || ''}</small></div>
+        <div class="title" title="${m.title}${m.subtitle ? '：' + m.subtitle : ''}"><b>${m.title}</b><small>${m.subtitle || ''}</small></div>
         <div class="spacer"></div>
-        <span class="progress-label">进度</span><div class="progress"><div></div></div>
+        <span class="progress-label">进度</span><div class="progress"><div></div></div><span class="pcount"></span>
         <div class="tb-sep"></div>
         <div class="tb-group">
           <button class="btn primary" data-a="runall" title="从当前步骤开始自动完成全部实验">${I.play}一键运行</button>
@@ -164,6 +164,7 @@ export class App {
     this.dwrap = q('.dtable-wrap');
     this.dside = q('.dtable-side');
     this.progressBar = q('.progress > div');
+    this.pcount = q('.pcount');
     this.toastsEl = document.querySelector('.toasts') || document.body.appendChild(h('div', 'toasts'));
 
     // 手机竖屏：三维视图在上，下方用标签切换 步骤 / 器材 / 调节 / 数据
@@ -720,6 +721,7 @@ export class App {
     });
     const n = this.stepDone.filter(Boolean).length;
     this.progressBar.style.width = (100 * n) / this.steps.length + '%';
+    if (this.pcount) this.pcount.innerHTML = `<b>${n}</b>/${this.steps.length}`;
   }
 
   checkSteps() {

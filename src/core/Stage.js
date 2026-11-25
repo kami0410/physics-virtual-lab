@@ -81,6 +81,7 @@ export class Stage {
         this._lastRender = now;
         renderer.render(scene, this.camera);
         this.labelRenderer.render(scene, this.camera);
+        if (now - (this._lastDeclutter || 0) > 160) { this._lastDeclutter = now; this.declutter(); }
       }
     };
     loop();
@@ -142,6 +143,27 @@ export class Stage {
     this.camera.position.lerpVectors(f.p0, f.p1, k);
     this.controls.target.lerpVectors(f.t0, f.t1, k);
     if (f.t >= 1) { this._fly = null; f.res(); }
+  }
+
+  /** 标签避让：彼此重叠的标签依次往上挪，不再叠成一团（只改 margin，transform 归 CSS2DRenderer） */
+  declutter() {
+    const box = this.labelRenderer.domElement;
+    if (box.style.display === 'none') return;
+    const els = [...box.children].filter((e) => e.style.display !== 'none' && e.offsetParent);
+    if (els.length < 2) { els.forEach((e) => (e.style.marginTop = '')); return; }
+    const items = els.map((e) => { const r = e.getBoundingClientRect(), m = parseFloat(e.style.marginTop) || 0; return { e, l: r.left, r: r.right, t: r.top - m, b: r.bottom - m, m }; });
+    items.sort((a, b) => b.b - a.b || a.l - b.l);
+    const placed = [];
+    for (const it of items) {
+      let dy = 0;
+      for (let pass = 0; pass < 8; pass++) {
+        const hit = placed.find((p) => it.l < p.r - 2 && it.r > p.l + 2 && it.t - dy < p.b - 1 && it.b - dy > p.t + 1);
+        if (!hit) break;
+        dy = it.b - hit.t + 2;
+      }
+      placed.push({ l: it.l, r: it.r, t: it.t - dy, b: it.b - dy });
+      if (Math.abs(-dy - it.m) > 0.5) it.e.style.marginTop = dy ? `${-dy}px` : '';
+    }
   }
 
   makeLabel(html, cls = 'lbl') {

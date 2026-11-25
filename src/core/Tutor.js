@@ -325,7 +325,7 @@ export class Tutor {
     const ds = this.diagnose();
     if (this.autoFailed) ds.unshift({ msg: '“自动完成”没能做完这一步：多半是前面某个设置被改动了，程序按标准流程操作时对不上。下面逐条检查；也可以让助教接手，它会先把前面的设置恢复。' });
     if (!ds.length) ds.push({ msg: s ? '没有发现明显的问题。看看本步说明里的要求，或者点“提示”。' : '全部完成。' });
-    const ul = h('ol', 'tt-list');
+    const ul = h('ol', ds.length > 1 ? 'tt-list' : 'tt-list one');
     ds.forEach((d) => {
       const li = h('li', null, `<span>${renderMath(esc(d.msg))}</span>`);
       if (d.fix) {

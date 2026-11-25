@@ -116,13 +116,16 @@ function renderHome() {
     </div>
 
     <div class="toc-head"><h2>目 录</h2><span>单击进入实验</span></div>
-    ${PARTS.filter((p) => EXPERIMENTS.some((E) => partOf(E) === p)).map((p) => `<div class="toc-part"><h3>${p}</h3><span>${EXPERIMENTS.filter((E) => partOf(E) === p).length} 个实验</span></div>
+    <nav class="toc-nav">${PARTS.filter((p) => EXPERIMENTS.some((E) => partOf(E) === p)).map((p) => `<a href="#part-${PARTS.indexOf(p)}" data-part="${PARTS.indexOf(p)}">${p}<span>${EXPERIMENTS.filter((E) => partOf(E) === p).length}</span></a>`).join('')}
+      <label class="toc-find"><svg class="i" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="m10.4 10.4 3.1 3.1"/></svg><input id="tocFind" type="search" placeholder="查找实验：名称、方法或仪器" autocomplete="off"></label></nav>
+    <p class="toc-none" hidden>没有找到相关实验，换个关键词试试，比如“干涉”“电桥”“示波器”。</p>
+    ${PARTS.filter((p) => EXPERIMENTS.some((E) => partOf(E) === p)).map((p) => `<div class="toc-part" id="part-${PARTS.indexOf(p)}"><h3>${p}</h3><span>${EXPERIMENTS.filter((E) => partOf(E) === p).length} 个实验</span></div>
     <div class="toc">${ordered.map((E, i) => (partOf(E) !== p ? '' : `
       <div class="toc-row" data-id="${E.meta.id}" tabindex="0" role="link">
         <div class="toc-no">实验<b>${String(i + 1).padStart(2, '0')}</b></div>
         <div class="toc-thumb"><canvas data-th="${EXPERIMENTS.indexOf(E)}" width="144" height="144"></canvas></div>
         <div class="toc-title"><h3>${E.meta.title}</h3><p>${E.meta.subtitle}</p><div class="kw">${E.meta.tags.join(' / ')}</div></div>
-        <div class="toc-formula">${E.meta.formula ? tex(E.meta.formula) : ''}<small>测量：${E.meta.measure || ''}</small></div>
+        <div class="toc-formula">${E.meta.formula ? `<div class="fx">${splitFormula(E.meta.formula).map((f) => `<span>${tex(f)}</span>`).join('')}</div>` : ''}<small>测量：${(E.meta.measure || '').replace(/([A-Za-zμ])_([A-Za-z0-9]+)/g, '$1<sub>$2</sub>')}</small></div>
         <div class="toc-meta">${E.meta.level} · 约 ${E.meta.time}<span class="go">进入实验 →</span></div>
       </div>`)).join('')}
     </div>`).join('')}
@@ -149,6 +152,8 @@ function renderHome() {
     c.addEventListener('click', go);
     c.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
   });
+  fitFormulas();
+  bindTocNav();
   root.querySelectorAll('canvas[data-th]').forEach((cv) => {
     const E = EXPERIMENTS[+cv.dataset.th];
     const ctx = cv.getContext('2d');
@@ -158,6 +163,73 @@ function renderHome() {
   benchThumb();
   waveThumb();
 }
+
+/** 目录里的公式按顶层的“,\quad”拆成几段，每段单独成行不折断 */
+function splitFormula(f) {
+  const out = []; let depth = 0, last = 0;
+  for (let i = 0; i < f.length; i++) {
+    const c = f[i];
+    if (c === '{' || c === '(' || c === '[') depth++;
+    else if (c === '}' || c === ')' || c === ']') depth--;
+    else if (c === ',' && depth === 0) {
+      const m = /^,\s*\\q?quad\s*/.exec(f.slice(i));
+      if (m) { out.push(f.slice(last, i)); last = i + m[0].length; i = last - 1; }
+    }
+  }
+  out.push(f.slice(last));
+  return out.map((x) => x.trim()).filter(Boolean);
+}
+
+/** 公式比栏宽还宽时整体缩小，而不是折行 */
+function fitFormulas() {
+  root.querySelectorAll('.toc-formula .fx > span').forEach((sp) => {
+    sp.style.fontSize = '';
+    const box = sp.parentElement.clientWidth;
+    if (box && sp.scrollWidth > box) sp.style.fontSize = `${Math.max(0.62, box / sp.scrollWidth).toFixed(3)}em`;
+  });
+}
+
+/** 目录导航：分部锚点高亮当前所在部分；查找框按名称、副标题、关键词过滤 */
+function bindTocNav() {
+  const home = root.querySelector('.home'), nav = root.querySelector('.toc-nav');
+  if (!home || !nav) return;
+  const links = [...nav.querySelectorAll('[data-part]')];
+  links.forEach((a) => a.addEventListener('click', (e) => {
+    e.preventDefault();
+    const t = root.querySelector(`#part-${a.dataset.part}`);
+    if (t) home.scrollTo({ top: t.offsetTop - nav.offsetHeight - 8, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  }));
+  const parts = links.map((a) => root.querySelector(`#part-${a.dataset.part}`));
+  const spy = () => {
+    nav.classList.toggle('stuck', nav.getBoundingClientRect().top <= home.getBoundingClientRect().top + 1);
+    let cur = -1;
+    parts.forEach((p, i) => { if (p && !p.hidden && p.getBoundingClientRect().top - home.getBoundingClientRect().top < nav.offsetHeight + 40) cur = i; });
+    links.forEach((a, i) => a.classList.toggle('on', i === cur));
+  };
+  home.addEventListener('scroll', spy, { passive: true });
+  spy();
+  const inp = nav.querySelector('#tocFind'), none = root.querySelector('.toc-none');
+  const text = new Map([...root.querySelectorAll('.toc-row')].map((r) => {
+    const E = EXPERIMENTS.find((x) => x.meta.id === r.dataset.id);
+    return [r, `${E.meta.title} ${E.meta.subtitle || ''} ${E.meta.tags.join(' ')} ${E.meta.measure || ''}`.toLowerCase()];
+  }));
+  inp.addEventListener('input', () => {
+    const q = inp.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    let shown = 0;
+    root.querySelectorAll('.toc').forEach((toc) => {
+      let n = 0;
+      toc.querySelectorAll('.toc-row').forEach((r) => { const ok = q.every((w) => text.get(r).includes(w)); r.hidden = !ok; n += ok; });
+      toc.hidden = n === 0; toc.previousElementSibling.hidden = n === 0;
+      const sp = toc.previousElementSibling.querySelector('span');
+      if (sp) sp.textContent = q.length ? `找到 ${n} 个` : `${toc.querySelectorAll('.toc-row').length} 个实验`;
+      shown += n;
+    });
+    none.hidden = shown > 0;
+    links.forEach((a) => { const p = root.querySelector(`#part-${a.dataset.part}`); a.classList.toggle('off', !!p && p.hidden); });
+    fitFormulas(); spy();
+  });
+}
+window.addEventListener('resize', () => { if (root.querySelector('.home')) fitFormulas(); });
 
 /** 首页“衍射工作台”插图：单缝从近场到远场（每列一个观察距离，逐列数值计算） */
 async function waveThumb() {

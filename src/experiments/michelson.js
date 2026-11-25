@@ -367,7 +367,7 @@ export class MichelsonExperiment {
       if (vv % 5 === 0) { g.textAlign = 'left'; g.fillText(String(vv), 122, py + 3.5); }
     }
     g.fillStyle = '#dc2626'; g.fillRect(100, 43.5, 70, 1.2);
-    g.fillStyle = '#94a3b8'; g.textAlign = 'center'; g.font = '11px "Microsoft YaHei"'; g.fillText('读数窗 ×0.01mm', 135, 88);
+    g.fillStyle = '#94a3b8'; g.textAlign = 'center'; g.font = '11px "Microsoft YaHei"'; g.fillText('读数窗 0.01', 135, 88);
     // 微动鼓轮（0.0001 mm）
     const fine = (x * 10000) % 100;
     g.fillStyle = '#d4d4d8'; g.fillRect(182, 14, 80, 60);
@@ -381,7 +381,7 @@ export class MichelsonExperiment {
       if (vv % 10 === 0) { g.textAlign = 'left'; g.fillText(String(vv), 206, py + 3.5); }
     }
     g.fillStyle = '#dc2626'; g.fillRect(182, 43.5, 80, 1.2);
-    g.fillStyle = '#94a3b8'; g.textAlign = 'center'; g.font = '11px "Microsoft YaHei"'; g.fillText('微动鼓轮 ×0.0001mm', 222, 88);
+    g.fillStyle = '#94a3b8'; g.textAlign = 'center'; g.font = '11px "Microsoft YaHei"'; g.fillText('鼓轮 0.0001', 222, 88);
     if (this.showAssist) {
       g.fillStyle = '#a7f3d0'; g.font = '12px Consolas'; g.textAlign = 'left';
       g.fillText(`读数 = ${mm} + ${(Math.floor(coarse) / 100).toFixed(2)} + ${(fine / 10000).toFixed(5)} = ${x.toFixed(5)} mm`, 8, 108);
