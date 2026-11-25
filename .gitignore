@@ -4,3 +4,5 @@ dist-single/
 .claude/settings.local.json
 *.log
 .mnemon/
+.claude/
+*.pdf

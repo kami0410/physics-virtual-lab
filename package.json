@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "大学物理光学实验虚拟仿真平台",
+  "description": "大学物理实验虚拟仿真平台",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
