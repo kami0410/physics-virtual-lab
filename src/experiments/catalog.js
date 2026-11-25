@@ -30,6 +30,7 @@ import * as RlcSteadyExperiment_M from './rlcss.meta.js';
 import * as PotentiometerExperiment_M from './potentiometer.meta.js';
 import * as HallExperiment_M from './hall.meta.js';
 import * as HelmholtzExperiment_M from './helmholtz.meta.js';
+import * as GeomagExperiment_M from './geomag.meta.js';
 import * as HysteresisExperiment_M from './hysteresis.meta.js';
 import * as CurieExperiment_M from './curie.meta.js';
 import * as ElectronBeamExperiment_M from './ebeam.meta.js';
@@ -44,6 +45,7 @@ import * as FranckHertzExperiment_M from './franckhertz.meta.js';
 import * as DensityExperiment_M from './density.meta.js';
 import * as BohrExperiment_M from './bohr.meta.js';
 import * as PendulumExperiment_M from './pendulum.meta.js';
+import * as SpringExperiment_M from './spring.meta.js';
 import * as SnakePendulumExperiment_M from './snake.meta.js';
 import * as MusicExperiment_M from './music.meta.js';
 import * as ChladniExperiment_M from './chladni.meta.js';
@@ -91,11 +93,13 @@ export const CATALOG = [
   E(PotentiometerExperiment_M, () => import('./potentiometer.js').then((m) => m.PotentiometerExperiment)),
   E(HallExperiment_M, () => import('./hall.js').then((m) => m.HallExperiment)),
   E(HelmholtzExperiment_M, () => import('./helmholtz.js').then((m) => m.HelmholtzExperiment)),
+  E(GeomagExperiment_M, () => import('./geomag.js').then((m) => m.GeomagExperiment)),
   E(HysteresisExperiment_M, () => import('./hysteresis.js').then((m) => m.HysteresisExperiment)),
   E(CurieExperiment_M, () => import('./curie.js').then((m) => m.CurieExperiment)),
   E(ElectronBeamExperiment_M, () => import('./ebeam.js').then((m) => m.ElectronBeamExperiment)),
   E(DensityExperiment_M, () => import('./density.js').then((m) => m.DensityExperiment)),
   E(PendulumExperiment_M, () => import('./pendulum.js').then((m) => m.PendulumExperiment)),
+  E(SpringExperiment_M, () => import('./spring.js').then((m) => m.SpringExperiment)),
   E(BohrExperiment_M, () => import('./bohr.js').then((m) => m.BohrExperiment)),
   E(AirTrackExperiment_M, () => import('./airtrack.js').then((m) => m.AirTrackExperiment)),
   E(StringWaveExperiment_M, () => import('./stringwave.js').then((m) => m.StringWaveExperiment)),

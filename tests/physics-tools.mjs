@@ -544,5 +544,22 @@ for (const lam of [656.3, 430]) {
   near('螺旋轨道解析解与数值积分一致（y）', za[1], y, 1e-7);
   near('偏转角 α = l_pU_y/(2dU_a)', deflAngle(10, 1000, { lp: 0.018, d: 0.005, f: 1 }), 0.018, 1e-15);
 }
+{
+  const { springOmega, effMass } = await import('../src/physics/spring.js');
+  near('无质量弹簧：ω = √(k/M)', springOmega(15, 0, 0.2), Math.sqrt(75), 1e-12);
+  near('轻弹簧的有效质量 → m_s/3', effMass(15, 0.001, 1) / (0.001 / 3), 1, 1e-4);
+  const b = springOmega(15, 0.016, 0.1) * Math.sqrt(0.016 / 15);
+  near('连续体弹簧的基频满足 β tan β = m_s/M', b * Math.tan(b), 0.16, 1e-12);
+  check('振子越轻，有效质量越大于 m_s/3', effMass(15, 0.016, 0.05) > effMass(15, 0.016, 0.25) && effMass(15, 0.016, 0.25) > 0.016 / 3);
+}
+{
+  // WMM2025 官方测试值（NOAA/NCEI 发布，geomagnetism 包 test/values.csv）：2025.0 年，三列依次为海拔、纬度、经度
+  const { geomagField } = await import('../src/physics/geomag/index.js');
+  const d = new Date(Date.UTC(2025, 0, 1));
+  const a = geomagField(89, -121, 28, d), b = geomagField(43, 93, 65, d);
+  near('WMM2025：(89°N, 121°W, 28 km) 总强度 56214.4 nT', a.f, 56214.42, 1);
+  near('WMM2025：(43°N, 93°E, 65 km) 水平分量 24300.8 nT', b.h, 24300.76, 1);
+  near('WMM2025：(43°N, 93°E, 65 km) 磁倾角 64.10°', b.incl, 64.1, 0.01);
+}
 console.log(fails ? `\n工具物理验证：${fails} 项未通过，${passes} 项通过` : `工具物理验证：全部 ${passes} 项通过`);
 process.exit(fails ? 1 : 0);

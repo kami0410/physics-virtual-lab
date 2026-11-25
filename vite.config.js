@@ -28,10 +28,11 @@ const BUNDLED = [
   ['@anthropic-ai/sdk', '@anthropic-ai/sdk/LICENSE'],
   ['@anthropic-ai/sdk', '@anthropic-ai/sdk/LICENSE-MIT'],
 ];
-/** 直接收录进源码的第三方文件（src/physics/glasscat.js、lensTrace.js、glassdb.js 来自 Optica Viva） */
+/** 直接收录进源码的第三方文件（src/physics/glasscat.js、lensTrace.js、glassdb.js 来自 Optica Viva；src/physics/geomag/ 来自 geomagnetism） */
 const VENDORED = [
   ['Optica Viva（https://github.com/iiogurt/Optica_Viva）', 'licenses/Optica_Viva-LICENSE.txt', 'MIT'],
   ['Magpylib 电流环磁场算法（https://github.com/magpylib/magpylib）', 'licenses/magpylib-LICENSE.txt', 'BSD-2-Clause'],
+  ['geomagnetism 世界地磁模型计算程序（https://github.com/naturalatlas/geomagnetism）', 'licenses/geomagnetism-LICENSE.txt', 'Apache-2.0'],
 ];
 const licenseText = () => BUNDLED.map(([name, file]) => {
   const pkg = JSON.parse(fs.readFileSync(`node_modules/${name}/package.json`, 'utf8'));

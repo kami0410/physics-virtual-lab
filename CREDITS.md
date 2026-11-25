@@ -22,8 +22,9 @@
 |---|---|---|---|
 | [Optica Viva](https://github.com/iiogurt/Optica_Viva)（Copyright (c) 2026 iiogurt） | MIT | `js/lib/glasscat.js` → `src/physics/glasscat.js`（431 种 SCHOTT / OHARA / CDGM 玻璃）；`js/lib/raytrace.js` → `src/physics/lensTrace.js`（精确三维序列追迹、傍轴分析、赛德尔和数）；`js/lib/glass.js` → `src/physics/glassdb.js` | 玻璃库加入国产旧牌号别名（K9 → H-K9L 等）、水、PMMA、金刚石与中文类别名；追迹器改由 `glassdb.js` 取折射率 |
 | [Magpylib](https://github.com/magpylib/magpylib)（Copyright (c) 2022, Silicon Austria Labs, Magpylib Developers） | BSD-2-Clause | `magpylib/_src/fields/field_BH_circle.py` 中的 `current_circle_Hfield`、`special_cel.py` 中的 `_cel_iter` → `src/physics/loopfield.js` | 由 Python/NumPy 改写成逐点计算的 JavaScript；加上多匝线圈、线圈组叠加的封装。算法出自 F. Ortner 等，*Numerically stable and computationally efficient expression for the magnetic field of a current loop*，MDPI Magnetism 3(1), 11-31 (2023) |
+| [geomagnetism](https://github.com/naturalatlas/geomagnetism)（Natural Atlas） | Apache-2.0 | `lib/` 下的世界地磁模型计算程序（球谐展开、勒让德函数、坐标变换）与 `data/wmm-2025.json` → `src/physics/geomag/` | CommonJS 改写为 ES 模块；只保留 WMM2025 一组系数（改为 JS 模块，便于 Node 测试直接导入）；新写入口 `index.js`，日期超出有效期时取最近的有效日期。WMM2025 的球谐系数由美国 NOAA/NCEI 与英国地质调查局发布，属公有领域 |
 
-许可全文保存在 `licenses/` 目录（`Optica_Viva-LICENSE.txt`、`magpylib-LICENSE.txt`），构建时与上表组件一起写入 `index.html` 开头的注释。
+许可全文保存在 `licenses/` 目录（`Optica_Viva-LICENSE.txt`、`magpylib-LICENSE.txt`、`geomagnetism-LICENSE.txt`），构建时与上表组件一起写入 `index.html` 开头的注释。
 
 ## 数据与公式
 
@@ -52,6 +53,8 @@
 - **热电子发射**：理查森–杜什曼公式 I = AST²e^(−eφ/kT)，肖特基效应 ln(I_a/I) = 0.439√E/T（E 以 V/m 计），低阳极电压处用圆筒二极管的蔡尔德–朗缪尔 3/2 次方律限流；理查森直线法的系数 e/(2.303k) = 5.040×10³ K/V 由 `tests/physics-tools.mjs` 验证（`src/physics/thermionic.js`）。
 - **居里温度**：外斯分子场理论 m = tanh(m/t) 用牛顿法求解，居里点以上按居里–外斯定律加顺磁尾巴；加热炉为集中热容模型，样品温度一阶滞后（`src/physics/curie.js`）。
 - **电子束的磁聚焦**：纵向均匀磁场中横向运动的复数解析解 z = u(1 − e^{−iθ})/(iθ)·t，速度按相对论动量计算；与逐步积分对照验证（`src/physics/crt.js`）。有限长螺线管中心磁场 B = μ₀NI/√(L² + D²)。
+- **弹簧振子**：均匀弹簧按连续弹性体求解，基频满足 β tan β = m_s/M，ω = β√(k/m_s)，轻弹簧极限下有效质量趋于 m_s/3（`src/physics/spring.js`）。
+- **地磁场**：世界地磁模型 WMM2025（NOAA/NCEI 与英国地质调查局，2024），由 `tests/physics-tools.mjs` 用官方测试值核对。
 - **电路中的纯电容回路**：周期稳态打靶法要求各电容初值相互独立，回路中最小的电容串 1 Ω 引线电阻（`src/core/spice.js`），由 `tests/physics-tools.mjs` 与相量法对照。
 - 菲涅耳公式、马吕斯定律、贝塞尔函数、斯托克斯–穆勒矩阵等都是标准物理公式，由 `tests/physics.mjs` 做数值验证。
 
