@@ -517,5 +517,32 @@ for (const lam of [656.3, 430]) {
   const a = anodeCurrent(0.01, 2000, { ...o, kc: 5.6e-5 });
   near('低阳极电压时受空间电荷限制（3/2 次方律）', a / (5.6e-5 * 0.01 ** 1.5), 1, 1e-3);
 }
+{
+  const { meanFieldM, secondaryU, tangentTc } = await import('../src/physics/curie.js');
+  const ts = [0.3, 0.7, 0.9, 0.99];
+  check('分子场方程 m = tanh(m/t) 的解', ts.every((t) => { const m = meanFieldM(t); return m > 0 && Math.abs(m - Math.tanh(m / t)) < 1e-12; }));
+  near('居里点附近 m² ≈ 3(1 − t)', meanFieldM(0.9999) ** 2 / (3 * 1e-4), 1, 1e-3);
+  check('居里点以上自发磁化为零', meanFieldM(1) === 0 && meanFieldM(1.2) === 0);
+  const o = { Tc: 373.15, U0: 50, Ub: 0.25, Tref: 298.15 }, pts = [];
+  for (let T = 76; T <= 112; T += 3) pts.push([T, secondaryU(T + 273.15, o)]);
+  near('切线法求居里温度（理想数据，3 °C 间隔）', tangentTc(pts).Tc, 100, 1.0);
+}
+{
+  const { spot, focusB, beam, deflAngle, EM } = await import('../src/physics/crt.js');
+  const Ua = 1000, L = 0.12, B = focusB(Ua, L);
+  const z = spot(0.01, 0.02, B, Ua, L);
+  check('纵向磁场第一次聚焦：所有横向速度的电子会聚到轴上', Math.hypot(...z) < 1e-12, `${z}`);
+  const { v, g } = beam(Ua);
+  near('聚焦条件 e/m = 8π²U/(L²B²)（非相对论近似，1000 V 时差 0.1%）', (8 * Math.PI ** 2 * Ua) / (L * L * B * B) / EM, 1 / (1 + 1000 / (2 * 510998.95)), 1e-6);
+  const z0 = spot(0, 0.02, 1e-12, Ua, L);
+  near('无磁场时光点位移 = αL', z0[1], 0.02 * L, 1e-12);
+  // 与逐步积分对照：θ = 1 rad 时
+  const B1 = (v * g) / (EM * L), n = 20000, dt = L / v / n; let x = 0, y = 0, vx = 0, vy = 0.02 * v;
+  for (let i = 0; i < n; i++) { const w = (EM / g) * B1, c = Math.cos(w * dt), s2 = Math.sin(w * dt); const nvx = vx * c + vy * s2, nvy = -vx * s2 + vy * c; x += ((vx + nvx) / 2) * dt; y += ((vy + nvy) / 2) * dt; vx = nvx; vy = nvy; }
+  const za = spot(0, 0.02, B1, Ua, L);
+  near('螺旋轨道解析解与数值积分一致（x）', za[0], x, 1e-7);
+  near('螺旋轨道解析解与数值积分一致（y）', za[1], y, 1e-7);
+  near('偏转角 α = l_pU_y/(2dU_a)', deflAngle(10, 1000, { lp: 0.018, d: 0.005, f: 1 }), 0.018, 1e-15);
+}
 console.log(fails ? `\n工具物理验证：${fails} 项未通过，${passes} 项通过` : `工具物理验证：全部 ${passes} 项通过`);
 process.exit(fails ? 1 : 0);

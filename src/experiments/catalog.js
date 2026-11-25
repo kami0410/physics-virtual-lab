@@ -31,6 +31,8 @@ import * as PotentiometerExperiment_M from './potentiometer.meta.js';
 import * as HallExperiment_M from './hall.meta.js';
 import * as HelmholtzExperiment_M from './helmholtz.meta.js';
 import * as HysteresisExperiment_M from './hysteresis.meta.js';
+import * as CurieExperiment_M from './curie.meta.js';
+import * as ElectronBeamExperiment_M from './ebeam.meta.js';
 import * as YModulusExperiment_M from './ymodulus.meta.js';
 import * as TrifilarExperiment_M from './trifilar.meta.js';
 import * as StokesExperiment_M from './stokes.meta.js';
@@ -90,6 +92,8 @@ export const CATALOG = [
   E(HallExperiment_M, () => import('./hall.js').then((m) => m.HallExperiment)),
   E(HelmholtzExperiment_M, () => import('./helmholtz.js').then((m) => m.HelmholtzExperiment)),
   E(HysteresisExperiment_M, () => import('./hysteresis.js').then((m) => m.HysteresisExperiment)),
+  E(CurieExperiment_M, () => import('./curie.js').then((m) => m.CurieExperiment)),
+  E(ElectronBeamExperiment_M, () => import('./ebeam.js').then((m) => m.ElectronBeamExperiment)),
   E(DensityExperiment_M, () => import('./density.js').then((m) => m.DensityExperiment)),
   E(PendulumExperiment_M, () => import('./pendulum.js').then((m) => m.PendulumExperiment)),
   E(BohrExperiment_M, () => import('./bohr.js').then((m) => m.BohrExperiment)),
