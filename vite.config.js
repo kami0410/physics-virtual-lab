@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import { viteSingleFile } from 'vite-plugin-singlefile';
 import fs from 'node:fs';
+import { viteAiRelay } from './tools/ai-relay-core.mjs';
 
 // npm run build        -> dist/：多文件，按实验分块按需加载；部署到网站后可“安装到桌面/主屏幕”离线使用（PWA）
 // npm run build:single -> dist-single/index.html：单文件，双击即可离线运行（适合拷贝分发）
@@ -118,7 +119,8 @@ function spiceNoWorker() {
 
 export default defineConfig(({ mode }) => ({
   base: './',
-  plugins: mode === 'single' ? [spiceNoWorker(), katexWoff2Only(), viteSingleFile(), licenseNotice(false)] : [spiceNoWorker(), katexWoff2Only(), serviceWorker(), licenseNotice(true)],
+  // viteAiRelay：npm run dev / preview 时同一服务器下挂 /__ai-relay/，AI 助教同源访问大模型接口，没有跨域问题
+  plugins: mode === 'single' ? [spiceNoWorker(), katexWoff2Only(), viteSingleFile(), licenseNotice(false), viteAiRelay()] : [spiceNoWorker(), katexWoff2Only(), serviceWorker(), licenseNotice(true), viteAiRelay()],
   publicDir: mode === 'single' ? false : 'public',
   build: {
     outDir: mode === 'single' ? 'dist-single' : 'dist',

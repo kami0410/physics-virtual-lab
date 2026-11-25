@@ -382,7 +382,7 @@ export class Tutor {
         <label><span>模型名</span><input data-k="model" spellcheck="false" placeholder="服务商提供的模型名"/></label>
         <label><span>密钥</span><input data-k="key" type="password" spellcheck="false" autocomplete="off"/></label>
         <p class="tt-fine tt-svc" hidden></p>
-        <p class="tt-fine">密钥只保存在这台电脑的浏览器里，请求由浏览器直接发给你填的接口地址，不经过任何第三方。服务商不允许网页直接访问（浏览器报网络错误）时，在本机运行中转 <span class="mono">npm run relay</span>，把地址写成 <span class="mono">http://127.0.0.1:8787/</span> 加原地址。</p>
+        <p class="tt-fine">密钥只保存在这台电脑的浏览器里，请求由浏览器直接发给你填的接口地址，不经过任何第三方。服务商不允许网页直接访问时，助教会自动改走中转：用 <span class="mono">npm run dev</span> 打开时中转已内置；双击打开或网页版时，在项目目录运行 <span class="mono">npm run relay:install</span>，中转会开机自动在后台运行。</p>
         <div class="tt-test"></div></div>`, [
         { label: '测试连接', onClick: async () => { const t = m.body.querySelector('.tt-test'); t.classList.remove('err'); t.textContent = '正在连接…'; try { const r = await this.ping(read()); t.textContent = '连接成功：' + r.slice(0, 80); } catch (err) { t.classList.add('err'); t.textContent = '连接失败：' + err.message; } } },
         { label: '保存', cls: 'primary', onClick: (close) => { saveCfg(read()); this.conv = null; close(); this.renderChatNote(); } },
@@ -399,7 +399,8 @@ export class Tutor {
     const cv = makeConversation(cfg, '你是连接测试。只回答“好”。', []);
     cv.addUser('测试');
     const r = await cv.step(null);
-    return r.text || '（模型有回应）';
+    const { routeOf } = await import('./ai/providers.js'), rt = await routeOf(cfg.base);
+    return (r.text || '（模型有回应）') + (rt.via === 'relay' ? `（经${rt.relay.includes('/__ai-relay') ? '内置' : '本机'}中转）` : '');
   }
 
   // ======================= 大模型对话 =======================

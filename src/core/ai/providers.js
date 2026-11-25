@@ -19,7 +19,7 @@ export const PRESETS = [
   { id: 'deepseek', name: 'DeepSeek 深度求索', format: 'openai', base: 'https://api.deepseek.com/v1', model: 'deepseek-chat', keyHint: 'sk-…' },
   { id: 'qwen', name: '通义千问（阿里云百炼）', format: 'openai', base: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus', keyHint: 'sk-…' },
   { id: 'kimi', name: 'Kimi（月之暗面）', format: 'openai', base: 'https://api.moonshot.cn/v1', model: '', keyHint: 'sk-…' },
-  { id: 'glm', name: '智谱 GLM（需本机中转）', format: 'openai', base: 'http://127.0.0.1:8787/https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash', keyHint: '', note: '智谱的接口只允许它自己的网页跨域访问，浏览器不能直连。先在本机运行中转程序（项目目录下 npm run relay，或 node tools/ai-relay.mjs），这里的地址已经指向中转。' },
+  { id: 'glm', name: '智谱 GLM（需本机中转）', format: 'openai', base: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash', keyHint: '', note: '智谱的接口只允许它自己的网页跨域访问，浏览器不能直连，要经本机中转。用 npm run dev 打开时中转已经内置；双击打开或网页版时，在项目目录运行 npm run relay（或 npm run relay:install 设为开机自启），助教会自动找到它。' },
   { id: 'silicon', name: '硅基流动', format: 'openai', base: 'https://api.siliconflow.cn/v1', model: '', keyHint: 'sk-…' },
   { id: 'openrouter', name: 'OpenRouter', format: 'openai', base: 'https://openrouter.ai/api/v1', model: '', keyHint: 'sk-or-…' },
   { id: 'ollama', name: '本机 Ollama（免费、离线）', format: 'openai', base: 'http://localhost:11434/v1', model: 'qwen2.5:7b', keyHint: '不需要', noKey: true, note: 'Ollama 默认只接受本机网页的请求。先退出 Ollama，设置环境变量 OLLAMA_ORIGINS=* 后再启动（Windows：系统设置 → 环境变量里新建；macOS：launchctl setenv OLLAMA_ORIGINS "*"）。' },
@@ -56,33 +56,83 @@ async function httpError(res) {
   return new Error(`HTTP ${res.status}${hint}：${String(msg).slice(0, 300)}`);
 }
 
-// ---------------------------------------------------------------- 网络失败的诊断
-// 浏览器里 fetch 失败只给一个笼统的 TypeError（跨域被拦、地址不通、证书错误都一样），这里按地址给出具体原因和办法。
+// ---------------------------------------------------------------- 网络失败的诊断与自动中转
+// 浏览器里 fetch 失败只给一个笼统的 TypeError（跨域被拦、地址不通、证书错误都一样）。
 // 实测（2026-11）：Anthropic、OpenAI、DeepSeek、通义、Kimi、硅基流动、OpenRouter、Gemini 都允许网页直接调用；
 // 智谱只允许它自己的域名，预检请求不返回 Access-Control-Allow-Origin。
+// 自动中转：直连失败（或已知不允许网页访问的服务）时，自动探测中转并改走中转——
+//   ① npm run dev / preview 打开时，同一服务器下的 /__ai-relay（同源，没有跨域问题）；
+//   ② 本机独立运行的中转 127.0.0.1:8787（npm run relay，或 npm run relay:install 设为开机自启）。
+// 某个主机走过一次中转，以后就直接走中转。
 const NO_BROWSER = [{ re: /(^|\.)bigmodel\.cn$/, name: '智谱开放平台' }];
 export const RELAY = 'http://127.0.0.1:8787';
+const RELAY_ID = 'physlab-ai-relay';
 const isLoop = (h) => /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/.test(h);
+const isRelayUrl = (u) => /^\/(__ai-relay\/)?https?:/.test(u.pathname);
+const HOW = '在本机运行中转后助教会自动改走中转：项目目录下 npm run relay（关窗口即停止），或 npm run relay:install（开机自动在后台运行）。';
 export function netHint(base) {
   let u; try { u = new URL(base); } catch { return '接口地址格式不对，应以 http:// 或 https:// 开头。'; }
   const page = typeof location !== 'undefined' ? location.protocol : 'file:';
   if (page === 'https:' && u.protocol === 'http:' && !isLoop(u.hostname)) return `本页面是 https 网页，浏览器禁止它访问 http 地址 ${u.host}（混合内容）。请改用 https 地址。`;
   const lna = page === 'file:' || isLoop(location.hostname) ? '' : '网页版第一次访问本机服务时，浏览器会询问“是否允许访问本地网络上的设备”，要选允许；点错了可以在地址栏左侧的网站设置里改回来。';
   if (isLoop(u.hostname)) {
-    const relay = u.port === '8787' && /^\/https?:/.test(u.pathname);
-    if (relay) return `连不上本机中转（${u.host}）。在项目目录运行 npm run relay（或 node tools/ai-relay.mjs），窗口保持打开。${lna}`;
+    if (isRelayUrl(u)) return `连不上中转（${u.host}）。${HOW}${lna}`;
     if (u.port === '11434') return `连不上本机 Ollama。确认 Ollama 正在运行；它默认只接受本机网页的请求，要先退出 Ollama，设置环境变量 OLLAMA_ORIGINS=* 后再启动。${lna}`;
     if (u.port === '1234') return `连不上本机 LM Studio。确认已在 Developer 页启动服务器，并在 Server Settings 里打开 “Enable CORS”。${lna}`;
-    return `连不上本机服务 ${u.host}：确认服务在运行，并且允许跨域访问（返回 Access-Control-Allow-Origin）。不能改设置的服务可以经本机中转访问。${lna}`;
+    return `连不上本机服务 ${u.host}：确认服务在运行，并且允许跨域访问（返回 Access-Control-Allow-Origin）。不能改设置的服务可以经本机中转访问（独立运行中转时加 --allow ${u.host}，地址写成 ${RELAY}/${base.replace(/\/+$/, '')}）。${lna}`;
   }
   const nb = NO_BROWSER.find((x) => x.re.test(u.hostname));
-  if (nb) return `${nb.name}只允许它自己的网页跨域访问，浏览器里不能直连。请在本机运行中转（npm run relay），把接口地址改成 ${RELAY}/${base.replace(/\/+$/, '')}`;
-  return `浏览器没有收到 ${u.host} 的应答。常见原因：① 这个服务不允许网页直接访问（跨域预检被拒）；② 密钥或模型名不对——有些服务（例如 OpenAI）出错时的响应不带跨域许可，浏览器看不到真正的错误，只能报网络错误；③ 网络不通，或需要代理。可以在本机运行中转（npm run relay），把地址改成 ${RELAY}/${base.replace(/\/+$/, '')}：中转会把服务返回的真实错误原样显示出来。`;
+  if (nb) return `${nb.name}只允许它自己的网页跨域访问，浏览器里不能直连，需要经本机中转。${HOW}${lna}`;
+  return `浏览器没有收到 ${u.host} 的应答，也没有找到本机中转。常见原因：① 这个服务不允许网页直接访问（跨域预检被拒）；② 密钥或模型名不对——有些服务（例如 OpenAI）出错时的响应不带跨域许可，浏览器看不到真正的错误，只能报网络错误；③ 网络不通，或需要代理。${HOW}中转会把服务返回的真实错误原样显示出来。${lna}`;
 }
 const netError = (base, err) => Object.assign(new Error(netHint(base)), { name: 'NetError', cause: err });
 /** fetch 的包装：网络层失败（不是用户点停止）时换成带诊断的错误 */
 async function netFetch(base, url, init) {
   try { return await fetch(url, init); } catch (err) { if (err && err.name === 'AbortError') throw err; throw netError(base, err); }
+}
+
+let relayP = null, relayT = 0;
+/** 找一个正在运行的中转，返回它的前缀（找不到为 null）。结果缓存：找到了一直用，没找到 10 秒后再试 */
+export function findRelay() {
+  if (relayP && (Date.now() - relayT < 10000 || relayP.ok)) return relayP;
+  relayT = Date.now();
+  const cands = [];
+  if (typeof location !== 'undefined' && /^https?:$/.test(location.protocol)) cands.push(location.origin + '/__ai-relay');
+  cands.push(RELAY);
+  relayP = (async () => {
+    for (const c of cands) {
+      try {
+        const r = await fetch(c + '/', { signal: AbortSignal.timeout(1500), cache: 'no-store' });
+        if (r.ok && (await r.json()).relay === RELAY_ID) { relayP.ok = true; return c; }
+      } catch { /* 下一个 */ }
+    }
+    return null;
+  })();
+  return relayP;
+}
+const viaRelay = new Set();
+/** 发请求：本机地址直连；已知不允许网页访问、或上次直连失败的主机走中转；直连失败时自动找中转重试 */
+async function routedFetch(url, init) {
+  const u = new URL(url);
+  if (isLoop(u.hostname) || isRelayUrl(u)) return netFetch(url, url, init);
+  const relayed = async (r) => { viaRelay.add(u.host); return netFetch(r + '/', `${r}/${url}`, init); };
+  if (viaRelay.has(u.host) || NO_BROWSER.some((x) => x.re.test(u.hostname))) {
+    const r = await findRelay();
+    if (r) return relayed(r);
+    throw netError(url);
+  }
+  try { return await fetch(url, init); } catch (err) {
+    if (err && err.name === 'AbortError') throw err;
+    if (init && init.signal && init.signal.aborted) throw err;
+    const r = await findRelay();
+    if (r) return relayed(r);
+    throw netError(url, err);
+  }
+}
+/** 当前某个接口地址实际怎么走（设置框里显示） */
+export async function routeOf(base) {
+  try { const u = new URL(base); if (isLoop(u.hostname) || isRelayUrl(u)) return { via: 'direct' }; if (viaRelay.has(u.host) || NO_BROWSER.some((x) => x.re.test(u.hostname))) { const r = await findRelay(); return { via: r ? 'relay' : 'none', relay: r }; } } catch { /* 忽略 */ }
+  return { via: 'direct' };
 }
 
 const parseArgs = (s) => { if (s && typeof s === 'object') return s; try { const o = JSON.parse(s || '{}'); return o && typeof o === 'object' ? o : null; } catch { return null; } };
@@ -98,7 +148,7 @@ class OpenAIChat {
   async step(onText, signal) {
     const { base, key, model } = this.cfg;
     const body = { model, messages: this.msgs, stream: true, tools: this.tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: schemaOf(t) } })) };
-    const res = await netFetch(base, base.replace(/\/+$/, '') + '/chat/completions', { method: 'POST', signal, headers: { 'Content-Type': 'application/json', ...(key ? { Authorization: `Bearer ${key}` } : {}) }, body: JSON.stringify(body) });
+    const res = await routedFetch(base.replace(/\/+$/, '') + '/chat/completions', { method: 'POST', signal, headers: { 'Content-Type': 'application/json', ...(key ? { Authorization: `Bearer ${key}` } : {}) }, body: JSON.stringify(body) });
     if (!res.ok) throw await httpError(res);
     let text = ''; const tc = [];
     const take = (m) => {
@@ -129,7 +179,7 @@ class Gemini {
     const { base, key, model } = this.cfg;
     const url = `${base.replace(/\/+$/, '')}/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`;
     const body = { systemInstruction: { parts: [{ text: this.system }] }, contents: this.contents, tools: [{ functionDeclarations: this.tools.map((t) => ({ name: t.name, description: t.description, ...(t.params && Object.keys(t.params).length ? { parameters: schemaOf(t) } : {}) })) }] };
-    const res = await netFetch(base, url, { method: 'POST', signal, headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(body) });
+    const res = await routedFetch(url, { method: 'POST', signal, headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(body) });
     if (!res.ok) throw await httpError(res);
     let text = ''; const parts = [], calls = [];
     for await (const d of sse(res)) {
@@ -168,7 +218,7 @@ class Claude {
     const slim = (url, init = {}) => {
       const h = new Headers(init.headers);
       for (const k of [...h.keys()]) if (k.startsWith('x-stainless-') || (custom && k === 'anthropic-dangerous-direct-browser-access')) h.delete(k);
-      return netFetch(base || 'https://api.anthropic.com', url, { ...init, headers: h });
+      return routedFetch(String(url), { ...init, headers: h });
     };
     this._c = new Anthropic({ apiKey: key, ...(custom ? { baseURL: base.replace(/\/+$/, '') } : {}), dangerouslyAllowBrowser: true, fetch: slim, maxRetries: 1 });
     return this._c;

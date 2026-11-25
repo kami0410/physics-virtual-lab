@@ -114,6 +114,32 @@ for (const fmt of ['anthropic', 'openai', 'gemini', 'relay']) {
   expect(`${fmt}：页面无报错`, !errs.length, errs.join('; '));
   await p.close();
 }
+// 自动中转：远程服务直连失败（模拟跨域被拦）时，助教自动探测 127.0.0.1:8787 上的中转并改走它，不用改设置
+{
+  log.length = 0;
+  let health = 0, hits = 0;
+  const p = await b.newPage({ viewport: { width: 1440, height: 900 } });
+  const errs = []; p.on('pageerror', (e) => errs.push(e.message));
+  await p.route('https://blocked-ai.test/**', (r) => r.abort('failed'));
+  await p.route('http://127.0.0.1:8787/**', async (r) => {
+    const H = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
+    const rest = r.request().url().slice('http://127.0.0.1:8787/'.length);
+    if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: H });
+    if (!rest) { health++; return r.fulfill({ status: 200, headers: { ...H, 'content-type': 'application/json' }, body: JSON.stringify({ relay: 'physlab-ai-relay', v: 1 }) }); }
+    hits++;
+    const res = await r.fetch({ url: 'http://127.0.0.1:8899' + new URL(rest).pathname });
+    return r.fulfill({ response: res, headers: { ...res.headers(), ...H } });
+  });
+  await p.addInitScript(() => localStorage.setItem('tutorAI', JSON.stringify({ preset: 'custom', format: 'openai', base: 'https://blocked-ai.test/v1', model: 'mock', key: 'k' })));
+  await p.goto(URL0 + '#/exp/stringwave');
+  await p.waitForTimeout(2500);
+  await p.evaluate(async () => { const a = window.__app; a.speed = 8; await a.runStep(0); });
+  const chat = await ask(p);
+  expect('自动中转：直连失败后自动经中转完成三轮对话', hits === 3 && log.length === 3 && chat.includes('33.2 cm'), `中转转发 ${hits} 次，服务收到 ${log.length} 次；${chat.slice(-160)}`);
+  expect('自动中转：只探测一次中转', health === 1, `探测 ${health} 次`);
+  expect('自动中转：页面无报错', !errs.length, errs.join('; '));
+  await p.close();
+}
 // 服务不给跨域许可：浏览器只报网络错误，面板里要给出原因和办法，而不是一句“Failed to fetch”
 for (const f of ['openai', 'anthropic']) {
   log.length = 0;
@@ -130,7 +156,7 @@ for (const f of ['openai', 'anthropic']) {
   await p.waitForSelector('[data-k=preset]');
   await p.selectOption('[data-k=preset]', 'glm');
   const r = await p.evaluate(() => ({ note: document.querySelector('.tt-svc').hidden ? '' : document.querySelector('.tt-svc').textContent, base: document.querySelector('[data-k=base]').value }));
-  expect('设置：智谱显示中转说明、地址指向本机中转', /中转/.test(r.note) && r.base.startsWith('http://127.0.0.1:8787/https://open.bigmodel.cn'), JSON.stringify(r));
+  expect('设置：智谱显示中转说明', /中转/.test(r.note) && r.base === 'https://open.bigmodel.cn/api/paas/v4', JSON.stringify(r));
   await p.close();
 }
 await b.close(); srv.close(); closed.close(); relay.kill();
