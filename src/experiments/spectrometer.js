@@ -14,6 +14,12 @@ const F_COLL = 170; // 平行光管焦距 mm
 const LINES = [
   { name: '紫', nm: 435.83 }, { name: '绿', nm: 546.07 }, { name: '黄₁', nm: 576.96 }, { name: '黄₂', nm: 579.07 },
 ];
+// 氢原子巴尔末线系（空气中波长）：从 n = 3, 4, 5, 6 跃迁到 n = 2
+const HLINES = [
+  { name: 'Hα', nm: 656.28, n: 3 }, { name: 'Hβ', nm: 486.13, n: 4 }, { name: 'Hγ', nm: 434.05, n: 5 }, { name: 'Hδ', nm: 410.17, n: 6 },
+];
+const HSPEC = [[656.28, 1], [486.13, 0.42], [434.05, 0.2], [410.17, 0.09]];
+const RH = 1.0967758e7; // 氢的里德伯常量（m⁻¹，含约化质量修正）
 const wrap180 = (a) => ((((a + 180) % 360) + 360) % 360) - 180;
 const R2D = 180 / Math.PI, D2R = Math.PI / 180;
 
@@ -38,7 +44,7 @@ export class SpectrometerExperiment {
     this.cErr = rand(1.5, 3) * (Math.random() < 0.5 ? -1 : 1); // 狭缝离焦 (mm)
     this.dioptZero = rand(-1.2, 1.2); this.diopt = 0;
     this.slitW = 1.2; // mm
-    this.illum = false; this.lampOn = false;
+    this.illum = false; this.lampOn = false; this.gas = 'Hg';
     this.dial0 = rand(0, 360); this.ecc = 2.2 / 60; this.eccPh = rand(0, 360);
     this.assist = !this.app.readSelf; // 自己读数时默认不显示读数辅助
   }
@@ -97,7 +103,7 @@ export class SpectrometerExperiment {
     if (k === 'mirror') return out;
     const psi = this.plat + this.mountG;
     const inc = -psi * D2R; // 入射角（相对法线）
-    for (const [nm, a] of HG) {
+    for (const [nm, a] of this.gas === 'H' ? HSPEC : HG) {
       for (let m = -3; m <= 3; m++) {
         const s = Math.sin(inc) + (m * nm * 1e-6) / this.d;
         if (Math.abs(s) >= 1) continue;
@@ -220,9 +226,12 @@ export class SpectrometerExperiment {
     this.lampGlow = lh.glowMat;
     this.lampSprite = glowSprite(0xb9b5ff, 10); this.lampSprite.position.set(8, YA, 0); this.lampSprite.visible = false; lg.add(this.lampSprite);
     app.addComponent(new Component({
-      key: 'lamp', name: '低压汞灯', icon: ICONS.mercury, zone: 'slot', defaultSlot: 'lamp', object: lg, labelY: YA + 12,
-      desc: '汞灯在可见光区有 404.7、435.8、546.1、577.0、579.1 nm 等谱线。放在狭缝正前方。',
-      controls: () => [{ type: 'toggle', label: '电源开关', get: () => this.lampOn, set: (v) => (this.lampOn = v) }],
+      key: 'lamp', name: '光谱灯', icon: ICONS.mercury, zone: 'slot', defaultSlot: 'lamp', object: lg, labelY: YA + 12,
+      desc: '灯座上可以换装低压汞灯或氢灯（氢放电管）。汞灯在可见光区有 404.7、435.8、546.1、577.0、579.1 nm 等谱线；氢灯发出巴尔末线系 Hα 656.3、Hβ 486.1、Hγ 434.0、Hδ 410.2 nm。放在狭缝正前方。',
+      controls: () => [
+        { type: 'toggle', label: '电源开关', get: () => this.lampOn, set: (v) => (this.lampOn = v) },
+        { type: 'segment', label: '灯管', get: () => this.gas, set: (v) => { this.gas = v; this.app.changed(); }, options: [{ label: '汞灯', value: 'Hg' }, { label: '氢灯', value: 'H' }] },
+      ],
     }));
 
     const mg = new THREE.Group();
@@ -263,6 +272,7 @@ export class SpectrometerExperiment {
     this.abbeLamp.material.emissiveIntensity = this.illum ? 2.5 : 0;
     const lampOn = this.lampOn && app.comp('lamp').placed;
     this.lampGlow.emissiveIntensity = lampOn ? 2.5 : 0;
+    if (this.lampGlow.emissive && this._gas !== this.gas) { this._gas = this.gas; this.lampGlow.emissive.setHex(this.gas === 'H' ? 0xff9ec4 : 0xc7c9ff); if (this.lampSprite.material.color) this.lampSprite.material.color.setHex(this.gas === 'H' ? 0xffb3d1 : 0xb9b5ff); }
     this.lampSprite.visible = lampOn;
     this.slitGlow.material.opacity = lampOn ? 0.9 : 0;
     // 台上元件跟随载物台
@@ -409,17 +419,32 @@ export class SpectrometerExperiment {
       ],
       buttons: [{ label: '记录当前谱线的两游标读数', onClick: (t) => this.recordLine(t) }],
       note: '用望远镜微调螺钉使竖叉丝对准谱线中央后记录。读数格式如 112°35′。θ = ¼(|A₊−A₋| + |B₊−B₋|)。',
+    }, {
+      id: 'h', title: '氢原子光谱（选做）', fixedRows: true,
+      initRows: () => HLINES.map((l) => ({ line: `${l.name}（n = ${l.n} → 2）` })),
+      columns: [
+        { key: 'line', label: '谱线', type: 'text', readonly: true },
+        { key: 'Ap', label: '+1 级 游标A', type: 'dms' },
+        { key: 'Bp', label: '+1 级 游标B', type: 'dms' },
+        { key: 'Am', label: '−1 级 游标A', type: 'dms' },
+        { key: 'Bm', label: '−1 级 游标B', type: 'dms' },
+        { key: 'th', label: '衍射角 θ', type: 'dms', calc: (r) => thetaOf(r) },
+      ],
+      buttons: [{ label: '记录当前谱线的两游标读数', onClick: (t) => this.recordLine(t) }],
+      note: '光栅不动，把汞灯换成氢灯。红色的 Hα 最亮，Hδ 在紫端很暗。λ 由前面测出的光栅常数 d 计算。',
     }];
   }
 
   recordLine(t) {
-    const sp = this.spectrum().filter((s) => Math.abs(s.k) === 1 && LINES.some((l) => l.nm === s.nm));
+    const LS = t.id === 'h' ? HLINES : LINES;
+    if (t.id === 'h' && this.gas !== 'H') { this.app.toast('这张表记录氢灯的谱线：先在光谱灯上换成氢灯', 'warn'); return; }
+    const sp = this.spectrum().filter((s) => Math.abs(s.k) === 1 && LS.some((l) => l.nm === s.nm));
     let best = null;
     for (const s of sp) { const dx = Math.abs(wrap180(s.az - this.tel)); if (!best || dx < best.dx) best = { ...s, dx }; }
-    if (!best || best.dx > 0.25) { this.app.toast('视场中央没有需要测量的 ±1 级谱线（紫、绿、黄₁、黄₂）', 'warn'); return; }
+    if (!best || best.dx > 0.25) { this.app.toast(t.id === 'h' ? '视场中央没有氢的 ±1 级谱线（Hα、Hβ、Hγ、Hδ）' : `视场中央没有需要测量的 ±1 级谱线（紫、绿、黄₁、黄₂）${this.gas === 'H' ? '：现在装的是氢灯' : ''}`, 'warn'); return; }
     if (best.dx * 60 > 1.5) this.app.toast(`竖叉丝没有对准谱线中央（偏差约 ${(best.dx * 60).toFixed(1)}′）`, 'warn');
     if (!this.telLock) this.app.toast('提示：读数前应锁紧望远镜止动螺钉', 'warn');
-    const i = LINES.findIndex((l) => l.nm === best.nm);
+    const i = LS.findIndex((l) => l.nm === best.nm);
     const r = this.readings();
     const q = (x) => Math.round((x + gauss(0.25 / 60)) * 60) / 60;
     const sfx = best.k > 0 ? 'p' : 'm';
@@ -533,6 +558,7 @@ export class SpectrometerExperiment {
         status: () => { const t = app.table('s'); const n = t.rows.reduce((s, r) => s + ['Ap', 'Am'].filter((k) => r[k] != null).length, 0); return `已测 <b>${n}</b> / 8 条谱线位置`; },
         auto: async () => {
           await app.view('全景');
+          if (this.gas !== 'Hg') { app.select(app.comp('lamp')); this.gas = 'Hg'; app.renderInspector(); }
           app.select(app.comp('tel'));
           for (const sign of [1, -1]) {
             this.telLock = false; app.changed();
@@ -545,6 +571,30 @@ export class SpectrometerExperiment {
               const s = this.spectrum().find((x) => x.k === sign && x.nm === nm);
               await app.tween(() => this.tel, (v) => (this.tel = v), s.az + gauss(0.2 / 60), 700);
               await app.record('s');
+            }
+          }
+        },
+      },
+      {
+        title: '（选做）换氢灯，测巴尔末线系', optional: true,
+        html: '<p>光栅保持不动，把汞灯换成<b>氢灯</b>。测出 Hα（红）、Hβ（青）、Hγ（蓝紫）等谱线的 ±1 级衍射角，用前面测得的光栅常数求波长，再由巴尔末公式求里德伯常量。</p>',
+        hint: 'Hδ（410 nm）很暗，在紫端，看不清可以只测前三条。',
+        check: () => app.table('h').rows.filter((r) => isFinite(thetaOf(r))).length >= 3,
+        status: () => `已测 ${app.table('h').rows.filter((r) => isFinite(thetaOf(r))).length} 条氢谱线${this.gas === 'H' ? '' : '（还没换氢灯）'}`,
+        diagnose: () => (this.gas !== 'H' ? [{ msg: '现在装的还是汞灯。选中光谱灯，把“灯管”换成氢灯。', fix: { label: '换成氢灯', run: async () => { this.gas = 'H'; } } }] : []),
+        auto: async () => {
+          app.showTable(1); app.select(app.comp('lamp')); this.gas = 'H'; app.renderInspector(); app.changed();
+          app.select(app.comp('tel'));
+          for (const sign of [1, -1]) {
+            this.telLock = false; app.changed();
+            const a = this.spectrum().find((x) => x.k === sign && x.nm === 486.13);
+            if (!a) return;
+            await app.tween(() => this.tel, (v) => (this.tel = v), a.az, 1200);
+            this.telLock = true; app.changed();
+            for (const nm of [656.28, 486.13, 434.05]) {
+              const s = this.spectrum().find((x) => x.k === sign && x.nm === nm);
+              await app.tween(() => this.tel, (v) => (this.tel = v), s.az + gauss(0.2 / 60), 700);
+              await app.record('h');
             }
           }
         },
@@ -576,7 +626,22 @@ export class SpectrometerExperiment {
       <h3>光栅常数</h3><p>$d=\\dfrac{\\lambda_{绿}}{\\sin\\theta_{绿}}=${(d * 1e3).toFixed(4)}\\ \\mu m$，$u(d)=d\\cot\\theta\\,u(\\theta)$，取 $u(\\theta)≈${(uTh * R2D * 60).toFixed(2)}'$</p>
       <div class="result-box">$d = ${texU(d * 1e3, ud * 1e3, '\\mu m')}$，即 ${(1 / d).toFixed(1)} 条/mm</div>
       <div class="result-box warn">本次光栅的光栅常数参考值 d₀ = ${(this.d * 1e3).toFixed(4)} μm（${this.lines.toFixed(1)} 条/mm），相对误差 ${pct(relErr(d, this.d))}。双游标读数消除了刻度盘偏心差（本仪器偏心约 ${(this.ecc * 60).toFixed(1)}′）。</div>`;
-    return { html, ok: true, plots: [], answers: [{ label: '光栅常数 $d$', unit: 'μm', value: d * 1e3, digits: 4, tolRel: 0.003 }] };
+    const answers = [{ label: '光栅常数 $d$', unit: 'μm', value: d * 1e3, digits: 4, tolRel: 0.003 }], plots = [];
+    const hr = this.app.table('h').rows.map((r, i) => ({ ...HLINES[i], th: thetaOf(r) })).filter((r) => isFinite(r.th));
+    if (hr.length >= 2) {
+      const xs = hr.map((r) => 1 / 4 - 1 / (r.n * r.n)), lam = hr.map((r) => d * Math.sin(r.th * D2R) * 1e-3), ys = lam.map((l) => 1 / l); // m
+      const R1 = hr.map((r, i) => ys[i] / xs[i]), Rm = mean(R1);
+      const sxx = xs.reduce((a, x) => a + x * x, 0), Rfit = xs.reduce((a, x, i) => a + x * ys[i], 0) / sxx; // 过原点拟合
+      html += `<h3>氢原子光谱：巴尔末线系</h3><p>巴尔末公式 $\\dfrac1\\lambda=R_H\\left(\\dfrac1{2^2}-\\dfrac1{n^2}\\right)$，$n=3,4,5,\\cdots$。</p>
+        <table><tr><th>谱线</th><th>n</th><th>θ</th><th>λ = d·sinθ /nm</th><th>标准值 /nm</th><th>R = 1/[λ(1/4−1/n²)] /(10⁷ m⁻¹)</th></tr>
+        ${hr.map((r, i) => `<tr><td>${r.name}</td><td>${r.n}</td><td>${dms(r.th)}</td><td>${(lam[i] * 1e9).toFixed(2)}</td><td>${r.nm.toFixed(2)}</td><td>${(R1[i] / 1e7).toFixed(4)}</td></tr>`).join('')}</table>
+        <p>以 $1/\\lambda$ 对 $(1/4-1/n^2)$ 作图应为过原点的直线，斜率即 $R_H$（过原点最小二乘）：</p>
+        <div class="result-box">$R_H=${(Rfit / 1e7).toFixed(4)}\\times10^7\\ \\text{m}^{-1}$（逐条平均 ${(Rm / 1e7).toFixed(4)}×10⁷）</div>
+        <div class="result-box warn">氢的里德伯常量 R_H = 1.09678×10⁷ m⁻¹（R∞ = 1.09737×10⁷ m⁻¹，按电子与质子的约化质量修正），测量值相对误差 ${pct(relErr(Rfit, RH))}。光栅常数 d 是用汞绿线定标的，它的误差会同样带进 R_H。</div>`;
+      answers.push({ label: '里德伯常量 $R_H$', unit: '×10⁷ m⁻¹', value: Rfit / 1e7, digits: 4, tolRel: 0.003 });
+      plots.push({ title: '1/λ – (1/4 − 1/n²)', xLabel: '1/4 − 1/n²', yLabel: '1/λ / (10⁶ m⁻¹)', series: [{ type: 'scatter', data: xs.map((x, i) => [x, ys[i] / 1e6]), label: '实验点' }, { type: 'line', data: [[0, 0], [0.25, (0.25 * Rfit) / 1e6]], label: '过原点直线' }] });
+    }
+    return { html, ok: true, plots, answers };
   }
 
   principle() {

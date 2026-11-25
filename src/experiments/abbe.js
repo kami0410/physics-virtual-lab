@@ -113,7 +113,7 @@ export class AbbeExperiment {
     const at = (X, Y) => {
       const xr = c * X + s * Y, yr = -s * X + c * Y; // 物坐标系（物转过 rot）
       if (type === 'grid') return wrapP(xr) < 5 && wrapP(yr) < 5 ? 1 : 0;
-      if (type === 'grating') return wrapP(xr) < 4 ? 1 : 0;
+      if (type === 'grating') return wrapP(xr) < 3 ? 1 : 0; // 透光部分占 3/8：占空比为 1/2 时 ±2 级恰好缺级，要测的光点就没有了
       const lx = Math.floor(xr + N / 2), ly = Math.floor(yr + N / 2);
       if (!(lx >= 0 && ly >= 0 && lx < N && ly < N && L[ly * N + lx])) return 0;
       return type === 'word' ? 1 : wrapP(xr) < 5 && wrapP(yr) < 5 ? 1 : 0;
@@ -229,7 +229,7 @@ export class AbbeExperiment {
     const at = (m, n) => { const X = (m * cs - n * sn) * q * bx, Y = (m * sn + n * cs) * q * bx; return this.T(X, Y, c); };
     const D = at(0, 0) > 0.5;
     if (this.obj === 'grid' || this.obj === 'grating') {
-      const a = this.obj === 'grid' ? 5 / 8 : 1 / 2, pass = [];
+      const a = this.obj === 'grid' ? 5 / 8 : 3 / 8, pass = [];
       for (let m = -3; m <= 3; m++) for (let n = -3; n <= 3; n++) {
         if (this.obj === 'grating' && n) continue;
         if ((m || n) && Math.abs(cm(a, m) * (this.obj === 'grid' ? cm(a, n) : 1)) > 0.02 && at(m, n) > 0.5) pass.push([m, n]);
@@ -575,7 +575,7 @@ export class AbbeExperiment {
     if (Math.abs(this.rot) > 1) this.app.toast('提示：光栅没有转正，光点不在水平线上', 'warn');
     if (this.spotR(c) > 0.08) this.app.toast('提示：毛玻璃不在频谱面上，光点较大、模糊', 'warn');
     const s = this.orderStep(c), r = (this.rot * Math.PI) / 180;
-    const X = this.drum - this.X0, k = Math.round(X / (s * Math.cos(r)));
+    const X = this.fc().cx, k = Math.round(X / (s * Math.cos(r))); // 与频谱面视图一致：十字线相对频谱中心的位置（含滤波器架的共轴偏差）
     if (Math.abs(k) > 2) return this.app.toast('只需测 −2 ～ +2 级', 'warn');
     if (Math.abs(X - k * s * Math.cos(r)) > Math.max(0.03, this.spotR(c))) return this.app.toast('十字线没有对准光点中心', 'warn');
     const i = t.rows.findIndex((q) => q.k === k);
@@ -606,11 +606,14 @@ export class AbbeExperiment {
     const obs = () => app.table('obs').completeRows();
     const center = async () => {
       app.select(app.comp('filt'));
-      await app.tween(() => this.drum, (v) => (this.drum = v), this.X0, 500);
-      await app.tween(() => this.yk, (v) => (this.yk = v), this.Y0, 300);
+      const f = this.fc(); // 对准频谱中心（0 级）：使十字线相对频谱中心的偏移为零
+      await app.tween(() => this.drum, (v) => (this.drum = v), this.drum - f.cx, 500);
+      await app.tween(() => this.yk, (v) => (this.yk = v), this.yk + this.fc().cy, 300);
     };
+    // 放到导轨上的指定位置；已经在导轨上但被挪开太远（光路顺序可能已乱）时移回去
+    const put = async (key, pos, tol = 4) => { const cp = app.comp(key); if (!cp.placed) await app.autoPlace(key, { pos }); else if (Math.abs(cp.pos - pos) > tol) await app.moveTo(key, pos, 700); };
     const look = async (see) => { this.see = see ?? this.classify(); app.changed(); await app.wait(200); await app.record('obs'); };
-    return [
+    const list = [
       {
         title: '获得扩束的平行光',
         html: '<p>依次放置 <b>激光器</b>、<b>扩束镜 L₀</b>、<b>准直透镜 L₁</b>，打开激光。前后移动 L₁，使 L₀ 的焦点落在 L₁ 的前焦点上：紧靠 L₁ 处和 100 cm 外的光斑直径相同，即为平行光。</p>',
@@ -619,7 +622,7 @@ export class AbbeExperiment {
         status: () => { const a = this.spotAt(0), b = this.spotAt(100); return a == null ? '' : `光斑直径：L₁ 后 <b>${a.toFixed(1)}</b> mm，100 cm 处 <b>${b.toFixed(1)}</b> mm`; },
         auto: async () => {
           await app.view('全景');
-          await app.autoPlace('laser', { pos: 4 }); await app.autoPlace('l0', { pos: 14 }); await app.autoPlace('l1', { pos: 38 });
+          await put('laser', 4, 2); await put('l0', 14, 2); await put('l1', 38, 6);
           app.select(app.comp('laser')); this.laserOn = true; app.changed(); await app.wait(300);
           await app.view('光源端');
           await app.moveTo('l1', c().l0 + F0 + F1 + gauss(0.05), 1200);
@@ -634,9 +637,9 @@ export class AbbeExperiment {
         auto: async () => {
           await app.view('物与透镜');
           app.select(null); this.obj = 'grid'; this.rot = 0;
-          await app.autoPlace('obj', { pos: 60 }); await app.autoPlace('lens', { pos: 78 });
+          await put('obj', 60, 6); await put('lens', 78, 6);
           this.ftype = 'none';
-          await app.autoPlace('screen', { pos: 150 });
+          await put('screen', 150, 30);
           await app.view('全景');
           const k = c(), u = (k.L - k.ob) * 10, v = (u * FL * 10) / (u - FL * 10);
           await app.moveTo('screen', Math.min(RAIL, k.L + v / 10 + gauss(0.2)), 1400);
@@ -665,9 +668,9 @@ export class AbbeExperiment {
           app.select(app.comp('obj')); this.obj = 'grating'; app.changed();
           await app.tween(() => this.rot, (v) => (this.rot = v), 0, 300);
           app.select(app.comp('filt'));
-          const s = this.orderStep(c());
+          const s = this.orderStep(c()), off = this.drum - this.X0 - this.fc().cx; // 滤波器架的共轴偏差使频谱整体平移
           for (const k of [-2, -1, 0, 1, 2]) {
-            await app.tween(() => this.drum, (v) => (this.drum = v), this.X0 + k * s + gauss(0.004), 500);
+            await app.tween(() => this.drum, (v) => (this.drum = v), this.X0 + off + k * s + gauss(0.004), 500);
             await app.record('spec');
           }
         },
@@ -720,6 +723,13 @@ export class AbbeExperiment {
         auto: async () => { app.showAnalysis(); await app.wait(600); },
       },
     ];
+    // 激光可能在中途被关掉：后面各步的自动操作先把它打开
+    list.forEach((st, n) => {
+      if (!n || !st.auto) return;
+      const run = st.auto;
+      st.auto = async () => { if (!this.laserOn) { app.select(app.comp('laser')); this.laserOn = true; app.changed(); await app.wait(300); } return run(); };
+    });
+    return list;
   }
 
   analyze() {

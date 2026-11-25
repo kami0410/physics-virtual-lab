@@ -16,8 +16,8 @@ const store = {
 };
 
 export class ObsView {
-  constructor(app, { id, title, w = 260, h: hh = 260, res = 1, foot = true }) {
-    this.app = app; this.id = id; this.title = title;
+  constructor(app, { id, title, w = 260, h: hh = 260, res = 1, foot = true, onTap = null }) {
+    this.app = app; this.id = id; this.title = title; this.onTap = onTap;
     this.w = w; this.h = hh;
     this.W = Math.round(w * res); this.H = Math.round(hh * res); // 逻辑作图尺寸（与旧接口一致）
     this.k = 1; this.zoom = 1; this.cx = this.W / 2; this.cy = this.H / 2;
@@ -182,10 +182,12 @@ export class ObsView {
     cv.addEventListener('dblclick', () => { this.cx = this.W / 2; this.cy = this.H / 2; this.setZoom(1); });
     const pts = new Map();
     let last = null;
+    let tap = null;
     cv.addEventListener('pointerdown', (e) => {
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
       cv.setPointerCapture(e.pointerId);
       last = null;
+      tap = pts.size === 1 ? { x: e.clientX, y: e.clientY } : null;
     });
     cv.addEventListener('pointermove', (e) => {
       if (!pts.has(e.pointerId)) return;
@@ -204,6 +206,15 @@ export class ObsView {
       }
     });
     const up = (e) => { pts.delete(e.pointerId); last = null; };
+    // 单击（没有拖动）：把点击位置换算成逻辑坐标交给实验（如在导电纸上放探针）
+    cv.addEventListener('pointerup', (e) => {
+      if (this.onTap && tap && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 5) {
+        const r = cv.getBoundingClientRect(), [s, ox, oy] = this.M;
+        const px = ((e.clientX - r.left) / r.width) * cv.width, py = ((e.clientY - r.top) / r.height) * cv.height;
+        this.onTap((px - ox) / s, (py - oy) / s);
+      }
+      tap = null;
+    });
     cv.addEventListener('pointerup', up);
     cv.addEventListener('pointercancel', up);
     cv.style.touchAction = 'none';

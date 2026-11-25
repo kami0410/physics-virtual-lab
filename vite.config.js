@@ -24,6 +24,8 @@ const BUNDLED = [
   ['katex', 'katex/LICENSE'],
   ['@fontsource/ibm-plex-mono', '@fontsource/ibm-plex-mono/LICENSE'],
   ['@spice-ts/core', '@spice-ts/core/LICENSE'],
+  ['@anthropic-ai/sdk', '@anthropic-ai/sdk/LICENSE'],
+  ['@anthropic-ai/sdk', '@anthropic-ai/sdk/LICENSE-MIT'],
 ];
 /** 直接收录进源码的第三方文件（src/physics/glasscat.js、lensTrace.js、glassdb.js 来自 Optica Viva） */
 const VENDORED = [

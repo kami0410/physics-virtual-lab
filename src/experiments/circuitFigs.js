@@ -274,3 +274,26 @@ export function oscilloscopeFig() {
   g.path(`M126,${y + 48}l8,-8v8l8,-8v8l8,-8`, { w: 1, c: C.ink2 }); g.text(140, y + 60, '锯齿波', { size: 9, c: C.ink2 });
   return g.html('图 1　示波管：Y 偏转板加被测信号，X 偏转板加锯齿波扫描电压，光点偏移量与偏转电压成正比');
 }
+
+// ======================= 双臂电桥 =======================
+export function kelvinFig() {
+  const g = new Fig(300, 200);
+  const y0 = 40, y1 = 88, yr = 140, ys = 180, xc = 150;
+  // 电流回路：Rx、跨线 r、Rn 串联
+  wire(g, [[22, yr], [44, yr]]); res(g, 44, yr, 106, yr, '*R*ₓ', { len: 34, ly: 22 }); wire(g, [[106, yr], [124, yr]]);
+  g.line(124, yr, 176, yr, { w: 3 }); g.text(150, yr + 15, '*r*', { size: 10 });
+  wire(g, [[176, yr], [194, yr]]); res(g, 194, yr, 256, yr, '*R*ₙ', { len: 34, ly: 22 }); wire(g, [[256, yr], [278, yr]]);
+  for (const x of [22, 124, 176, 278]) g.dot(x, yr, 2.2);
+  g.text(22, yr - 7, 'C₁', { size: 9, c: C.ink2 }).text(124, yr - 7, 'C₂', { size: 9, c: C.ink2 }).text(176, yr - 7, 'C₁', { size: 9, c: C.ink2 }).text(278, yr - 7, 'C₂', { size: 9, c: C.ink2 });
+  // 外臂 R1、R2（接 Rx、Rn 远端的电位端），内臂 R1′、R2′（接近端的电位端）
+  wire(g, [[52, yr], [52, y0]]); res(g, 52, y0, xc, y0, '*R*₁', { len: 26 }); res(g, xc, y0, 248, y0, '*R*₂', { len: 26 }); wire(g, [[248, y0], [248, yr]]);
+  wire(g, [[98, yr], [98, y1]]); res(g, 98, y1, xc, y1, '*R*₁′', { len: 22 }); res(g, xc, y1, 202, y1, '*R*₂′', { len: 22 }); wire(g, [[202, y1], [202, yr]]);
+  for (const [x, y] of [[52, yr], [98, yr], [202, yr], [248, yr], [xc, y0], [xc, y1]]) g.dot(x, y, 2.2);
+  g.text(52, yr + 13, 'P₁', { size: 9, c: C.ink2 }).text(98, yr + 13, 'P₂', { size: 9, c: C.ink2 }).text(202, yr + 13, 'P₁', { size: 9, c: C.ink2 }).text(248, yr + 13, 'P₂', { size: 9, c: C.ink2 });
+  // 检流计
+  wire(g, [[xc, y0], [xc, (y0 + y1) / 2 - 9]]); meter(g, xc, (y0 + y1) / 2, 'G'); wire(g, [[xc, (y0 + y1) / 2 + 9], [xc, y1]]);
+  // 电源与换向开关
+  wire(g, [[22, yr], [22, ys], [128, ys]]); cell(g, 128, ys, 144, ys, '*E*', { plus: 'l' }); wire(g, [[144, ys], [164, ys]]);
+  sw(g, 164, ys, 186, ''); g.text(175, ys - 13, 'K', { size: 10 }); wire(g, [[186, ys], [278, ys], [278, yr]]);
+  return g.html('图 1　双臂电桥。<i>R</i><sub>1</sub> = <i>R</i><sub>1</sub>′、<i>R</i><sub>2</sub> = <i>R</i><sub>2</sub>′ 时，平衡条件 <i>R</i><sub>x</sub> = <i>R</i><sub>1</sub><i>R</i><sub>n</sub>/<i>R</i><sub>2</sub>，与跨线电阻 <i>r</i> 和各接触电阻无关');
+}

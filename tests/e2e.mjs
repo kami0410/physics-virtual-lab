@@ -1,5 +1,6 @@
 // 全部实验的自动化回归测试（用本机 Chrome / Edge 无头运行离线单文件版 dist-single/index.html）
-//   node tests/e2e.mjs [--only id1,id2] [--seed 7] [--monkey 400] [--no-auto] [--no-monkey] [--headed]
+//   node tests/e2e.mjs [--only id1,id2] [--seed 7] [--monkey 400] [--no-auto] [--no-monkey] [--rescue 3] [--headed]
+// 3. --rescue N：每个实验 N 次“先自动做几步 → 学生式乱调 → 一键续跑”，检查自动完成会不会卡住
 // 1. 一键运行：所有步骤完成、数据处理无 NaN/报错、结果中的“相对误差/相对偏差”不超过阈值；统计 update() 耗时
 // 2. 随机操作（monkey）：随机放置/取下器材、拖导轨、拧旋钮、切换开关、点记录按钮、做数据处理，检查是否抛异常
 import { chromium } from 'playwright-core';
@@ -140,6 +141,47 @@ async function monkey(browser, id, n) {
   return { id, kind: 'monkey', s: Math.round((Date.now() - t0) / 1000), problems, info: `${r.steps} 次随机操作` };
 }
 
+/** 卡住测试：先自动做前几步，再做一批“学生式”乱调（拧旋钮、挪器材、拨开关、取下器材），然后从当前步骤一键运行，必须能做完 */
+async function rescue(browser, id, seed, ops) {
+  const page = await openExp(browser, id, seed);
+  const t0 = Date.now();
+  const r = await page.evaluate(async ({ ops }) => {
+    const a = window.__app, thrown = [];
+    const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+    a.speed = 8;
+    const k = Math.floor(Math.random() * Math.max(1, a.steps.length - 1));
+    if (k > 0) await a._run([...Array(k).keys()]);
+    const rail = a.zones.find((z) => z.type === 'rail');
+    const twist = (d) => {
+      if (d.type === 'knob') { if (d.min != null && d.max != null && Math.random() < 0.4) d.set(d.min + Math.random() * (d.max - d.min)); else d.set(d.get() + (d.bigStep ?? d.step ?? 0.1) * Math.round((Math.random() - 0.5) * 20)); }
+      else if (d.type === 'slider') d.set(d.min + Math.random() * (d.max - d.min));
+      else if (d.type === 'toggle') d.set(!d.get());
+      else if (d.type === 'segment' || d.type === 'select') d.set(pick(d.options).value);
+    };
+    const log = [];
+    for (let i = 0; i < ops; i++) {
+      const comps = [...a.comps.values()], r = Math.random();
+      let what = '';
+      try {
+        if (r < 0.1) { const c = pick(comps.filter((c) => c.placed && !c.fixed)); if (c) { what = `取下 ${c.key}`; a.remove(c); } }
+        else if (r < 0.2) { const c = pick(comps.filter((c) => c.placed && c.zone === 'rail')); if (c && rail) { what = `移动 ${c.key}`; a.setRailPos(c, rail.min + Math.random() * (rail.max - rail.min)); } }
+        else if (r < 0.85) { const c = pick(comps.filter((c) => c.placed)); if (c) { const d = pick((c.controls ? c.controls() : []).filter((d) => d.type !== 'button' && d.type !== 'readout')); if (d) { what = `${c.key}.${d.label}`; twist(d); } } }
+        else { const d = pick((a.exp.globalControls ? a.exp.globalControls() : []).filter((d) => d.type !== 'button' && d.type !== 'readout')); if (d) { what = `全局.${d.label}`; twist(d); } }
+        a.changed(); a.dirty = true; a.frame(1 / 60);
+      } catch (err) { thrown.push(`${what}: ${err.message}`); }
+      if (what) log.push(what);
+    }
+    const from = a.stepIdx;
+    await a.runAll();
+    for (let t = 0; t < 600 && a.running; t++) await new Promise((res) => setTimeout(res, 200));
+    return { k, from, done: a.stepDone.map((x) => (x ? 1 : 0)).join(''), all: a.stepDone.every(Boolean), stuck: a.stepDone.every(Boolean) ? '' : a.steps[a.stepIdx].title, log: log.slice(-12), thrown, errors: window.__errors, bad: window.__bad, warn: [...new Set(window.__warn)].slice(-4) };
+  }, { ops });
+  await page.close();
+  const problems = [...r.thrown, ...r.errors, ...r.bad.map((b) => 'toast: ' + b)];
+  if (!r.all) problems.push(`乱调后一键运行卡在「${r.stuck}」（${r.done}）；最近操作：${r.log.join('，')}；提示：${r.warn.join(' / ')}`);
+  return { id, kind: 'rescue', s: Math.round((Date.now() - t0) / 1000), problems, info: `先做 ${r.k} 步，乱调后从第 ${r.from + 1} 步续跑` };
+}
+
 async function pool(tasks, k) {
   const out = []; let i = 0;
   await Promise.all(Array.from({ length: k }, async () => { while (i < tasks.length) { const t = tasks[i++]; try { out.push(await t()); } catch (err) { out.push({ id: t.id, kind: t.kind, problems: ['测试本身出错：' + err.message], info: '' }); } } }));
@@ -156,6 +198,7 @@ const tasks = [];
 for (const id of ids) {
   if (!has('--no-auto')) { const t = () => autoRun(browser, id); t.id = id; t.kind = 'auto'; tasks.push(t); }
   if (!has('--no-monkey')) { const t = () => monkey(browser, id, MONKEY); t.id = id; t.kind = 'monkey'; tasks.push(t); }
+  if (has('--rescue')) for (let k = 0; k < +arg('--rescue', 3); k++) { const t = () => rescue(browser, id, SEED * 31 + k * 977, 25); t.id = id; t.kind = 'rescue'; tasks.push(t); }
 }
 // 光路设计台、衍射工作台：逐个载入预设，检查无报错、有光线 / 有图样
 async function toolSmoke(browser, route) {

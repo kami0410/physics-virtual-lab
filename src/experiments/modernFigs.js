@@ -23,3 +23,20 @@ export function franckHertzFig() {
   void k;
   return g.html('图 1　充氩四极管与管内电位分布。电子在 G₁–G₂ 间加速，G₂–A 间的拒斥电压只让能量足够的电子到达板极');
 }
+
+// ======================= 电子荷质比：精细射束管中的圆形轨道 =======================
+export function emFig() {
+  const g = new Fig(280, 200);
+  const cx = 130, cy = 100, Rb = 80, gx = 170, gy = 140, r = 40;
+  g.circle(cx, cy, Rb, { c: C.ink3, w: 1, fill: '#f4f7f5' });
+  for (let x = 82; x <= 178; x += 16) for (let y = 30; y <= 170; y += 16) if (Math.hypot(x - cx, y - cy) < Rb - 8) g.text(x, y + 3, '⊙', { size: 8, c: C.ink3 });
+  g.circle(gx - r, gy, r, { c: '#2f87b8', w: 1.6 });
+  g.rect(gx - 4, gy, 8, 18, { fill: C.metal, c: C.ink });
+  g.line(gx - 2 * r - 8, gy + 3, gx, gy + 3, { c: C.ink2, w: 0.8 });
+  for (const k of [1, 2, 3]) g.line(gx - (k * 2 * r) / 3, gy - 1, gx - (k * 2 * r) / 3, gy + 6, { c: '#2f9e6b', w: 1.4 });
+  g.arrow(gx, gy - 4, gx, gy - 28, { c: C.laser }); g.text(gx + 6, gy - 20, '*v*', { a: 'start', size: 11, c: C.laser });
+  g.arrow(gx - 4, gy - 40 + 6, gx - 26, gy - 40 + 6, { c: C.laser }); g.text(gx - 16, gy - 42, '*F*', { size: 10, c: C.laser });
+  g.dim(gx - 2 * r, gy + 24, gx, gy + 24, '*D* = 2*r*', { off: 9 });
+  g.text(cx + Rb - 4, 26, '*B*（指向纸外）', { a: 'end', size: 10, c: C.ink2 });
+  return g.html('电子从枪口竖直向上射出，在垂直纸面的磁场中作圆周运动，回到枪口高度时打在离枪口 D = 2r 的标记上', { max: 360 });
+}

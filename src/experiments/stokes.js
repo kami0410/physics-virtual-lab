@@ -269,7 +269,7 @@ export class StokesExperiment {
     this.cur = i; this.wet = true; this.onAxis = true; a.renderInspector();
     this.sw.reset(); this.auto = { phase: 'arm' };
     this.drop();
-    while (this.auto) await a.wait(120);
+    if (!(await a.until(() => !this.auto))) { this.auto = null; return; }
     await a.record('ball', 1);
     while (this.ball && this.ball.y > (this.ball.b.d * 100) / 2 + 0.02) await a.wait(120);
   }

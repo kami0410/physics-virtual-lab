@@ -21,6 +21,7 @@ import * as HoloExperiment_M from './holo.meta.js';
 import * as PhotoelectricExperiment_M from './photoelectric.meta.js';
 import * as VoltAmpExperiment_M from './voltamp.meta.js';
 import * as BridgeExperiment_M from './bridge.meta.js';
+import * as KelvinExperiment_M from './kelvin.meta.js';
 import * as CalibExperiment_M from './calib.meta.js';
 import * as OscilloscopeExperiment_M from './oscilloscope.meta.js';
 import * as RlcExperiment_M from './rlc.meta.js';
@@ -34,6 +35,15 @@ import * as StokesExperiment_M from './stokes.meta.js';
 import * as SoundExperiment_M from './sound.meta.js';
 import * as ThermCondExperiment_M from './thermcond.meta.js';
 import * as FranckHertzExperiment_M from './franckhertz.meta.js';
+import * as PendulumExperiment_M from './pendulum.meta.js';
+import * as StringWaveExperiment_M from './stringwave.meta.js';
+import * as SurfaceExperiment_M from './surface.meta.js';
+import * as AirTrackExperiment_M from './airtrack.meta.js';
+import * as EFieldExperiment_M from './efield.meta.js';
+import * as MillikanExperiment_M from './millikan.meta.js';
+import * as GammaExperiment_M from './gamma.meta.js';
+import * as ExpansionExperiment_M from './expansion.meta.js';
+import * as EMRatioExperiment_M from './emratio.meta.js';
 
 const E = (M, load) => ({ meta: M.meta, thumb: M.thumb, load });
 export const CATALOG = [
@@ -57,17 +67,27 @@ export const CATALOG = [
   E(PhotoelectricExperiment_M, () => import('./photoelectric.js').then((m) => m.PhotoelectricExperiment)),
   E(VoltAmpExperiment_M, () => import('./voltamp.js').then((m) => m.VoltAmpExperiment)),
   E(BridgeExperiment_M, () => import('./bridge.js').then((m) => m.BridgeExperiment)),
+  E(KelvinExperiment_M, () => import('./kelvin.js').then((m) => m.KelvinExperiment)),
   E(CalibExperiment_M, () => import('./calib.js').then((m) => m.CalibExperiment)),
+  E(EFieldExperiment_M, () => import('./efield.js').then((m) => m.EFieldExperiment)),
   E(OscilloscopeExperiment_M, () => import('./oscilloscope.js').then((m) => m.OscilloscopeExperiment)),
   E(RlcExperiment_M, () => import('./rlc.js').then((m) => m.RlcExperiment)),
   E(PotentiometerExperiment_M, () => import('./potentiometer.js').then((m) => m.PotentiometerExperiment)),
   E(HallExperiment_M, () => import('./hall.js').then((m) => m.HallExperiment)),
   E(HelmholtzExperiment_M, () => import('./helmholtz.js').then((m) => m.HelmholtzExperiment)),
   E(HysteresisExperiment_M, () => import('./hysteresis.js').then((m) => m.HysteresisExperiment)),
+  E(PendulumExperiment_M, () => import('./pendulum.js').then((m) => m.PendulumExperiment)),
+  E(AirTrackExperiment_M, () => import('./airtrack.js').then((m) => m.AirTrackExperiment)),
+  E(StringWaveExperiment_M, () => import('./stringwave.js').then((m) => m.StringWaveExperiment)),
   E(YModulusExperiment_M, () => import('./ymodulus.js').then((m) => m.YModulusExperiment)),
   E(TrifilarExperiment_M, () => import('./trifilar.js').then((m) => m.TrifilarExperiment)),
   E(StokesExperiment_M, () => import('./stokes.js').then((m) => m.StokesExperiment)),
+  E(SurfaceExperiment_M, () => import('./surface.js').then((m) => m.SurfaceExperiment)),
   E(SoundExperiment_M, () => import('./sound.js').then((m) => m.SoundExperiment)),
   E(ThermCondExperiment_M, () => import('./thermcond.js').then((m) => m.ThermCondExperiment)),
   E(FranckHertzExperiment_M, () => import('./franckhertz.js').then((m) => m.FranckHertzExperiment)),
+  E(ExpansionExperiment_M, () => import('./expansion.js').then((m) => m.ExpansionExperiment)),
+  E(GammaExperiment_M, () => import('./gamma.js').then((m) => m.GammaExperiment)),
+  E(EMRatioExperiment_M, () => import('./emratio.js').then((m) => m.EMRatioExperiment)),
+  E(MillikanExperiment_M, () => import('./millikan.js').then((m) => m.MillikanExperiment)),
 ];

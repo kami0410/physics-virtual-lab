@@ -10,6 +10,7 @@
 | [KaTeX](https://github.com/KaTeX/KaTeX) | 0.19 | MIT | 公式排版（含字体） |
 | [IBM Plex Mono](https://github.com/IBM/plex)（经 @fontsource 打包） | 5.3 | SIL OFL 1.1 | 读数、数据表等宽字体 |
 | [spice-ts](https://github.com/mfiumara/spice-ts)（`@spice-ts/core`，Copyright (c) 2025-present Mattia Fiumara） | 0.4.0 | MIT | 电路仿真引擎（SPICE 网表、梯形积分瞬态分析、直流工作点）。示波器、RC/RLC 暂态等交流实验用它计算电路；只在进入这些实验时才加载。`src/core/spice.js` 负责把接线转成网表并用打靶法求周期稳态 |
+| [Anthropic TypeScript SDK](https://github.com/anthropics/anthropic-sdk-typescript)（`@anthropic-ai/sdk`） | 1.14.0 | Apache-2.0（1.0 之前的部分为 MIT，两份许可全文都随程序附上） | AI 助教接入 Claude 时使用（流式输出、工具调用）。只有学生在助教设置里选了 Claude 并发起提问时才加载；OpenAI 兼容格式与 Gemini 格式由 `src/core/ai/providers.js` 直接用 fetch 实现，不依赖其他 SDK |
 
 构建时，这些组件的版权与许可全文会自动写入 `index.html` 开头的注释。多文件版还会另外生成 `THIRD-PARTY-LICENSES.txt`（见 `vite.config.js` 里的 `licenseNotice`）。
 
@@ -33,6 +34,14 @@
 - **玻璃目录数据**：[refractiveindex.info](https://refractiveindex.info) 数据库（CC0），即 SCHOTT、OHARA、CDGM 厂商的 Zemax 目录（经 Optica Viva 整理）。
 - **带限角谱法**：K. Matsushima, T. Shimobaba, *Band-Limited Angular Spectrum Method for Numerical Simulation of Free-Space Propagation in Far and Near Fields*, Opt. Express 17, 19662 (2009)（`src/physics/wavefield.js`）。
 - **虹的笛卡儿理论**、光栅方程、单次 FFT 菲涅耳变换：标准公式，由 `tests/physics-tools.mjs` 做数值验证。
+- **空气黏度**：Sutherland 公式（η₀ = 1.716×10⁻⁵ Pa·s，T₀ = 273.15 K，S = 110.4 K）；**坎宁汉滑移修正**常数 b = 8.23×10⁻³ Pa·m，即教材常用的 6.17×10⁻⁶ m·cmHg（`src/physics/millikan.js`）。
+- **单摆大角度周期**：用算术–几何平均（AGM）计算第一类完全椭圆积分，T = 2π√(L/g) / AGM(1, cos(θ₀/2))（`src/physics/pendulum.js`）。
+- **导电纸电场**：∇·(σ∇V)=0 的 SOR 迭代解，电极边界用 Shortley–Weller 非等距差分（`src/physics/laplace.js`），与同轴电极的 ln r 解析解对照验证。
+- **钢丝弦的驻波**：受迫振动的模式叠加，抗弯刚度按 Euler–Bernoulli 梁的色散关系 ω² = (T/μ)k² + (EI/μ)k⁴（`src/physics/string.js`）。
+- **储气瓶放气**：开口系统能量方程（流出气体带走焓）+ 孔口流量公式 + 牛顿冷却（`src/physics/gasvessel.js`），在不传热的极限下精确给出 γ。
+- **电子在磁场中的轨道**：Boris 推进算法（J. P. Boris, *Relativistic plasma simulation — optimization of a hybrid code*, Proc. 4th Conf. Num. Sim. Plasmas, 1970），相对论形式，磁场用上面的电流环精确解（`src/physics/electronorbit.js`）。
+- **水的表面张力**：IAPWS《Revised Release on Surface Tension of Ordinary Water Substance》（2014）推荐式 σ = 235.8 mN/m·τ^1.256·(1 − 0.625τ)；吊环处的弯月面按二维拉普拉斯—杨方程的解析解 h = 2ℓc·sin(ψ/2)（`src/physics/surface.js`）。
+- **气垫导轨**：气膜黏性阻力按 F = −bv（b ≈ ηA/δ）取解析解推进；一维碰撞按恢复系数公式（动量严格守恒）；光电门挡光时刻在子步内线性插值（`src/physics/airtrack.js`）。
 - 菲涅耳公式、马吕斯定律、贝塞尔函数、斯托克斯–穆勒矩阵等都是标准物理公式，由 `tests/physics.mjs` 做数值验证。
 
 ## 参考过思路的开源项目（未复制代码）

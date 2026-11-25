@@ -10,8 +10,10 @@ import { ObsView } from './View.js';
 import { Quality } from './Quality.js';
 import { GPU } from './gpu.js';
 import { Coax } from './Coax.js';
+import { Tutor } from './Tutor.js';
 
 class AbortRun extends Error {}
+class ReplaySkip extends Error {}
 
 const svg = (d) => `<svg class="i" viewBox="0 0 16 16">${d}</svg>`;
 export const I = {
@@ -23,6 +25,7 @@ export const I = {
   reset: svg('<path d="M3 8a5 5 0 1 0 1.6-3.7"/><path d="M3 2.5V5h2.5"/>'),
   cam: svg('<rect x="2" y="5" width="9" height="7" rx="1"/><path d="m11 7.5 3-1.8v5.6l-3-1.8"/>'),
   tag: svg('<path d="M2.5 2.5h5l6 6-5 5-6-6z"/><circle cx="5.3" cy="5.3" r="1"/>'),
+  tutor: svg('<path d="M3 12.5V4.5a1.5 1.5 0 0 1 1.5-1.5h7A1.5 1.5 0 0 1 13 4.5v5a1.5 1.5 0 0 1-1.5 1.5H6.5L3 13.5z"/><path d="M6 6.2h4M6 8.4h2.6"/>'),
   rays: svg('<path d="M2 8h12M2 4.5 8 8l6 3.5M2 11.5 8 8l6-3.5"/>'),
 };
 
@@ -68,6 +71,8 @@ export class App {
     for (const spec of this.exp.tables()) this.tables.push(new DataTable(spec, this));
     this.renderShelf();
     this.renderPlaceMode();
+    this.tutor = new Tutor(this);
+    this.tutor.mount(this.page.querySelector('[data-a=tutor]'));
     this.renderSteps();
     this.renderTables();
     this.renderInspector();
@@ -106,6 +111,7 @@ export class App {
         <div class="tb-group">
           <button class="btn primary" data-a="runall" title="从当前步骤开始自动完成全部实验">${I.play}一键运行</button>
           <button class="btn" data-a="runstep" title="自动完成当前步骤">${I.step}<span class="lb">自动完成本步</span></button>
+          <button class="btn tutor-btn" data-a="tutor" title="助教：看看现在哪里不对，或者问问题">${I.tutor}<span class="lb">助教</span></button>
           <select data-a="speed" title="演示速度"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select>
           <select data-a="quality" title="画质：自动根据设备性能调节观察窗分辨率和三维像素比"><option value="auto">画质 自动</option><option value="high">画质 高</option><option value="mid">画质 中</option><option value="low">画质 低</option></select>
         </div>
@@ -347,6 +353,7 @@ export class App {
   }
 
   place(comp, opts = {}) {
+    if (!comp.placed && !this.running) this.tutor && this.tutor.event(`把「${comp.name}」放上实验台`);
     let { pos, slot, silent } = opts;
     if ((opts.table || opts.exact) && comp.zone !== 'rail' && comp.zone !== 'none') pos = { table: opts.table, exact: opts.exact };
     if (comp.placed) return true;
@@ -399,6 +406,7 @@ export class App {
 
   remove(comp) {
     if (!comp.placed || comp.fixed) return;
+    if (!this.running) this.tutor && this.tutor.event(`把「${comp.name}」取下放回器材柜`);
     if (comp.slot) { const z = this.zones.find((z) => z.id === comp.slot); if (z) z.occupant = null; comp.slot = null; }
     this.stage.scene.remove(comp.root);
     if (comp.labelObj) comp.labelObj.element.remove(); // CSS2DRenderer 不会清理已脱离场景的标签
@@ -470,15 +478,17 @@ export class App {
         );
       }
       descs.push(...(c.controls ? c.controls() : []));
+      this.tutor && this.tutor.seed(c, descs);
       for (const d of descs) {
-        const w = buildControl(d, () => this.changed());
+        const w = buildControl(d, () => { this.changed(); this.tutor && this.tutor.track(c, d); });
         this.inspEl.append(w.el); this.ctlRefreshers.push(w.refresh);
       }
     }
     if (global.length) {
+      this.tutor && this.tutor.seed('global', global);
       this.inspEl.append(h('div', 'ph', '<span>测量与读数</span>'));
       for (const d of global) {
-        const w = buildControl(d, () => this.changed());
+        const w = buildControl(d, () => { this.changed(); this.tutor && this.tutor.track('global', d); });
         this.inspEl.append(w.el); this.ctlRefreshers.push(w.refresh);
       }
     }
@@ -713,6 +723,7 @@ export class App {
   }
 
   checkSteps() {
+    this.tutor && this.tutor.tick();
     if (this.stepIdx >= this.steps.length) return;
     const s = this.steps[this.stepIdx];
     let ok = false;
@@ -728,6 +739,7 @@ export class App {
   completeStep(i, skipped = false) {
     if (this.stepDone[i]) return;
     this.stepDone[i] = true;
+    this.tutor && this.tutor.event(`${skipped ? '跳过' : this.running ? '自动完成' : '完成'}第 ${i + 1} 步「${this.steps[i].title}」`);
     if (!skipped) this.toast(`完成：${this.steps[i].title}`, 'ok');
     if (i === this.stepIdx) {
       while (this.stepIdx < this.steps.length && this.stepDone[this.stepIdx]) this.stepIdx++;
@@ -770,10 +782,10 @@ export class App {
         this.say(`第 ${i + 1} 步：${s.title}`);
         await this.wait(500);
         if (s.auto) await s.auto();
-        // 等待检查通过
-        let t = 0;
-        while (s.check && !s.check() && t < 6000) { await this.wait(100, true); t += 100; }
-        if (s.check && !s.check()) { this.toast(`第 ${i + 1} 步未能自动完成，请手动调节`, 'warn'); break; }
+        // 等待检查通过；不通过（多半是前面的设置被学生改动过）就先恢复前面的设置再试一次
+        let ok = await this.waitCheck(s, 6000);
+        if (!ok) ok = await this.recover(i);
+        if (!ok) { this.toast(`第 ${i + 1} 步未能自动完成，打开助教看看哪里不对`, 'warn'); this.tutor && this.tutor.onAutoFail(); break; }
         this.completeStep(i);
         await this.wait(400);
       }
@@ -789,9 +801,47 @@ export class App {
     }
   }
 
-  checkAbort() { if (this._abort) throw new AbortRun(); }
+  /** 等待条件成立（实时最多 ms 毫秒），超时返回 false；自动操作里的等待都应该有上限，避免卡死 */
+  async until(cond, ms = 90000) {
+    const t0 = performance.now();
+    while (!cond()) { if (performance.now() - t0 > ms) return false; await this.wait(60, true); this.checkAbort(); }
+    return true;
+  }
+  async waitCheck(s, ms) {
+    let t = 0;
+    while (s.check && !s.check() && t < ms) { await this.wait(100, true); t += 100; }
+    return !s.check || !!s.check();
+  }
+  /**
+   * 自动完成某步失败后的恢复：重放前面各步的自动操作，把被改乱的仪器设置恢复（只重放“调节类”操作：
+   * 一旦某步要记录数据或做数据处理就跳过该步；数据表最后恢复原样），然后重做本步。
+   * 实验也可以给步骤写 recover() 自己处理。
+   */
+  async recover(i) {
+    const s = this.steps[i];
+    this.say(`第 ${i + 1} 步没对上：先把前面的设置恢复，再试一次`);
+    const saved = this.tables.map((t) => JSON.stringify(t.rows)), ana = this.analysisDone;
+    try {
+      if (s.recover) await s.recover();
+      else for (let j = 0; j < i; j++) {
+        const sj = this.steps[j];
+        if (!sj.auto || sj.noReplay) continue;
+        this._replay = true; this._replaySkip = false;
+        const timer = setTimeout(() => (this._replaySkip = true), 25000);
+        try { await sj.auto(); } catch (err) { if (!(err instanceof ReplaySkip)) throw err; } finally { clearTimeout(timer); this._replay = false; this._replaySkip = false; }
+      }
+    } finally {
+      this._replay = false;
+      this.tables.forEach((t, k) => { const r = saved[k]; if (JSON.stringify(t.rows) !== r) { t.rows = JSON.parse(r); t.changed(); } });
+      this.analysisDone = ana;
+    }
+    this.say(`第 ${i + 1} 步：${s.title}`);
+    if (s.auto) await s.auto();
+    return this.waitCheck(s, 6000);
+  }
+  checkAbort() { if (this._abort) throw new AbortRun(); if (this._replaySkip) throw new ReplaySkip(); }
   wait(ms, raw = false) {
-    return new Promise((res, rej) => setTimeout(() => (this._abort && this.running ? rej(new AbortRun()) : res()), raw ? ms : ms / this.speed));
+    return new Promise((res, rej) => setTimeout(() => (this._abort && this.running ? rej(new AbortRun()) : this._replaySkip ? rej(new ReplaySkip()) : res()), raw ? ms : ms / this.speed));
   }
   /** 动画地把数值从当前值调到目标值 */
   async tween(get, set, to, ms = 800) {
@@ -802,6 +852,7 @@ export class App {
     await new Promise((res, rej) => {
       const step = () => {
         if (this._abort) return rej(new AbortRun());
+        if (this._replaySkip) return rej(new ReplaySkip());
         const k = Math.min(1, (performance.now() - t0) / dur);
         const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
         set(from + (to - from) * e);
@@ -876,6 +927,7 @@ export class App {
     for (const b of t.spec.buttons || []) {
       const btn = h('button', 'btn ' + (b.primary !== false ? 'primary' : ''), b.label);
       btn.onclick = () => {
+        this.tutor && this.tutor.event(`点了「${t.spec.title}」的「${b.label}」`);
         t.selfRead = this.readSelf && !this.running; t.pended = 0;
         try { b.onClick(t); } finally { t.selfRead = false; }
         if (t.pended && (this._readHint = (this._readHint || 0) + 1) <= 3) this.toast('已记下这一组。请读仪器，把读数填进表格中高亮的空格', 'ok');
@@ -899,6 +951,7 @@ export class App {
   /** 自动运行时：切换到表并点击第 btn 个记录按钮 */
   async record(id, btn = 0) {
     this.checkAbort();
+    if (this._replay) throw new ReplaySkip(); // 恢复设置时不重复记录数据
     const i = this.tables.findIndex((t) => t.id === id);
     if (this.curTable !== this.tables[i]) this.showTable(i);
     const t = this.tables[i];
@@ -972,6 +1025,7 @@ export class App {
   }
 
   showAnalysis() {
+    if (this._replay) throw new ReplaySkip();
     const res = this.computeAnalysis();
     const ans = res.ok && res.answers && res.answers.length ? res.answers : null;
     const key = this.dataKey();

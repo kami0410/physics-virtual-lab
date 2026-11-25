@@ -311,7 +311,7 @@ export class TrifilarExperiment {
     this.stopDisk(); await a.wait(200);
     this.release(true); await a.wait(1200);
     this.auto = { N: NP, phase: 'arm' };
-    while (this.auto) await a.wait(120);
+    if (!(await a.until(() => !this.auto))) { this.auto = null; return; }
     await a.record('per');
   }
   steps() {

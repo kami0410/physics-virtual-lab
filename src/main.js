@@ -87,7 +87,7 @@ function renderHome() {
         <div class="eyebrow">大学物理实验 · 三维仿真</div>
         <h1>大学物理实验<br><em>虚拟仿真</em>实验室</h1>
         <p>从器材柜取出仪器，自己摆放、调节、接线，读数并记录，最后完成数据处理与实验报告。光学实验要共轴、调焦、对准；电学实验要选量程、连电路、注意安全。卡住时可以让某一步自动完成，或者用“一键运行”看完整的规范操作。每次开始实验，待测样品的参数都会重新随机生成。</p>
-        <div class="facts"><span><b>${n}</b>个实验项目</span><span><b>15</b>类自研物理计算模型</span><span><b>2</b>个开放工作台</span><span>电脑、手机浏览器直接打开，可离线运行</span></div>
+        <div class="facts"><span><b>${n}</b>个实验项目</span><span><b>23</b>类自研物理计算模型</span><span><b>2</b>个开放工作台</span><span>电脑、手机浏览器直接打开，可离线运行</span></div>
       </div>
       <div class="eyepiece"><canvas id="heroCv" width="272" height="272"></canvas><div class="cap">He-Ne 632.8 nm · 等倾干涉 · 实时计算</div></div>
     </header>

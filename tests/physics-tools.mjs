@@ -323,5 +323,102 @@ for (const lam of [656.3, 430]) {
   }
 }
 
+// ---------- 单摆：椭圆积分精确周期、级数、数值积分三者一致 ----------
+{
+  const { periodExact, Pendulum, equivLength } = await import('../src/physics/pendulum.js');
+  const D = Math.PI / 180, T0 = 2 * Math.PI;
+  near('单摆小角极限 T→2π√(L/g)', periodExact(1, 1, 1e-6), T0, 1e-9);
+  for (const a of [5, 20, 60]) { const th = a * D; near(`单摆 ${a}° 精确周期 ≈ 级数 1+θ²/16+11θ⁴/3072`, periodExact(1, 1, th) / T0, 1 + th * th / 16 + 11 * th ** 4 / 3072, a < 30 ? 2e-6 : 5e-4); }
+  near('单摆 90° 精确周期 = 1.18034 T₀（K(1/√2)）', periodExact(1, 1, Math.PI / 2) / T0, 1.180340599, 1e-8);
+  const p = new Pendulum({ Leq: 1, g: 9.8, gamma: 0 }); p.th = 30 * D; const ts = [];
+  p.step(40, (t) => ts.push(t));
+  near('单摆 RK4 积分周期 = 椭圆积分精确值（30°）', (ts[ts.length - 1] - ts[0]) / (ts.length - 1), periodExact(1, 9.8, 30 * D), 1e-6);
+  near('单摆能量守恒（无阻尼 40 s 后振幅不变）', p.amp / D, 30, 1e-4);
+  near('复摆等效摆长 L + 2r²/5L', equivLength(1, 0.01), 1.00004, 1e-12);
+}
+
+{
+  const { FieldSheet, SDF, coaxV, coaxR } = await import('../src/physics/laplace.js');
+  const r1 = 8, r2 = 60, V0 = 10;
+  const f = new FieldSheet({ x0: -62, x1: 62, y0: -62, y1: 62, n: 121, electrodes: [{ sdf: SDF.circle(0, 0, r1), V: V0 }, { sdf: SDF.outside(0, 0, r2), V: 0 }] });
+  f.solve({ tol: 1e-8 });
+  let emax = 0;
+  for (const r of [12, 20, 30, 45]) for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4 + 0.3; emax = Math.max(emax, Math.abs(f.at(r * Math.cos(a), r * Math.sin(a)) - coaxV(r, r1, r2, V0))); }
+  check('导电纸同轴电极：SOR + Shortley–Weller 数值解与 ln r 解析解相差 < 0.02 V', emax < 0.02, `最大偏差 ${emax.toFixed(4)} V`);
+  near('同轴等势线半径反解 coaxR(coaxV(r)) = r', coaxR(coaxV(23, r1, r2, V0), r1, r2, V0), 23, 1e-9);
+  const pl = new FieldSheet({ x0: 0, x1: 10, y0: 0, y1: 10, n: 41, electrodes: [{ sdf: SDF.rect(-1, -1, 1, 11), V: 6 }, { sdf: SDF.rect(9, -1, 11, 11), V: 0 }], inside: (x, y) => x >= 0 && x <= 10 && y >= 0 && y <= 10 });
+  pl.solve({ tol: 1e-10 });
+  near('平行板电极（纸边绝缘）：电位沿 x 线性分布', pl.at(5, 3.7), 3, 1e-4);
+}
+{
+  const M = await import('../src/physics/millikan.js');
+  near('空气黏度（Sutherland）η(20 °C) ≈ 1.813×10⁻⁵ Pa·s', M.airEta(20) * 1e5, 1.813, 0.004);
+  const env = { d: 5e-3, rho: 981, Tc: 22, p: 101300 };
+  const a = 0.9e-6, q = 4 * M.E0, U = M.balanceU({ a, q, ...env });
+  near('密立根：平衡电压下收尾速度为零', M.dropV({ a, q, U, ...env }), 0, 1e-12);
+  const v = M.dropV({ a, q, U: 0, ...env }), tg = 2e-3 / v, qs = M.chargeStatic({ U, tg, l: 2e-3, ...env });
+  check('密立根：教科书公式算出的 q 与真值相差在 0.2%–2% 之间（略去浮力与黏度修正的系统误差）', qs / q > 1.002 && qs / q < 1.02, `q/q真 = ${(qs / q).toFixed(4)}`);
+  check('密立根：典型油滴平衡电压 100–400 V、下落 2 mm 用时 8–40 s', U > 100 && U < 400 && tg > 8 && tg < 40, `U = ${U.toFixed(0)} V, t = ${tg.toFixed(1)} s`);
+  near('密立根：布朗运动 1 s 内的方均根位移 √(2D·1 s) ≈ 5 μm（0.9 μm 油滴，D = kT/6πη′a）', Math.sqrt(2 * M.diffusion({ a, Tc: 22, p: 101300 })) * 1e6, 5.2, 0.4);
+}
+
+{
+  const { StringModel } = await import('../src/physics/string.js');
+  const s = new StringModel({ d: 0.3e-3, T: 9.794, L: 0.5, E: 1e-30 });
+  near('弦振动：无刚度时 f_n = n/(2L)·√(T/μ)', s.freq(3), (3 / (2 * 0.5)) * Math.sqrt(9.794 / s.mu), 1e-9);
+  near('弦振动：共振弦长 L_n = nλ/2', s.resonantL(4, 400), (4 / 2) * (Math.sqrt(9.794 / s.mu) / 400), 1e-12);
+  const k = new StringModel({ d: 0.3e-3, T: 4.9, L: 0.5 }), kk = (2 * Math.PI * 400) / k.v0;
+  near('钢丝抗弯刚度：共振时 fλ/√(T/μ) ≈ √(1 + EI k²/T)', (400 * 2 * k.resonantL(1, 400)) / k.v0, Math.sqrt(1 + (k.EI * kk * kk) / 4.9), 2e-4);
+  k.L = k.resonantL(3, 400); const xs = Array.from({ length: 101 }, (_, i) => (k.L * i) / 100);
+  const a = k.amps(400, xs), node = a[Math.round(100 / 3)], anti = a[Math.round(100 / 6)];
+  check('弦振动：共振时波节处振幅 < 波腹处的 5%', node < 0.05 * anti, `波节/波腹 = ${(node / anti).toFixed(4)}`);
+  k.L *= 1.004; const b = Math.max(...k.amps(400, xs.map((x) => x * 1.004)));
+  near('弦振动：弦长偏离 ζ（0.4%）时振幅降到约 1/√2', b / Math.max(...a), Math.SQRT1_2, 0.03);
+}
+{
+  const { GasVessel, gammaOf } = await import('../src/physics/gasvessel.js');
+  const run = (top, adiabatic = false) => { const g = new GasVessel({ V: 0.01, Tw: 293.15, p0: 101300, tauH: 40 }); g.inflow = 0.021; g.step(1.2); g.inflow = 0; g.step(400); const p1 = g.p; if (adiabatic) g.tauH = 1e9; g.valve = true; g.step(top); g.valve = false; g.tauH = 40; g.step(500); return gammaOf(g.p0, p1, g.p); };
+  near('比热容比：瓶壁不传热（τ 很大）且放完气时关阀，γ 测得值 = 1.402', run(0.8, true), 1.402, 0.002);
+  near('比热容比：正常传热、放气声结束时关阀，γ 略小于真值（0.2%–0.6%）', run(0.5), 1.396, 0.003);
+  check('比热容比：关阀太早（0.2 s）γ 明显偏大，关阀太晚（3 s）γ 偏小', run(0.2) > 1.6 && run(3) < 1.385, `${run(0.2).toFixed(3)} / ${run(3).toFixed(3)}`);
+  const g = new GasVessel({ V: 0.01, Tw: 293.15, p0: 101300, tauH: 40 }); g.T += 1; g.step(40);
+  near('比热容比：瓶壁传热使温差按 e^(-t/τ) 衰减', g.T - 293.15, Math.exp(-1), 0.01);
+}
+{
+  const { traceOrbit, momentum, helmholtzB0, QE, ME, C0, EM } = await import('../src/physics/electronorbit.js');
+  const B = 1e-3, U = 200, o = traceOrbit({ U, coils: [], BE: [0, 0, B], start: [0, 0, 0], dir: [0, 1, 0], n: 720 });
+  near('电子轨道：均匀场中打到 D = 2p/(eB)（Boris 积分，含相对论）', -o.hitX, (2 * momentum(U)) / (QE * B), 2e-6);
+  near('电子轨道：非相对论近似 r = √(2mU/e)/B 与相对论值相差 eU/(4mc²)', momentum(U) / (QE * B) / (Math.sqrt((2 * U) / EM) / B) - 1, (QE * U) / (4 * ME * C0 * C0), 2e-6);
+  const p = o.pts, last = p[p.length - 1], r0 = momentum(U) / (QE * B);
+  near('电子轨道：Boris 推进一圈后仍在同一个圆上（能量守恒）', Math.hypot(last[0] + r0, last[1]), r0, 1e-6);
+  near('亥姆霍兹线圈中心 B₀ = (4/5)^{3/2} μ₀NI/R（与电流环精确解比较）', helmholtzB0(130, 1, 0.15), (await import('../src/physics/loopfield.js')).coilsB([{ R: 0.15, N: 130, I: 1, z: -0.075 }, { R: 0.15, N: 130, I: 1, z: 0.075 }], 0, 0, 0)[2], 1e-12);
+}
+{
+  const { waterSigma, waterRho, capLength, meniscusAngle, filmForce } = await import('../src/physics/surface.js');
+  near('表面张力：IAPWS 式 σ(20 °C) = 72.74 mN/m', waterSigma(20) * 1000, 72.74, 0.01);
+  near('表面张力：IAPWS 式 σ(100 °C) = 58.91 mN/m', waterSigma(100) * 1000, 58.91, 0.01);
+  near('表面张力：水的密度 ρ(4 °C) = 1000.0 kg/m³（最大）', waterRho(3.98), 1000, 0.01);
+  const lc = capLength(waterSigma(20), waterRho(20)), D = { D1: 33.1e-3, D2: 34.96e-3, sigma: waterSigma(20), lc };
+  near('表面张力：毛细长度 ℓc = √(σ/ρg) ≈ 2.73 mm', lc * 1000, 2.728, 0.002);
+  const hs = Array.from({ length: 600 }, (_, i) => i * 1e-5), Fs = hs.map((h) => filmForce(h, D)), im = Fs.indexOf(Math.max(...Fs));
+  near('表面张力：拉力最大处 h = √2·ℓc（弯月面竖直）', hs[im] / lc, Math.SQRT2, 0.005);
+  near('表面张力：最大拉力 = πσ(D₁ + D₂)', Math.max(...Fs), Math.PI * (D.D1 + D.D2) * D.sigma, 1e-7);
+  // 直接积分二维拉普拉斯—杨方程 dψ/ds = y/ℓc²，dy/ds = sinψ（从远处指数衰减的液面出发），检验 h = 2ℓc·sin(ψ/2)
+  let y = 1e-6 * lc, ps = y / lc; const ds = lc / 4000, f = (y, ps) => [Math.sin(ps), y / (lc * lc)];
+  while (ps < 1.1) { const k1 = f(y, ps), k2 = f(y + (ds / 2) * k1[0], ps + (ds / 2) * k1[1]), k3 = f(y + (ds / 2) * k2[0], ps + (ds / 2) * k2[1]), k4 = f(y + ds * k3[0], ps + ds * k3[1]); y += (ds / 6) * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0]); ps += (ds / 6) * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1]); }
+  near('表面张力：积分拉普拉斯—杨方程得到的弯月面角与 h = 2ℓc·sin(ψ/2) 一致', meniscusAngle(y, lc), ps, 2e-3);
+}
+{
+  const { AirTrack, Glider, collide, G } = await import('../src/physics/airtrack.js');
+  const one = (v, x0, opt = {}) => { const t = new AirTrack({ b: 0, ...opt }); const g = new Glider({ x: x0 }); g.v = v; t.gliders.push(g); return [t, g]; };
+  { const [t, g] = one(0.4123, 0.2); t.step(2); near('气垫导轨：光电门测得 Δt = Δx/v（挡光时刻插值，与步长无关）', t.gates[0].log[0].dt, g.dx / 0.4123, 1e-12); }
+  { const [t, g] = one(-0.3, 1.3); t.step(3); check('气垫导轨：向左运动也按两齿前沿间距计时', Math.abs(t.gates[1].log[0].dt - g.dx / 0.3) < 1e-12 && t.gates[1].log[0].dir === -1); }
+  { const t = new AirTrack({ b: 0 }); t.e = 0.97; const a = new Glider({ m: 0.28, x: 0.2 }), b = new Glider({ m: 0.18, x: 0.75 }); a.v = 0.4; t.gliders.push(a, b); t.step(0.9); const [v1, v2] = collide(0.28, 0.4, 0.18, 0, 0.97);
+    near('气垫导轨：碰撞前后动量严格守恒', a.m * a.v + b.m * b.v, 0.28 * 0.4, 1e-14); near('气垫导轨：碰后速度符合恢复系数 e', (b.v - a.v) / 0.4, 0.97, 1e-12); near('气垫导轨：与一维碰撞公式一致', a.v, v1, 1e-12); }
+  { const t = new AirTrack({ b: 2.5e-3 }); t.e = 0; const a = new Glider({ m: 0.28, x: 0.2 }), b = new Glider({ m: 0.18, x: 0.75 }); a.v = 0.4; t.gliders.push(a, b); t.step(2);
+    check('气垫导轨：尼龙搭扣碰后两滑块粘在一起（阻力不同也不分开）', Math.abs(a.v - b.v) < 1e-12 && Math.abs(b.x - a.x - 0.2) < 1e-9, `${a.v} ${b.v} ${b.x - a.x}`); check('气垫导轨：完全非弹性碰撞记入碰撞事件', t.cols.length === 1); }
+  { const t = new AirTrack({ b: 2.5e-3, gates: [] }); const g = new Glider({ m: 0.18, x: 0.2 }); g.v = 0.3; t.gliders.push(g); t.step(2); near('气垫导轨：黏性阻力 v = v₀e^(−bt/m)', g.v, 0.3 * Math.exp((-2.5e-3 / 0.18) * 2), 1e-12); }
+  { const [t, g] = one(0, 1, { theta: 1e-3, gates: [] }); t.step(2); near('气垫导轨：倾斜 θ 时 x = −½g·sinθ·t²', g.x - 1, -0.5 * G * Math.sin(1e-3) * 4, 1e-12); }
+}
 console.log(fails ? `\n工具物理验证：${fails} 项未通过，${passes} 项通过` : `工具物理验证：全部 ${passes} 项通过`);
 process.exit(fails ? 1 : 0);
