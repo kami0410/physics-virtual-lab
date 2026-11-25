@@ -73,7 +73,7 @@ export class HoloExperiment {
     this._sig = ''; this._sig2 = '';
     this.speckle = this.makeSpeckle(128);
   }
-  newPlate() { this.acc = { Er: 0, Eo: 0, Ebg: 0, Emod: 0, EmodC: 0, Eint: 0 }; this.holo = null; this.expCount = 0; }
+  newPlate() { this.acc = { Er: 0, Eo: 0, Ebg: 0, Emod: 0, EmodC: 0, Eint: 0 }; this.holo = null; this.expCount = 0; this.recPose = this.recL = null; }
 
   // ---------------- 光路模型 ----------------
   on(k) { const c = this.app.comp(k); return !!(c && c.placed); }
@@ -326,7 +326,8 @@ export class HoloExperiment {
     this.clipPl = [0, 1, 2, 3, 4].map(() => new THREE.Plane());
     const ghost = (this.ghost = new THREE.Group());
     const Lr = new THREE.Vector3(E2[0] - OBJ[0], 4, E2[1] - OBJ[1]).normalize(); // 记录时的照明方向
-    const gmat = (opt) => new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, clippingPlanes: this.clipPl, ...opt });
+    // depthTest: false —— 再现光实际是从干板射向眼睛的，留在原处的真实物体挡不住它；也避免与物体表面重合处闪烁
+    const gmat = (opt) => new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false, clippingPlanes: this.clipPl, ...opt });
     const faceN = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
     const gcube = new THREE.Mesh(new THREE.BoxGeometry(CUBE.s, CUBE.s, CUBE.s), [3, 4, 1, 6, 2, 5].map((n, i) => {
       const nv = new THREE.Vector3(...faceN[i]).applyAxisAngle(new THREE.Vector3(0, 1, 0), CUBE.rot);
@@ -341,6 +342,7 @@ export class HoloExperiment {
     // 每次渲染前按相机位置更新“眼睛—干板四边”构成的视锥：锥外和干板前方的部分被裁掉
     const upd = (r, sc, cam) => this.updClip(cam.position);
     gcube.onBeforeRender = upd; gball.onBeforeRender = upd;
+    gcube.renderOrder = gball.renderOrder = 10;
     ghost.visible = false; scene.add(ghost);
 
     // 光束
@@ -386,8 +388,10 @@ export class HoloExperiment {
     if (this.shOpen) { this.shOpen = false; this.app.toast('快门原来是常开的，已先关闭', 'warn'); }
     if (!this.slotHas('plate')) this.app.toast('干板架上没有干板', 'warn');
     this.expLeft = this.tSet; this.expCount++;
-    const oc = this.app.comp('obj');
-    if (oc.placed) this.recPose = { x: oc.root.position.x, z: oc.root.position.z, rot: oc.root.rotation.y };
+    // 记下曝光时物体的位姿和照明方向：再现像永远是“那一刻”的物体，之后移动、转动、拿走物体都不影响它
+    const oc = this.app.comp('obj'), u = this.optics().uObj;
+    this.recPose = oc.placed ? this.objPose() : null;
+    this.recL = u ? u.clone() : null;
     this.app.changed();
   }
 
@@ -578,13 +582,18 @@ export class HoloExperiment {
     return { E, f, proj, F };
   }
 
-  /** 画出物体的灰度图（激光照明的明暗） */
-  drawScene(ctx, W, Hh, cam) {
+  /** 物体当前的位姿（没放时取标准位置） */
+  objPose() { const oc = this.app.comp('obj'), p = this.pos('obj'); return { x: p[0], z: p[1], rot: oc.placed ? oc.root.rotation.y : 0 }; }
+  /** 照明方向（指向光源）：有物光照到物体时取实际入射方向，否则取扩束镜 L2 → 物体 */
+  lightDir(pose, u) {
+    const e2 = this.pos('e2');
+    return (u ? u.clone().negate().setY(0.2) : new THREE.Vector3(e2[0] - pose.x, 4, e2[1] - pose.z)).normalize();
+  }
+
+  /** 画出物体的灰度图（按给定位姿 pose 与照明方向 L 的明暗） */
+  drawScene(ctx, W, Hh, cam, pose, L) {
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, Hh);
-    const ob = this.pos('obj'), e2 = this.pos('e2');
-    const L = (this._uObj ? this._uObj.clone().negate().setY(0.2) : new THREE.Vector3(e2[0] - ob[0], 4, e2[1] - ob[1])).normalize();
-    const O = new THREE.Vector3(ob[0], H, ob[1]);
-    const oc = this.app.comp('obj'), orot = oc.placed ? oc.root.rotation.y : 0;
+    const O = new THREE.Vector3(pose.x, H, pose.z), orot = pose.rot;
     const R0 = (v) => new THREE.Vector3(v[0] * Math.cos(orot) + v[2] * Math.sin(orot), v[1], -v[0] * Math.sin(orot) + v[2] * Math.cos(orot));
     const items = [];
     // 骰子
@@ -631,17 +640,20 @@ export class HoloExperiment {
     const v = this.vEye, g = v.ctx, W = v.W, Hh = v.H;
     if (!this.on('eye')) { g.fillStyle = '#0b0d0c'; g.fillRect(0, 0, W, Hh); v.foot('把“观察者的眼睛”放到干板架后面'); return; }
     const cam = this.camera(W, Hh);
-    const o0 = this.optics(); this._uObj = o0.uObj;
-    const oc = this.app.comp('obj');
-    const key = `${this.alpha},${this.beta},${this.on('obj')},${oc.placed ? oc.root.position.x.toFixed(2) + oc.root.position.z.toFixed(2) + oc.root.rotation.y.toFixed(3) : ''},${o0.uObj ? o0.uObj.x.toFixed(2) + o0.uObj.z.toFixed(2) : ''}`;
+    const o0 = this.optics();
+    // 真实物体：现在的位姿、现在的照明；再现像：曝光时的位姿、曝光时的照明（与真实物体无关，两者叠加）
+    const pReal = this.objPose(), lReal = this.lightDir(pReal, o0.uObj);
+    const pImg = this.recPose || pReal, lImg = this.lightDir(pImg, this.recL);
+    const f2 = (q) => `${q.x.toFixed(2)},${q.z.toFixed(2)},${q.rot.toFixed(3)}`, fv = (u) => `${u.x.toFixed(2)},${u.y.toFixed(2)},${u.z.toFixed(2)}`;
+    const key = [this.alpha, this.beta, this.on('obj'), f2(pReal), fv(lReal), f2(pImg), fv(lImg)].join('|');
     const off = this._eyeOff || (this._eyeOff = document.createElement('canvas'));
     if (this._eyeKey !== key) {
       off.width = W; off.height = Hh;
       const c2 = off.getContext('2d');
-      if (this.on('obj')) this.drawScene(c2, W, Hh, cam); else { c2.fillStyle = '#000'; c2.fillRect(0, 0, W, Hh); }
+      if (this.on('obj')) this.drawScene(c2, W, Hh, cam, pReal, lReal); else { c2.fillStyle = '#000'; c2.fillRect(0, 0, W, Hh); }
       this._shade = c2.getImageData(0, 0, W, Hh).data;
-      // 物体的再现像总是在原来的位置
-      if (!this.on('obj')) { this.drawScene(c2, W, Hh, cam); this._ghost = c2.getImageData(0, 0, W, Hh).data; } else this._ghost = this._shade;
+      this.drawScene(c2, W, Hh, cam, pImg, lImg);
+      this._ghost = c2.getImageData(0, 0, W, Hh).data;
       this._eyeKey = key;
     }
     const sh = this._shade, gh = this._ghost;
@@ -700,7 +712,7 @@ export class HoloExperiment {
       }
     }
     let foot = '';
-    if (glare > 0.05) foot = '眼睛进入了参考光束！实际实验中切勿直视激光';
+    if (glare > 0.3) foot = '眼睛进入了参考光束！实际实验中切勿直视激光'; // 只在光束边沿（光强 < 中心的约 30%）时不报警，视野角上能看到扩束镜的亮点
     else if (hasMeter) foot = '干板架上是光功率计探头';
     else if (hasPlate && this.holo && Bimg > 0.02) foot = Breal > 0.05 ? '物体仍被照明：看到的是物体本身和再现像的叠加' : '再现的虚像：移动头部观察视差';
     else if (hasPlate && this.holo) foot = o.Ir > 0 ? '再现像很暗或看不到' : '参考光没有照到全息图';
@@ -798,7 +810,8 @@ export class HoloExperiment {
         check: () => { const o = this.optics(); return this.light() && o.offR < 1.5 && o.offO < 0.8; },
         status: () => { const o = this.optics(); return this.light() ? `参考光偏 ${isFinite(o.offR) ? o.offR.toFixed(1) : '—'} cm，物光偏 ${isFinite(o.offO) ? o.offO.toFixed(1) : '—'} cm` : '激光未照到'; },
         auto: async () => {
-          this.laserOn = true; this.shOpen = true; app.changed(); await app.view('干板架');
+          // 两路光都要看得见才能对准：先拿开挡光板（乱调后可能被插上）
+          this.laserOn = true; this.shOpen = true; this.blockR = false; this.blockO = false; app.changed(); await app.view('干板架');
           this.trace();
           app.select(app.comp('m1')); await app.tween(() => this.psi1, (v) => (this.psi1 = v), this.psi1 + wrap180(this.aim('m1') - this.psi1) + gauss(0.04), 900);
           this.trace();
