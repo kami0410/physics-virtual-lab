@@ -42,6 +42,8 @@
 - **电子在磁场中的轨道**：Boris 推进算法（J. P. Boris, *Relativistic plasma simulation — optimization of a hybrid code*, Proc. 4th Conf. Num. Sim. Plasmas, 1970），相对论形式，磁场用上面的电流环精确解（`src/physics/electronorbit.js`）。
 - **水的表面张力**：IAPWS《Revised Release on Surface Tension of Ordinary Water Substance》（2014）推荐式 σ = 235.8 mN/m·τ^1.256·(1 − 0.625τ)；吊环处的弯月面按二维拉普拉斯—杨方程的解析解 h = 2ℓc·sin(ψ/2)（`src/physics/surface.js`）。
 - **气垫导轨**：气膜黏性阻力按 F = −bv（b ≈ ηA/δ）取解析解推进；一维碰撞按恢复系数公式（动量严格守恒）；光电门挡光时刻在子步内线性插值（`src/physics/airtrack.js`）。
+- **PN 结与热敏电阻**：硅禁带宽度的温度关系用 Varshni 式（Y. P. Varshni, Physica 34, 149, 1967；硅的参数 1.170 eV、4.73×10⁻⁴ eV/K、636 K）；正向电流含扩散与势垒区复合两部分；NTC 热敏电阻用 B 值公式加小二次项（`src/physics/semi.js`）。
+- **塞曼效应**：汞 546.1 nm（7³S₁ → 6³P₂）9 条分量的位置由朗德因子计算，相对强度用 Condon–Shortley 的 J → J+1 跃迁强度公式；e/m、c 取 CODATA 2018 推荐值（`src/physics/zeeman.js`）。
 - 菲涅耳公式、马吕斯定律、贝塞尔函数、斯托克斯–穆勒矩阵等都是标准物理公式，由 `tests/physics.mjs` 做数值验证。
 
 ## 参考过思路的开源项目（未复制代码）

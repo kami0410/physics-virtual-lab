@@ -42,8 +42,10 @@ import * as AirTrackExperiment_M from './airtrack.meta.js';
 import * as EFieldExperiment_M from './efield.meta.js';
 import * as MillikanExperiment_M from './millikan.meta.js';
 import * as GammaExperiment_M from './gamma.meta.js';
+import * as PnExperiment_M from './pn.meta.js';
 import * as ExpansionExperiment_M from './expansion.meta.js';
 import * as EMRatioExperiment_M from './emratio.meta.js';
+import * as ZeemanExperiment_M from './zeeman.meta.js';
 
 const E = (M, load) => ({ meta: M.meta, thumb: M.thumb, load });
 export const CATALOG = [
@@ -88,6 +90,8 @@ export const CATALOG = [
   E(FranckHertzExperiment_M, () => import('./franckhertz.js').then((m) => m.FranckHertzExperiment)),
   E(ExpansionExperiment_M, () => import('./expansion.js').then((m) => m.ExpansionExperiment)),
   E(GammaExperiment_M, () => import('./gamma.js').then((m) => m.GammaExperiment)),
+  E(PnExperiment_M, () => import('./pn.js').then((m) => m.PnExperiment)),
   E(EMRatioExperiment_M, () => import('./emratio.js').then((m) => m.EMRatioExperiment)),
+  E(ZeemanExperiment_M, () => import('./zeeman.js').then((m) => m.ZeemanExperiment)),
   E(MillikanExperiment_M, () => import('./millikan.js').then((m) => m.MillikanExperiment)),
 ];

@@ -420,5 +420,28 @@ for (const lam of [656.3, 430]) {
   { const t = new AirTrack({ b: 2.5e-3, gates: [] }); const g = new Glider({ m: 0.18, x: 0.2 }); g.v = 0.3; t.gliders.push(g); t.step(2); near('气垫导轨：黏性阻力 v = v₀e^(−bt/m)', g.v, 0.3 * Math.exp((-2.5e-3 / 0.18) * 2), 1e-12); }
   { const [t, g] = one(0, 1, { theta: 1e-3, gates: [] }); t.step(2); near('气垫导轨：倾斜 θ 时 x = −½g·sinθ·t²', g.x - 1, -0.5 * G * Math.sin(1e-3) * 4, 1e-12); }
 }
+{
+  const { makeJunction, makeNTC, KB, QE, T25 } = await import('../src/physics/semi.js');
+  const j = makeJunction({ n: 1, Ir300: 0 });
+  near('PN 结：恒流压降满足 I(U_F) = I_F（牛顿迭代）', j.current(j.voltage(1e-4, 330), 330) / 1e-4, 1, 1e-6);
+  const sl = (Math.log(j.current(0.52, 300)) - Math.log(j.current(0.50, 300))) / 0.02;
+  near('PN 结：理想结 ln I–U 斜率 = e/kT', sl / (QE / (KB * 300)), 1, 1e-4);
+  const S = (j.voltage(1e-4, 340) - j.voltage(1e-4, 300)) / 40;
+  check('PN 结：恒流 100 μA 时温度灵敏度约 −2 mV/K', S < -1.6e-3 && S > -2.6e-3, `${S}`);
+  const n = makeNTC({ R25: 1e4, B: 3400, g: 0 });
+  near('热敏电阻：25 °C 时 R = R₂₅', n.R(T25) / 1e4, 1, 1e-9);
+  near('热敏电阻：R_T = R₂₅·exp[B(1/T − 1/T₂₅)]', n.R(T25 + 10) / (1e4 * Math.exp(3400 * (1 / (T25 + 10) - 1 / T25))), 1, 1e-9);
+}
+{
+  const { HG546, ringTheta, lorentz, EM_TRUE, C_LIGHT, LAM0 } = await import('../src/physics/zeeman.js');
+  check('塞曼效应：汞 546.1 nm 分裂为 3 条 π + 6 条 σ', HG546.filter((c) => c.pol === 'pi').length === 3 && HG546.filter((c) => c.pol === 'sigma').length === 6);
+  check('塞曼效应：分量位置 0、±1/2（π）与 ±1、±3/2、±2（σ）', HG546.map((c) => c.s).sort((a, b) => a - b).join(',') === '-2,-1.5,-1,-0.5,0,0.5,1,1.5,2', HG546.map((c) => c.s).join(','));
+  const sum = (p) => HG546.filter((c) => c.pol === p).reduce((a, c) => a + c.w, 0);
+  near('塞曼效应：π 与 σ 总强度相等（各向同性光源极化求和）', sum('pi') / sum('sigma'), 1, 0.01);
+  const s0 = 1 / LAM0, K = Math.floor(4e-3 * s0), d = (K + 0.5) / (2 * s0), B = 1, f = 0.12, L = lorentz(B);
+  const D2 = (k, s) => (2 * f * Math.tan(ringTheta(k, s0 + s * L, d))) ** 2;
+  const em = ((2 * Math.PI * C_LIGHT) / (d * B)) * (D2(K, 0.5) - D2(K, -0.5)) / (D2(K - 1, 0) - D2(K, 0));
+  near('塞曼效应：由圆环直径公式反求 e/m', em / EM_TRUE, 1, 3e-3);
+}
 console.log(fails ? `\n工具物理验证：${fails} 项未通过，${passes} 项通过` : `工具物理验证：全部 ${passes} 项通过`);
 process.exit(fails ? 1 : 0);
