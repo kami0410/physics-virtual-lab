@@ -159,6 +159,51 @@ for (const f of ['openai', 'anthropic']) {
   expect('设置：智谱显示中转说明', /中转/.test(r.note) && r.base === 'https://open.bigmodel.cn/api/paas/v4', JSON.stringify(r));
   await p.close();
 }
+// 代做实验模式：模拟模型每轮只接手一步、做完就“想停下”，stop 钩子应让它接着做，直到全部步骤完成；
+// postTool 钩子把进度（_progress）附在工具结果里；引导模式下代做专用工具被 preTool 钩子拦下
+{
+  const alog = [];
+  const agentSrv = http.createServer((req, res) => {
+    const H = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type, authorization', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
+    if (req.method === 'OPTIONS') { res.writeHead(204, H); return res.end(); }
+    let body = ''; req.on('data', (c) => (body += c)); req.on('end', () => {
+      const j = JSON.parse(body); alog.push(j);
+      const last = j.messages.at(-1), sys = j.messages[0].content;
+      res.writeHead(200, { ...H, 'Content-Type': 'text/event-stream' });
+      const send = (o) => res.write('data: ' + JSON.stringify(o) + '\n\n');
+      const call = (name, args = {}) => send({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'c' + alog.length, type: 'function', function: { name, arguments: JSON.stringify(args) } }] } }] });
+      if (last.role === 'user') call(/引导/.test(sys) && /试试代做工具/.test(last.content) ? 'run_analysis' : 'take_over_step');
+      else send({ choices: [{ delta: { content: '这一步做完了。' } }] });
+      res.write('data: [DONE]\n\n'); res.end();
+    });
+  });
+  await new Promise((r) => agentSrv.listen(8895, '127.0.0.1', r));
+  const { p, errs } = await setup({ format: 'openai', base: 'http://127.0.0.1:8895/v1' });
+  await p.evaluate(() => { window.__app.speed = 16; });
+  // 引导模式：run_analysis 被拦下
+  await p.click('[data-a=tutor]');
+  await p.fill('.tutor textarea', '试试代做工具');
+  await p.click('.tutor form button[type=submit]');
+  await p.waitForTimeout(2500);
+  const blocked = alog.flatMap((j) => j.messages).find((m) => m.role === 'tool');
+  expect('引导模式：run_analysis 被钩子拦下', /未执行/.test(blocked?.content || ''), String(blocked?.content).slice(0, 160));
+  // 切到代做模式，点“把整个实验做完”
+  alog.length = 0;
+  await p.click('.tt-mode [data-mode=agent]');
+  await p.waitForSelector('.tt-go');
+  await p.click('.tt-go');
+  await p.waitForFunction(() => !window.__app.tutor.busy, null, { timeout: 240000 }).catch(() => {});
+  const st = await p.evaluate(() => ({ idx: window.__app.stepIdx, n: window.__app.steps.length, mode: localStorage.getItem('tutorMode') }));
+  const conts = alog.filter((j) => /实验还没做完/.test(JSON.stringify(j.messages.at(-1)))).length;
+  const prog = alog.flatMap((j) => j.messages).filter((m) => m.role === 'tool').some((m) => /_progress/.test(m.content));
+  expect('代做模式：系统提示切换为代做', /代做实验/.test(alog[0]?.messages[0].content || ''));
+  expect('代做模式：stop 钩子让模型一步步做完全部步骤', st.idx >= st.n, `停在第 ${st.idx + 1}/${st.n} 步，请求 ${alog.length} 次`);
+  expect('代做模式：中途被提醒“还没做完”至少一次', conts >= 1, `提醒 ${conts} 次`);
+  expect('代做模式：工具结果附带 _progress', prog);
+  expect('代做模式：模式记在本机', st.mode === 'agent');
+  expect('代做模式：页面无报错', !errs.length, errs.join('; '));
+  await p.close(); agentSrv.close();
+}
 await b.close(); srv.close(); closed.close(); relay.kill();
 console.log(fails ? `\nAI 助教：${fails} 项未通过` : '\nAI 助教：全部通过');
 process.exit(fails ? 1 : 0);

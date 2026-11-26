@@ -15,6 +15,10 @@ export const DEFAULT_HOSTS = [
   'ark.cn-beijing.volces.com', 'qianfan.baidubce.com', 'api.hunyuan.cloud.tencent.com', 'api.minimaxi.com', 'api.lingyiwanwu.com', 'api.stepfun.com',
 ];
 const loop = (h) => /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/.test(h);
+// 独立运行时接受这些网页来源：离线单文件版（file:// 发来的 Origin 是 "null"）、本机页面、在线版；--origin 可以再加
+export const DEFAULT_ORIGINS = ['null', 'https://kami0410.github.io'];
+const MAX_BODY = 16 * 1024 * 1024; // 请求体上限：带截图的对话请求也远小于它，防止被灌大包吃光内存
+const MAX_HOPS = 3; // 上游重定向最多跟几次，每一跳都重新检查放行名单
 // 不转发给上游的请求头：浏览器身份相关的、逐跳的、会让上游再做一次跨域判断的
 const DROP_REQ = /^(host|origin|referer|cookie|connection|keep-alive|content-length|accept-encoding|transfer-encoding|upgrade|te|trailer|proxy-.*|sec-.*|access-control-request-.*)$/i;
 const DROP_RES = /^(content-encoding|content-length|transfer-encoding|connection|keep-alive|set-cookie|access-control-.*|strict-transport-security|alt-svc)$/i;
@@ -41,7 +45,7 @@ export function useEnvProxy() {
 /**
  * sameOrigin（内置在 Vite 开发/预览服务器里时）：只接受本页面自己发来的同源请求，不发跨域许可；
  * 因此也可以转发到本机的 http 服务（如 127.0.0.1:3425 上不支持跨域的本地模型），别的网站借不到它。
- * @param {{allow?: string[], any?: boolean, sameOrigin?: boolean, log?: (line: string) => void}} o
+ * @param {{allow?: string[], origins?: string[], any?: boolean, sameOrigin?: boolean, log?: (line: string) => void}} o
  * @returns {(req: http.IncomingMessage, res: http.ServerResponse) => Promise<void>} req.url 为去掉前缀后的部分
  */
 export function relayHandler(o = {}) {
@@ -53,19 +57,27 @@ export function relayHandler(o = {}) {
     if (ALLOW.has(u.host.toLowerCase()) || ALLOW.has(u.hostname.toLowerCase())) return u.protocol === 'https:' || loop(u.hostname);
     return !!o.any && u.protocol === 'https:' && !loop(u.hostname);
   };
+  const ORIGINS = new Set([...DEFAULT_ORIGINS, ...(o.origins || []).map((s) => s.trim().replace(/\/+$/, '').toLowerCase()).filter(Boolean)]);
+  const okOrigin = (org) => {
+    if (org == null) return true; // 不是浏览器发的（命令行、本机程序）：本来就不受跨域限制
+    const v = String(org).toLowerCase();
+    if (ORIGINS.has(v)) return true;
+    try { return loop(new URL(v).hostname); } catch { return false; }
+  };
   const cors = (req) => (o.sameOrigin ? {} : {
-    'Access-Control-Allow-Origin': '*',
+    // 只回显放行的来源，不再对所有网站发 *：别的网站不能借本机的中转转发请求、探测内网
+    ...(okOrigin(req.headers.origin) && req.headers.origin ? { 'Access-Control-Allow-Origin': req.headers.origin, Vary: 'Origin' } : {}),
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': req.headers['access-control-request-headers'] || '*',
+    // 来源已经限定为本项目的页面，各家 SDK 发的请求头不尽相同，按预检所请求的回显
+    'Access-Control-Allow-Headers': req.headers['access-control-request-headers'] || 'authorization, content-type',
     'Access-Control-Allow-Private-Network': 'true',
-    'Access-Control-Expose-Headers': '*',
     'Access-Control-Max-Age': '86400',
   });
   /** 同源模式：请求必须来自本页面——Host 是本机地址（防 DNS 重绑定），带 Origin 时必须与 Host 一致 */
   const foreign = (req) => {
-    if (!o.sameOrigin) return false;
     const host = String(req.headers.host || '');
-    if (!loop(host.replace(/:\d+$/, ''))) return true;
+    if (!loop(host.replace(/:\d+$/, ''))) return true; // Host 必须是本机地址（防 DNS 重绑定）
+    if (!o.sameOrigin) return !okOrigin(req.headers.origin);
     const org = req.headers.origin;
     if (!org) return false;
     try { return new URL(org).host !== host; } catch { return true; }
@@ -73,7 +85,7 @@ export function relayHandler(o = {}) {
   const json = (req, res, code, obj) => { res.writeHead(code, { ...cors(req), 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
 
   return async (req, res) => {
-    if (foreign(req)) return json(req, res, 403, { error: { message: '内置中转只接受本页面的请求' } });
+    if (foreign(req)) return json(req, res, 403, { error: { message: o.sameOrigin ? '内置中转只接受本页面的请求' : req.headers.origin ? `中转不接受来自 ${req.headers.origin} 的请求（需要时用 --origin 放行）` : '中转只接受以本机地址访问的请求' } });
     if (req.method === 'OPTIONS') { res.writeHead(204, cors(req)); return res.end(); }
     const path = (req.url || '/').replace(/^\/+/, '');
     if (!path || path === '__relay') return json(req, res, 200, { relay: RELAY_ID, v: 1 });
@@ -83,10 +95,25 @@ export function relayHandler(o = {}) {
     const t0 = Date.now(), ac = new AbortController();
     res.on('close', () => { if (!res.writableFinished) ac.abort(); });
     try {
-      const chunks = []; for await (const c of req) chunks.push(c);
+      if (+req.headers['content-length'] > MAX_BODY) return json(req, res, 413, { error: { message: '请求太大' } });
+      const chunks = []; let size = 0;
+      for await (const c of req) { size += c.length; if (size > MAX_BODY) return json(req, res, 413, { error: { message: '请求太大' } }); chunks.push(c); }
       const headers = {}; for (const [k, v] of Object.entries(req.headers)) if (!DROP_REQ.test(k)) headers[k] = v;
       const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : Buffer.concat(chunks);
-      const go = () => fetch(target, { method: req.method, headers, body, signal: ac.signal, redirect: 'follow' });
+      // 重定向自己跟：每一跳都重新检查放行名单，上游不能把请求转到内网地址
+      const go = async () => {
+        let url = target, method = req.method, b = body;
+        for (let hop = 0; ; hop++) {
+          const r = await fetch(url, { method, headers, body: b, signal: ac.signal, redirect: 'manual' });
+          const loc = r.status >= 300 && r.status < 400 && r.headers.get('location');
+          if (!loc) return r;
+          if (hop >= MAX_HOPS) throw new Error('上游重定向次数过多');
+          const next = new URL(loc, url);
+          if (!allowed(next)) throw new Error(`上游重定向到未放行的地址 ${next.host}`);
+          if (r.status === 303 || ((r.status === 301 || r.status === 302) && method === 'POST')) { method = 'GET'; b = undefined; }
+          url = next;
+        }
+      };
       // 网络层的偶发失败（连接被重置、代理线路返回错误证书等）重试一次：请求体已经缓存，还没有收到任何应答，可以安全重发
       let up; try { up = await go(); } catch (e) { if (ac.signal.aborted) throw e; await new Promise((r) => setTimeout(r, 400)); up = await go(); }
       const out = { ...cors(req) }; up.headers.forEach((v, k) => { if (!DROP_RES.test(k)) out[k] = v; });

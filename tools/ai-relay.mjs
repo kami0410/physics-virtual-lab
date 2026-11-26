@@ -6,6 +6,7 @@
 //   node tools/ai-relay.mjs --install    设为开机自动在后台运行，并立即启动（npm run relay:install）
 //   node tools/ai-relay.mjs --uninstall  取消开机自启并停止后台中转（npm run relay:uninstall）
 //   其他选项：--port 8787  --allow 主机1,主机2  --any（放开到任意 https 主机）
+//            --origin https://你的网站（默认只接受离线版 file://、本机页面和在线版发来的请求）
 //
 // 只监听本机 127.0.0.1，默认只转发到常见的大模型服务。密钥由浏览器随请求带来，中转不保存、不记录请求内容。
 // 系统设置了 HTTPS_PROXY 时自动走代理（Node 24 起支持）。需要 Node.js 18 以上。
@@ -32,7 +33,8 @@ async function running() {
 
 function serve() {
   const allow = String(opt('--allow', '')).split(',').filter(Boolean), any = args.includes('--any');
-  const h = relayHandler({ allow, any, log: quiet ? undefined : (l) => console.log(l) });
+  const origins = String(opt('--origin', '')).split(',').filter(Boolean);
+  const h = relayHandler({ allow, origins, any, log: quiet ? undefined : (l) => console.log(l) });
   const srv = http.createServer((req, res) => { h(req, res); });
   srv.on('error', async (err) => {
     if (err.code === 'EADDRINUSE' && (await running())) { if (!quiet) console.log(`中转已经在运行（127.0.0.1:${PORT}），不用再启动。`); process.exit(0); }

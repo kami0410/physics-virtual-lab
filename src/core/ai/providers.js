@@ -147,6 +147,7 @@ export async function routeOf(base) {
   return { via: 'direct' };
 }
 
+const OMIT = '（早先的工具结果已省略；需要时重新调用 get_state / get_table）';
 const parseArgs = (s) => { if (s && typeof s === 'object') return s; try { const o = JSON.parse(s || '{}'); return o && typeof o === 'object' ? o : null; } catch { return null; } };
 
 // ---------------------------------------------------------------- OpenAI Chat Completions 兼容
@@ -157,6 +158,16 @@ class OpenAIChat {
   }
   addUser(text) { this.msgs.push({ role: 'user', content: text }); }
   addToolResults(rs) { for (const r of rs) this.msgs.push({ role: 'tool', tool_call_id: r.id, content: r.result }); }
+  /** 只保留最近 keep 批工具结果的全文，更早的换成一句话：代做实验要调用上百次工具，不压缩上下文会越来越长 */
+  compact(keep = 6) {
+    let batch = 0, prev = false;
+    for (let i = this.msgs.length - 1; i >= 0; i--) {
+      const m = this.msgs[i], isT = m.role === 'tool';
+      if (isT && !prev) batch++;
+      prev = isT;
+      if (isT && batch > keep && m.content !== OMIT) m.content = OMIT;
+    }
+  }
   async step(onText, signal) {
     const { base, key, model } = this.cfg;
     const body = { model, messages: this.msgs, stream: true, tools: this.tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: schemaOf(t) } })) };
@@ -187,6 +198,14 @@ class Gemini {
   }
   addUser(text) { this.contents.push({ role: 'user', parts: [{ text }] }); }
   addToolResults(rs) { this.contents.push({ role: 'user', parts: rs.map((r) => ({ functionResponse: { name: r.name, response: { result: r.result } } })) }); }
+  compact(keep = 6) {
+    let batch = 0;
+    for (let i = this.contents.length - 1; i >= 0; i--) {
+      const ps = this.contents[i].parts || [];
+      if (!ps.some((p) => p.functionResponse)) continue;
+      if (++batch > keep) for (const p of ps) if (p.functionResponse) p.functionResponse.response = { result: OMIT };
+    }
+  }
   async step(onText, signal) {
     const { base, key, model } = this.cfg;
     const url = `${base.replace(/\/+$/, '')}/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`;
@@ -220,6 +239,14 @@ class Claude {
   }
   addUser(text) { this.msgs.push({ role: 'user', content: text }); }
   addToolResults(rs) { this.msgs.push({ role: 'user', content: rs.map((r) => ({ type: 'tool_result', tool_use_id: r.id, content: r.result, ...(r.isError ? { is_error: true } : {}) })) }); }
+  compact(keep = 6) {
+    let batch = 0;
+    for (let i = this.msgs.length - 1; i >= 0; i--) {
+      const c = this.msgs[i].content;
+      if (!Array.isArray(c) || !c.some((b) => b.type === 'tool_result')) continue;
+      if (++batch > keep) for (const b of c) if (b.type === 'tool_result') b.content = OMIT;
+    }
+  }
   async client() {
     if (this._c) return this._c;
     const { default: Anthropic } = await import('@anthropic-ai/sdk');
@@ -237,7 +264,8 @@ class Claude {
   }
   async step(onText, signal) {
     const c = await this.client(), model = this.cfg.model;
-    const params = { model, max_tokens: 16000, system: this.system, messages: this.msgs, tools: this.tools, ...(EFFORT_MODELS.test(model) ? { output_config: { effort: 'low' } } : {}) };
+    // 代做实验要连续规划几十步，推理力度调到 medium；引导模式只答一个问题，low 就够
+    const params = { model, max_tokens: 32000, system: this.system, messages: this.msgs, tools: this.tools, ...(EFFORT_MODELS.test(model) ? { output_config: { effort: this.cfg.mode === 'agent' ? 'medium' : 'low' } } : {}) };
     const fb = FALLBACK_MODELS.test(model) && !this._custom;
     const stream = fb ? c.beta.messages.stream({ ...params, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' }, { signal }) : c.messages.stream(params, { signal });
     stream.on('text', (t) => onText && onText(t));
@@ -267,11 +295,24 @@ export function makeConversation(cfg, system, tools) {
 
 // ---------------------------------------------------------------- 设置（只存在本机浏览器里）
 const LS = 'tutorAI';
+// remember = false：密钥只放在 sessionStorage（关掉页面即清除），localStorage 里不留密钥。
+// 双击打开的离线版（file://）在 Chrome / Edge 里与本机所有 file:// 页面共用 localStorage，别的本地 HTML 也读得到。
 export function loadCfg() {
-  try { const c = JSON.parse(localStorage.getItem(LS) || 'null'); if (c && c.format) return c; } catch { /* 忽略 */ }
-  return { preset: 'claude', format: 'anthropic', base: PRESETS[0].base, model: PRESETS[0].model, key: '' };
+  try {
+    const c = JSON.parse(localStorage.getItem(LS) || 'null');
+    if (c && c.format) {
+      if (c.remember === false) { let k = ''; try { k = sessionStorage.getItem(LS + 'Key') || ''; } catch { /* 忽略 */ } return { ...c, key: k }; }
+      return { remember: true, ...c };
+    }
+  } catch { /* 忽略 */ }
+  return { preset: 'claude', format: 'anthropic', base: PRESETS[0].base, model: PRESETS[0].model, key: '', remember: true };
 }
-export function saveCfg(c) { try { localStorage.setItem(LS, JSON.stringify(c)); } catch { /* 无痕模式 */ } }
+export function saveCfg(c) {
+  try {
+    if (c.remember === false) { try { sessionStorage.setItem(LS + 'Key', c.key || ''); } catch { /* 忽略 */ } localStorage.setItem(LS, JSON.stringify({ ...c, key: '' })); }
+    else { try { sessionStorage.removeItem(LS + 'Key'); } catch { /* 忽略 */ } localStorage.setItem(LS, JSON.stringify(c)); }
+  } catch { /* 无痕模式 */ }
+}
 /** 本机服务（不经中转）可以不填密钥 */
 const localNoKey = (base) => { try { const u = new URL(base); return isLoop(u.hostname) && !/^\/https?:/.test(u.pathname); } catch { return false; } };
 export const cfgReady = (c) => !!(c && c.format && c.base && c.model && (c.key || PRESETS.find((p) => p.id === c.preset)?.noKey || localNoKey(c.base)));
