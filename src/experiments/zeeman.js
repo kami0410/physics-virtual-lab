@@ -427,7 +427,8 @@ export class ZeemanExperiment {
     if (this.B < 0.3) a.toast('磁场太弱，π 成分还没有分开', 'warn');
     if (!this.polIn || pw.pi < 0.8 || pw.sigma > 0.1) a.toast('视场里还有 σ 成分：放入偏振片并转到 φ ≈ 0°，只留 π 成分', 'warn');
     const m = this.aimed();
-    if (!m || m.e > 0.02) a.toast(`叉丝没有对准要测的 π 谱线${m ? `（离最近的一条还差 ${m.e.toFixed(3)} mm）` : ''}`, 'warn');
+    if (!m) return a.toast('视场里看不到要测的 π 谱线，叉丝附近没有圆环', 'warn');
+    if (m.e > 0.02) a.toast(`叉丝没有对准要测的 π 谱线（离最近的一条还差 ${m.e.toFixed(3)} mm）`, 'warn');
     const rb = a.table('B').rows[0];
     if (isFinite(rb.B) && Math.abs(rb.B - this.Bshow) > 2) a.toast('磁场和记录的 B 不一样了：电流变过？重新读 B', 'warn');
     if (Math.abs(this.cy) > 0.05) a.toast('水平叉丝没有通过圆环中心，测出的是弦长而不是直径', 'warn');

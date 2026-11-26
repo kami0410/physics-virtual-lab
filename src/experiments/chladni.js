@@ -29,7 +29,7 @@ export class ChladniExperiment {
     this.E = rand(196, 210) * 1e9;
     const mk = (name, h0) => { const h = h0 * (1 + gauss(0.006)); return { name, h0, h, hm: Math.round((h + gauss(0.0015e-3)) * 1e6) / 1e6, zeta: rand(0.0035, 0.005), eps: [] }; };
     this.plates = { A: mk('钢板 A', 0.8e-3), B: mk('钢板 B', 1.0e-3) };
-    this.pk = null; this.on = false; // pk：振动器上装的是哪块板（'A' | 'B' | null），由拖放决定 this.f = 100; this.drive = 4; this.snd = false;
+    this.pk = null; this.on = false; this.f = 100; this.drive = 4; this.snd = false; // pk：振动器上装的是哪块板（'A' | 'B' | null），由拖放决定
     this.sx = new Float32Array(NSAND); this.sy = new Float32Array(NSAND); this.sand = 0;
     this.amp = new Float32Array(GN * GN); this._key = ''; this.acc = 0; this.dom = null;
   }

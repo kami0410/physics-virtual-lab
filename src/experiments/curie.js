@@ -26,7 +26,7 @@ export class CurieExperiment {
       { name: '2 号样品（镍锌铁氧体）', Tc: rand(135, 155), U0: rand(30, 42), Ub: rand(0.15, 0.25) },
     ];
     this.last = 0; this.power = false; this.heat = false; this.P = 0; this.fan = false;
-    this.Tf = this.Ta; this.sT = [this.Ta, this.Ta]; // 两个样品各自的温度 this.t = 0; this.hold = null; this.timeScale = 1;
+    this.Tf = this.Ta; this.sT = [this.Ta, this.Ta]; this.t = 0; this.hold = null; this.timeScale = 1; // sT：两个样品各自的温度
   }
   /** 炉膛里的样品序号（没有为 -1）；si：表格、曲线用的样品（炉里没有时取最近放进去的那个） */
   get inOven() { const z = this.app.zones && this.app.zones.find((q) => q.id === 'ovenIn'); return z && z.occupant ? +z.occupant.key.slice(4) : -1; }
