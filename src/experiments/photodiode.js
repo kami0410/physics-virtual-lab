@@ -197,22 +197,21 @@ export class PhotodiodeExperiment {
   recVI(t) {
     if (!this.needCont('rev')) return;
     const E = this.luxRead(), U = this.readU();
-    if (t.rows.some((r) => Math.abs(r.E - E) <= 2 && Math.abs(r.U - U) < 0.05)) return this.app.toast('这个照度、电压的点已经测过了', 'warn');
+    if (t.rows.some((r) => Math.abs(r.E - E) <= 2 && Math.abs(r.U - U) < 0.05)) this.app.toast('这个照度、电压的点已经测过了', 'warn');
     t.addRow({ E, U, I: this.readI() });
   }
   recLux(t) {
     if (!this.needCont('rev')) return;
     const U = this.readU();
-    if (Math.abs(U - 5) > 0.2) return this.app.toast('反向电压要保持在 5 V 左右（4.8–5.2 V）', 'warn');
     const E = this.luxRead();
-    if (t.rows.some((r) => Math.abs(r.E - E) <= 2)) return this.app.toast('这个照度已经测过了', 'warn');
-    t.addRow({ E, I: this.readI() });
+    if (t.rows.some((r) => Math.abs(r.E - E) <= 2)) this.app.toast('这个照度已经测过了', 'warn');
+    t.flagAll(t.addRow({ E, I: this.readI() }), Math.abs(U - 5) > 0.2 ? [`反向电压是 ${U.toFixed(2)} V，不是 5 V`] : []);
   }
   recVoc(t) {
     if (!this.needCont('oc')) return;
     const E = this.luxRead();
-    if (E < 1) return this.app.toast('照度为零时开路电压为零，没有意义', 'warn');
-    if (t.rows.some((r) => Math.abs(r.E - E) <= Math.max(1, 0.02 * E))) return this.app.toast('这个照度已经测过了', 'warn');
+    if (E < 1) this.app.toast('照度为零时开路电压为零，没有意义', 'warn');
+    if (t.rows.some((r) => Math.abs(r.E - E) <= Math.max(1, 0.02 * E))) this.app.toast('这个照度已经测过了', 'warn');
     t.addRow({ E, V: this.readU() });
   }
   recTr(t) {
@@ -221,14 +220,16 @@ export class PhotodiodeExperiment {
     if (!this.pulse) return a.toast('LED 要切换成方波脉冲', 'warn');
     if (this.E < 0.5) return a.toast('光源强度为零，没有信号', 'warn');
     const r = this.pulseResp();
-    if (r.A > 0.3) return a.toast('光脉冲太强：输出幅度超过 0.3 V，结上的电压变化会使结电容跟着变。把光源调弱一些', 'warn');
-    if (this.Us < 1) return a.toast('偏压太低，结电容大且随信号变化：至少加 1 V 反向偏压', 'warn');
     const tr = this.trRead();
-    if (tr < 1.5 * this.tb) return a.toast('上升沿不到 1.5 格，测量分辨率不够：把时基调快', 'warn');
-    if (tr > 6 * this.tb) return a.toast('上升沿超出 6 格，看不到平顶：把时基调慢', 'warn');
-    if (t.rows.length && Math.abs(t.rows[0].U - this.Us) > 0.02) return a.toast(`偏压要和第一行相同（${t.rows[0].U.toFixed(2)} V）`, 'warn');
-    if (t.rows.some((x) => x.RL === this.RL)) return a.toast('这个负载电阻已经测过了', 'warn');
-    t.addRow({ RL: this.RL, U: this.Us, tr: +tr.toFixed(4) });
+    if (tr > 10 * this.tb) return a.toast('上升沿超出屏幕，看不到平顶：把时基调慢', 'warn');
+    if (t.rows.some((x) => x.RL === this.RL)) a.toast('这个负载电阻已经测过了', 'warn');
+    const fl = [];
+    if (r.A > 0.3) fl.push('光脉冲太强：输出超过 0.3 V，结电容随电压变化');
+    if (this.Us < 1) fl.push('反向偏压不到 1 V，结电容大且随信号变化');
+    if (tr < 1.5 * this.tb) fl.push('上升沿不到 1.5 格，时基太慢，读数分辨率不够');
+    else if (tr > 6 * this.tb) fl.push('上升沿超过 6 格，时基太快，平顶看不全');
+    if (t.rows.length && Math.abs(t.rows[0].U - this.Us) > 0.02) fl.push(`偏压和第一行（${t.rows[0].U.toFixed(2)} V）不同`);
+    t.flagAll(t.addRow({ RL: this.RL, U: this.Us, tr: +tr.toFixed(4) }), fl);
   }
 
   // ======================= 自动操作 =======================

@@ -190,8 +190,8 @@ export class GammaExperiment {
   settled() { return Math.abs(this.gas.Ts - this.Tw) < 0.02 && Math.abs(this.gas.T - this.Tw) < 0.02; }
   rec1(t) {
     const a = this.app;
-    if (this.c2) return a.toast('放气阀 C2 开着，瓶内就是大气压', 'warn');
-    if (this.dispP < 40) return a.toast('瓶内压强太低：先打气到 100–150 mV', 'warn');
+    if (this.c2) a.toast('放气阀 C2 开着，瓶内就是大气压', 'warn');
+    if (this.dispP < 40) a.toast('瓶内压强太低：先打气到 100–150 mV', 'warn');
     if (this.c1) a.toast('进气阀 C1 没关，瓶内的气在慢慢漏掉', 'warn');
     if (!this.settled()) a.toast(`温度还没回到室温（差 ${(this.gas.Ts - this.Tw).toFixed(2)} K），压强还会变`, 'warn');
     t.addRow({ p0: this.p0 / 1000, U1: Math.round(this.dispP * 10) / 10, T1: Math.round(this.dispT * 10) / 10 });
@@ -199,8 +199,8 @@ export class GammaExperiment {
   rec3(t) {
     const a = this.app, i = t.rows.length - 1;
     if (i < 0 || !isFinite(t.rows[i].U1)) return a.toast('先记录状态Ⅰ', 'warn');
-    if (isFinite(t.rows[i].U2)) return a.toast('这一行的状态Ⅲ已经记过了：重新打气，记录新的状态Ⅰ', 'warn');
-    if (this.c2) return a.toast('放气阀还开着，关上后等温度回升再记录', 'warn');
+    if (isFinite(t.rows[i].U2)) a.toast('这一行的状态Ⅲ已经记过了：重新打气，记录新的状态Ⅰ', 'warn');
+    if (this.c2) a.toast('放气阀还开着，关上后等温度回升再记录', 'warn');
     if (!this.lastVent) return a.toast('还没有放气', 'warn');
     if (!this.settled()) a.toast(`温度还没回升到室温（差 ${(this.gas.Ts - this.Tw).toFixed(2)} K），压强还在升`, 'warn');
     t.set(i, 'U2', Math.round(this.dispP * 10) / 10); t.set(i, 'T2', Math.round(this.dispT * 10) / 10);

@@ -37,6 +37,38 @@ export function coilM(c, d) {
   return M;
 }
 
+/**
+ * 两个相同线圈不同轴时的互感（H）：数值诺依曼积分 M = μ₀/4π ∮∮ dl₁·dl₂ / |r₁ − r₂|。
+ * 发射线圈轴沿 x、中心在原点；接收线圈中心在 (d, 0, rho)（rho 为垂直导轨的横移），并绕竖直轴转过 yaw（rad）。
+ * 为抵消离散误差，返回值 = 同轴解析值 × [数值积分(实际位姿) / 数值积分(同轴)]，对正时与 coilM 完全相同。
+ */
+export function coilMoff(c, d, rho = 0, yaw = 0, n = 40) {
+  const M0 = coilM(c, d);
+  if (Math.abs(rho) < 1e-9 && Math.abs(yaw) < 1e-9) return M0;
+  const num = (rh, yw) => {
+    const r = radii(c), cs = Math.cos(yw), sn = Math.sin(yw), dp = (2 * Math.PI) / n;
+    const C = [], S = [];
+    for (let i = 0; i < n; i++) { C.push(Math.cos(i * dp)); S.push(Math.sin(i * dp)); }
+    let M = 0;
+    for (const a of r) for (const b of r) {
+      for (let i = 0; i < n; i++) {
+        // 发射圆环上的点与切向：(0, a sinφ, a cosφ)，(0, a cosφ, −a sinφ)
+        const y1 = a * S[i], z1 = a * C[i], ty1 = a * C[i], tz1 = -a * S[i];
+        for (let j = 0; j < n; j++) {
+          // 接收圆环（局部同上）绕 y 轴转 yaw 后平移
+          const lx = 0, ly = b * S[j], lz = b * C[j], tlx = 0, tly = b * C[j], tlz = -b * S[j];
+          const x2 = lx * cs + lz * sn + d, y2 = ly, z2 = -lx * sn + lz * cs + rh;
+          const tx2 = tlx * cs + tlz * sn, ty2 = tly, tz2 = -tlx * sn + tlz * cs;
+          const R = Math.hypot(x2, y2 - y1, z2 - z1);
+          M += (ty1 * ty2 + tz1 * tz2) / R;
+        }
+      }
+    }
+    return 1e-7 * M * dp * dp;
+  };
+  return (M0 * num(rho, yaw)) / num(0, 0);
+}
+
 /** 复数小工具 */
 const cx = (re, im = 0) => ({ re, im });
 const add = (a, b) => cx(a.re + b.re, a.im + b.im);

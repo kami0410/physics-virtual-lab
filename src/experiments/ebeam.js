@@ -144,14 +144,15 @@ export class ElectronBeamExperiment {
   recE(t) {
     const a = this.app;
     if (!this.power) return a.toast('电源没开', 'warn');
-    if (this.I > 0) return a.toast('测电偏转时螺线管电流要为 0', 'warn');
-    if (this.ac) return a.toast('先关掉交流偏转，只加直流偏转电压', 'warn');
-    if (this.radius() > 1) return a.toast('光点太大，先调聚焦极电压使光点最小', 'warn');
-    if (this.zeroErr() > 0.3) return a.toast(`这个加速电压下还没调零：U_y = 0 时光点不在屏中心（偏 ${this.zeroErr().toFixed(1)} mm）`, 'warn');
+    if (this.ac) return a.toast('交流偏转还开着，屏上是一条亮线，读不出光点位置', 'warn');
     const { c } = this.geom();
     if (Math.abs(c[1]) > R_SCR - 1) return a.toast('光点超出坐标格范围，减小偏转电压', 'warn');
-    if (t.rows.some((r) => r.Ua === this.Ua && r.Uy === this.Uy)) return a.toast('这一组已经记过了', 'warn');
-    t.addRow({ Ua: this.Ua, Uy: this.Uy, y: Math.round(c[1] * 10) / 10 });
+    if (t.rows.some((r) => r.Ua === this.Ua && r.Uy === this.Uy)) a.toast('这一组已经记过了', 'warn');
+    const fl = [];
+    if (this.I > 0) fl.push('螺线管里有电流，磁场使光点旋转，偏移量不再只由电场决定');
+    if (this.radius() > 1) fl.push('光点没有聚焦，位置读不准');
+    if (this.zeroErr() > 0.3) fl.push(`这个加速电压下没有调零：U_y = 0 时光点偏离中心 ${this.zeroErr().toFixed(1)} mm`);
+    t.flagAll(t.addRow({ Ua: this.Ua, Uy: this.Uy, y: Math.round(c[1] * 10) / 10 }), fl);
   }
   recF(t) {
     const a = this.app;
@@ -160,9 +161,11 @@ export class ElectronBeamExperiment {
     const i = t.rows.findIndex((r) => r.Ua === this.Ua);
     if (i < 0) return a.toast(`加速电压 ${this.Ua} V 不在表中，调到 ${UAS.join('、')} V 之一`, 'warn');
     const { h } = this.geom();
-    if (this.I <= 0 || Math.hypot(...h) > 0.25) return a.toast('亮线还没有缩成一点：还没聚焦', 'warn');
-    if (Math.abs(this.theta()) > 3 * Math.PI) return a.toast('这是第二次（或更高次）聚焦，表中记第一次聚焦的电流', 'warn');
-    t.set(i, this.dir > 0 ? 'Ip' : 'In', this.I);
+    if (this.I <= 0) a.toast('励磁电流为零', 'warn');
+    const fl = [];
+    if (Math.hypot(...h) > 0.25) fl.push('亮线还没有缩成一点，这不是聚焦电流');
+    if (Math.abs(this.theta()) > 3 * Math.PI) fl.push('这是第二次（或更高次）聚焦，表中应记第一次聚焦的电流');
+    t.set(i, this.dir > 0 ? 'Ip' : 'In', this.I); t.flagAll(i, fl);
   }
 
   // ======================= 自动操作 =======================

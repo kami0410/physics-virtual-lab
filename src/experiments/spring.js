@@ -176,14 +176,15 @@ export class SpringExperiment {
   }
   recS(t) {
     const a = this.app;
-    if (this.moving()) return a.toast('振子还在振动，先让它停下再读', 'warn');
-    if (t.rows.some((r) => r.m === this.mNom())) return a.toast('这个质量已经记过了', 'warn');
+    if (this.moving()) a.toast('振子还在振动，读数在跳动', 'warn');
+    if (t.rows.some((r) => r.m === this.mNom())) a.toast('这个质量已经记过了', 'warn');
     t.addRow({ m: this.mNom(), x: Math.round(this.reading() * 100) / 100 });
   }
   recD(t) {
     const a = this.app, s = this.timerState();
-    if (s.s !== 'done') return a.toast(s.s === 'run' ? '还在计时，等计时器停下' : '计时器没有测完：先让振子振动，再按“开始计时”', 'warn');
-    if (t.rows.some((r) => r.m === this.mNom() && r.n === this.timer.n)) return a.toast('这个质量已经测过了', 'warn');
+    if (s.s !== 'done') a.toast(s.s === 'run' ? '还在计时，等计时器停下' : '计时器没有测完：先让振子振动，再按“开始计时”', 'warn');
+    if (t.rows.some((r) => r.m === this.mNom() && r.n === this.timer.n)) a.toast('这个质量已经测过了', 'warn');
+    if (!this.timer || !(s.v > 0)) return; // 计时器上还没有任何读数
     t.addRow({ m: this.mNom(), n: this.timer.n, t: s.v });
   }
 

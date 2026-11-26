@@ -168,10 +168,10 @@ export class PnExperiment {
   recIU(t) {
     const a = this.app;
     if (this.mode !== 'iu') return a.toast('测试仪还在“恒流”方式：切换到“伏安特性”', 'warn');
-    if (this.U2 >= USAT) return a.toast('运放已饱和，这一点不能用：减小 U₁', 'warn');
-    if (this.U2 < 0.005) return a.toast('U₂ 太小（电流不到 5 nA），读数的相对误差太大：增大 U₁', 'warn');
+    if (this.U2 >= USAT) a.toast('运放已饱和，这一点不能用：减小 U₁', 'warn');
+    if (this.U2 < 0.005) a.toast('U₂ 太小（电流不到 5 nA），读数的相对误差太大：增大 U₁', 'warn');
     if (this.Ts > this.T0 + 1.5) a.toast('样品不在室温：伏安特性应在室温下、温度不变时测', 'warn');
-    if (t.rows.some((r) => Math.abs(r.U1 - this.U1show) < 0.0005)) return a.toast('这个 U₁ 已经记过了', 'warn');
+    if (t.rows.some((r) => Math.abs(r.U1 - this.U1show) < 0.0005)) a.toast('这个 U₁ 已经记过了', 'warn');
     t.addRow({ T: this.Tshow, U1: this.U1show, U2: this.U2 });
   }
   recUT(t) {

@@ -284,7 +284,7 @@ export class YoungExperiment {
   readNow() { return Math.round((this.drive + gauss(0.0015)) * 1000) / 1000; }
   recRail(t, id) {
     if (!this.app.comp('ds').placed || !this.app.comp('eye').placed) return this.app.toast('双缝或测微目镜不在导轨上', 'warn');
-    if (this.plate !== id) return this.app.toast(`当前使用的是 ${this.plate} 组双缝，本表记录 ${id} 组`, 'warn');
+    if (this.plate !== id) this.app.toast(`当前使用的是 ${this.plate} 组双缝，本表记录 ${id} 组`, 'warn');
     t.addRow({ xd: Math.round(this.app.comp('ds').pos * 100) / 100, xe: Math.round(this.app.comp('eye').pos * 100) / 100 });
   }
   recFringe(t, id) {
@@ -292,7 +292,7 @@ export class YoungExperiment {
     if (!r) return this.app.toast('请先读取导轨位置（新起一行）', 'warn');
     const key = r.x1 == null ? 'x1' : r.x2 == null ? 'x2' : null;
     if (!key) return this.app.toast('这一行已记录完整；改变 D 后读取导轨位置新起一行', 'warn');
-    if (this.plate !== id) return this.app.toast(`当前使用的是 ${this.plate} 组双缝`, 'warn');
+    if (this.plate !== id) this.app.toast(`当前使用的是 ${this.plate} 组双缝`, 'warn');
     if (Math.abs(r.xd - this.app.comp('ds').pos) > 0.02 || Math.abs(r.xe - this.app.comp('eye').pos) > 0.02) this.app.toast('注意：导轨位置与本行记录的不一致', 'warn');
     if (!this.src || this.V < 0.3) return this.app.toast('看不到清晰的干涉条纹', 'warn');
     const Xp = this.eyeX() - this.xc, ph = (this.d * Xp) / (LAMBDA * this.D) - 0.5;
@@ -416,10 +416,16 @@ export class YoungExperiment {
   }
 
   analyze() {
+    const r = this._analyze();
+    const note = (() => { const D = this.app.table('A').completeRows().map((x) => (x.xe - x.xd) * 10); return D.length > 1 && Math.max(...D) - Math.min(...D) < 50 ? '各组 D 相差不到 5 cm，Δx–D 图上的点挤在一起，斜率（以及由它算出的波长）误差会很大。' : ''; })();
+    if (note && r && typeof r.html === 'string') r.html = `<div class="an-flaws">${note}</div>` + r.html;
+    return r;
+  }
+  _analyze() {
     const rA = this.app.table('A').completeRows();
     if (rA.length < 2) return { html: '<p>双缝 A 至少需要两个不同 D 的完整数据（建议 3 个以上）。</p>', ok: false };
     const D = rA.map((r) => (r.xe - r.xd) * 10), dx = rA.map((r) => Math.abs(r.x2 - r.x1) / N_SP);
-    if (Math.max(...D) - Math.min(...D) < 50) return { html: '<p>各组 D 太接近，无法作图。</p>', ok: false };
+    if (Math.max(...D) - Math.min(...D) < 0.5) return { html: '<p>各组 D 都一样，Δx–D 图只有一个位置，求不出斜率。</p>', ok: false };
     const lams = rA.map((r, i) => (this.dA * dx[i]) / D[i]);
     const fit = linFit(D, dx);
     const lamFit = fit.k * this.dA, uFit = fit.uk * this.dA;

@@ -112,10 +112,13 @@ export class BridgeExperiment {
     const b = this.bridge();
     if (!b) return this.app.toast('电桥没有接好', 'warn');
     if (!this.cir.dev('K').closed || !this.sup.on) return this.app.toast('电源没有接通', 'warn');
-    if (!this.cir.dev('kg').closed) return this.app.toast('按下检流计按键才能判断是否平衡', 'warn');
-    if (this.gp.s * 10000 > 50) this.app.toast('保护电阻没有减到零，平衡判断不够灵敏', 'warn');
-    if (Math.abs(this.gDiv()) > 0.5) this.app.toast('检流计还没有指零', 'warn');
-    t.addRow({ obj: b.part === 'rx1' ? 'Rx1' : 'Rx2', cfg: b.cfg, R0: Math.round(this.rb.nominal() * 10) / 10 });
+    const fl = [];
+    if (!this.cir.dev('kg').closed) fl.push('检流计按键没有按下，没法判断是否平衡');
+    else {
+      if (this.gp.s * 10000 > 50) fl.push('保护电阻没有减到零，平衡判断不够灵敏');
+      if (Math.abs(this.gDiv()) > 0.5) fl.push('检流计还没有指零');
+    }
+    t.flagAll(t.addRow({ obj: b.part === 'rx1' ? 'Rx1' : 'Rx2', cfg: b.cfg, R0: Math.round(this.rb.nominal() * 10) / 10 }), fl);
   }
   recSens(t) {
     const b = this.bridge();

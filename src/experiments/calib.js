@@ -125,14 +125,14 @@ export class CalibExperiment {
   recI0(t) {
     const st = this.state();
     if (!this.live()) return this.app.toast('电路没有接通', 'warn');
-    if (!st || st.mode !== 'rg') return this.app.toast('应把表头与标准毫安表串联', 'warn');
+    if (!st || st.mode !== 'rg') this.app.toast('应把表头与标准毫安表串联', 'warn');
     if (this.mu.theta < 0.6) this.app.toast('表头偏转小，宜调到接近满偏再测', 'warn');
     t.addRow({ I0: Math.round(this.q(this.sa) * 1e7) / 10 });
   }
   recSub(t) {
     const st = this.state();
     if (!this.live()) return this.app.toast('电路没有接通', 'warn');
-    if (!st || st.mode !== 'sub') return this.app.toast('应用电阻箱 R 替换表头，其余不动', 'warn');
+    if (!st || st.mode !== 'sub') this.app.toast('应用电阻箱 R 替换表头，其余不动', 'warn');
     const i = t.rows.length - 1;
     if (i < 0 || t.rows[i].I0 == null) return this.app.toast('请先记录 I₀', 'warn');
     if (Math.abs(this.q(this.sa) * 1e6 - t.rows[i].I0) > 0.25) this.app.toast('标准表读数与 I₀ 不同，继续调 R', 'warn');
@@ -141,7 +141,7 @@ export class CalibExperiment {
   recCal(t, mode) {
     const st = this.state();
     if (!this.live()) return this.app.toast('电路没有接通', 'warn');
-    if (!st || st.mode !== mode) return this.app.toast(mode === 'amm' ? '应把电阻箱并联在表头两端，再与标准毫安表串联' : '应把电阻箱与表头串联，再与标准电压表并联', 'warn');
+    if (!st || st.mode !== mode) this.app.toast(mode === 'amm' ? '应把电阻箱并联在表头两端，再与标准毫安表串联' : '应把电阻箱与表头串联，再与标准电压表并联', 'warn');
     if (this.mu.over || this.sa.over || this.sv.over) return this.app.toast('有电表超量程', 'warn');
     const n = Math.round(this.mu.theta * MU_DIVS * 10) / 10;
     if (mode === 'amm') t.addRow({ Ix: n / 100, Is: +(this.q(this.sa) * 1000).toFixed(4), R: this.rs.nominal() });

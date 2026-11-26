@@ -137,25 +137,28 @@ export class GeomagExperiment {
     const i = t.rows.findIndex((r) => Math.abs(r.I - this.I) < 0.005);
     if (i < 0) return a.toast(`线圈电流 ${this.I.toFixed(2)} mA 不在表中，调到 ${IS.join('、')} mA 之一`, 'warn');
     const r = t.rows[i];
-    if (r._pose && (r._pose !== `${this.th},${this.ps}`)) return a.toast('转台位置和这一行另一个方向的读数不同：正、反向要在同一位置读', 'warn');
+    const moved = r._pose && r._pose !== `${this.th},${this.ps}`;
     t.rows[i]._pose = `${this.th},${this.ps}`;
     t.set(i, this.dir > 0 ? 'Up' : 'Un', this.readU());
+    if (moved) t.flagAll(i, ['正、反向两次读数时转台位置不同，地磁场的贡献抵消不掉']);
   }
   recH(t) {
     const a = this.app;
     if (!this.power) return a.toast('电源没开', 'warn');
-    if (this.I > 0) return a.toast('测地磁场时线圈电流要为 0', 'warn');
-    if (this.ps !== 0) return a.toast('俯仰角不为 0：敏感轴不水平', 'warn');
-    if (t.rows.some((r) => r.th === this.th)) return a.toast('这个角度已经记过了', 'warn');
-    t.addRow({ th: this.th, U: this.readU() });
+    if (t.rows.some((r) => r.th === this.th)) a.toast('这个角度已经记过了', 'warn');
+    const fl = [];
+    if (this.I > 0) fl.push('亥姆霍兹线圈里还有电流，读数里叠加了线圈的磁场');
+    if (this.ps !== 0) fl.push(`俯仰角是 ${this.ps}°，敏感轴不水平，读数混入了竖直分量`);
+    t.flagAll(t.addRow({ th: this.th, U: this.readU() }), fl);
   }
   recV(t) {
     const a = this.app;
     if (!this.power) return a.toast('电源没开', 'warn');
-    if (this.I > 0) return a.toast('测地磁场时线圈电流要为 0', 'warn');
-    if (t.rows.length && t.rows[0].th !== this.th) return a.toast('水平角和第一行不同：这张表要在同一个竖直面内转动', 'warn');
-    if (t.rows.some((r) => r.ps === this.ps)) return a.toast('这个俯仰角已经记过了', 'warn');
-    t.addRow({ th: this.th, ps: this.ps, U: this.readU() });
+    if (t.rows.some((r) => r.ps === this.ps)) a.toast('这个俯仰角已经记过了', 'warn');
+    const fl = [];
+    if (this.I > 0) fl.push('亥姆霍兹线圈里还有电流，读数里叠加了线圈的磁场');
+    if (t.rows.length && t.rows[0].th !== this.th) fl.push('水平角和第一行不同，不在同一个竖直面内');
+    t.flagAll(t.addRow({ th: this.th, ps: this.ps, U: this.readU() }), fl);
   }
 
   // ======================= 自动操作 =======================

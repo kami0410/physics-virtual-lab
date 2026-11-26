@@ -65,7 +65,7 @@ async function route() {
       }
       try { sessionStorage.removeItem('lab-reload'); } catch { /* 忽略 */ }
       if (my !== seq) return; // 载入期间又切换了页面
-      current = new App(root, Exp, { onExit: () => { current = null; location.hash = '#/'; } });
+      current = new App(root, Exp, { onExit: () => { current = null; location.hash = '#/'; }, onRestart: (app) => { current = app; } });
       window.__app = current;
       return;
     }
@@ -248,11 +248,10 @@ async function waveThumb() {
   for (let c = 0; c < cols; c++) {
     const z = Math.pow(10, 0.3 + (c / (cols - 1)) * 3.2);
     const L = Math.max(1.6 * (a + 10 * Math.sqrt(lam * z)), 1.2 * a);
-    // 一维计算：只需一行，用 N×N 网格的中间行近似（缝沿竖直方向）
-    const F = W.mask(W.begin(N, L, lam), (x) => (Math.abs(x) <= a / 2 ? 1 : 0), 2);
-    const out = z <= (L * L) / (N * lam) ? W.angularSpectrum(F, z) : W.fresnelFar(F, z);
+    // 缝沿竖直方向无限长，光场沿 y 均匀：一维传播一行即可（与二维网格取中间行结果相同，快约 150 倍）
+    const out = W.propagateRow(N, L, lam, (x) => (Math.abs(x) <= a / 2 ? 1 : 0), z, 2);
     const row = new Float64Array(N); let mx = 0;
-    for (let j = 0; j < N; j++) { const k = (N / 2) * N + j; row[j] = out.re[k] ** 2 + out.im[k] ** 2; mx = Math.max(mx, row[j]); }
+    for (let j = 0; j < N; j++) { row[j] = out.re[j] ** 2 + out.im[j] ** 2; mx = Math.max(mx, row[j]); }
     const half = 2.2; // 显示 ±2.2 mm
     for (let x = Math.floor((c * Wd) / cols); x < Math.floor(((c + 1) * Wd) / cols); x++) for (let y = 0; y < Hd; y++) {
       const X = ((y / Hd) * 2 - 1) * half, j = Math.round(X / out.dx + N / 2);

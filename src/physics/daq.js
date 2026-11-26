@@ -39,9 +39,11 @@ export function spectrum(x, fs) {
   fft(re, im);
   const mag = new Float64Array(n / 2);
   for (let k = 0; k < n / 2; k++) mag[k] = (4 / n) * Math.hypot(re[k], im[k]);
-  let kp = 1; for (let k = 2; k < n / 2 - 1; k++) if (mag[k] > mag[kp]) kp = k;
-  const a = Math.log(mag[kp - 1] + 1e-30), b = Math.log(mag[kp] + 1e-30), c = Math.log(mag[kp + 1] + 1e-30);
-  const d = (0.5 * (a - c)) / (a - 2 * b + c || 1e-30);
+  // 峰可以一直到 Nyquist 频率（k = n/2 − 1 为最后一格）；插值时越界的一侧按对称处理
+  let kp = 1; for (let k = 2; k < n / 2; k++) if (mag[k] > mag[kp]) kp = k;
+  const at = (k) => mag[k < 0 ? -k : k >= n / 2 ? n - 2 - k : k];
+  const a = Math.log(at(kp - 1) + 1e-30), b = Math.log(mag[kp] + 1e-30), c = Math.log(at(kp + 1) + 1e-30);
+  const d = Math.max(-0.5, Math.min(0.5, (0.5 * (a - c)) / (a - 2 * b + c || 1e-30)));
   return { mag, df: fs / n, peak: (kp + d) * (fs / n), amp: mag[kp] };
 }
 
@@ -54,6 +56,13 @@ export function sineFit(x, f, fs) {
   const M = [[scc, scs, sc], [scs, sss, ss], [sc, ss, n]], y = [sxc, sxs, sx];
   const det = (m) => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
   const D = det(M), col = (j) => M.map((r, i) => r.map((v, k) => (k === j ? y[i] : v)));
+  // f 为 fs/2 的整数倍时 sin ωt 在采样点上恒为 0（f = fs 时 cos 也恒为 1）：正规方程奇异，退化为少一个参数的拟合
+  if (Math.abs(D) < 1e-9 * Math.abs(scc * sss * n || 1)) {
+    const alias = Math.abs(Math.cos(w) - 1) < 1e-9; // f 是 fs 的整数倍：信号在采样点上就是常数
+    const A = alias ? 0 : (sxc * n - sc * sx) / (scc * n - sc * sc || 1e-30), C = alias ? sx / n : (sx - A * sc) / n;
+    let e2 = 0; for (let i = 0; i < n; i++) { const r = x[i] - (A * Math.cos(w * i) + C); e2 += r * r; }
+    return { amp: Math.abs(A), C, rms: Math.sqrt(e2 / n), degenerate: true };
+  }
   const A = det(col(0)) / D, B = det(col(1)) / D, C = det(col(2)) / D;
   let e2 = 0; for (let i = 0; i < n; i++) { const r = x[i] - (A * Math.cos(w * i) + B * Math.sin(w * i) + C); e2 += r * r; }
   return { amp: Math.hypot(A, B), C, rms: Math.sqrt(e2 / n) };

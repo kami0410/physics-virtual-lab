@@ -159,18 +159,18 @@ export class RlcSteadyExperiment {
     if (!this.common(true)) return;
     const p = this.phasors(), app = this.app, s = this.s;
     if (!p) return app.toast('只能接一个信号源', 'warn');
-    if (s.ch[0].var < 0.999 || s.ch[1].var < 0.999) return app.toast('纵向“微调”不在校准位置，幅度读数不准', 'warn');
+    if (s.ch[0].var < 0.999 || s.ch[1].var < 0.999) app.toast('纵向“微调”不在校准位置，幅度读数不准', 'warn');
     const A1 = this.div(0, p.v1), A2 = this.div(1, p.v2);
     if (A1 > 8.05 || A2 > 8.05) return app.toast('波形超出屏幕：增大 V/div', 'warn');
     if (A2 < 1.5 || A1 < 1.5) app.toast('波形不到 1.5 格高，读数误差大：减小 V/div', 'warn');
-    if (t.rows.some((r) => Math.abs(r.f - this.gen.f) < 0.5)) return app.toast('这个频率已经记过了', 'warn');
+    if (t.rows.some((r) => Math.abs(r.f - this.gen.f) < 0.5)) app.toast('这个频率已经记过了', 'warn');
     t.addRow({ f: +this.gen.f.toPrecision(6), R: this.rbox.nominal(), v1: VDIV[s.ch[0].vdiv], A1: +A1.toFixed(3), v2: VDIV[s.ch[1].vdiv], A2: +A2.toFixed(3) });
   }
   recF0(t) {
     if (!this.common(true)) return;
     const p = this.phasors(), app = this.app;
     if (!p) return;
-    if (Math.abs(p.lead) > 2) return app.toast(`u 与 u_R 还有约 ${Math.abs(p.lead).toFixed(0)}° 的相位差（李萨如图形还是椭圆），${p.lead > 0 ? '升高' : '降低'}频率`, 'warn');
+    if (Math.abs(p.lead) > 2) app.toast(`u 与 u_R 还有约 ${Math.abs(p.lead).toFixed(0)}° 的相位差（李萨如图形还是椭圆），${p.lead > 0 ? '升高' : '降低'}频率`, 'warn');
     t.addRow({ f0: +this.gen.f.toPrecision(6) });
   }
 

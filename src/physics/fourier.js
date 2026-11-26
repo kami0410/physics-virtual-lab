@@ -42,5 +42,11 @@ export function fft2(re, im, n, inv = false) {
   if (inv) { const s = 1 / (n * n); for (let i = 0; i < n * n; i++) { re[i] *= s; im[i] *= s; } }
 }
 
+/** 一维 FFT（长度 n，原位）。inv=true 时做逆变换并除以 n */
+export function fft1d(re, im, n, inv = false) {
+  fft1(re, im, 0, 1, n, inv, new Float64Array(n), new Float64Array(n));
+  if (inv) { const s = 1 / n; for (let i = 0; i < n; i++) { re[i] *= s; im[i] *= s; } }
+}
+
 /** 频率下标 → 有符号频率序号（0..n/2-1, -n/2..-1） */
 export const fIdx = (i, n) => (i < n / 2 ? i : i - n);

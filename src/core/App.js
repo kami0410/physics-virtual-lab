@@ -30,10 +30,11 @@ export const I = {
 };
 
 export class App {
-  constructor(root, ExpClass, { onExit }) {
+  constructor(root, ExpClass, { onExit, onRestart } = {}) {
     this.root = root;
     this.ExpClass = ExpClass;
     this.onExit = onExit;
+    this.onRestart = onRestart;
     this.meta = ExpClass.meta;
     this.comps = new Map();
     this.zones = [];
@@ -708,9 +709,9 @@ export class App {
       el.querySelector('[data-h]').onclick = () => el.querySelector('.hint').classList.toggle('show');
       el.querySelector('[data-auto]').onclick = () => this.runStep(i);
       const okb = el.querySelector('[data-ok]');
-      if (okb) okb.onclick = () => { if (i === this.stepIdx) this.completeStep(i); };
+      if (okb) okb.onclick = () => this.completeStep(i);
       const sk = el.querySelector('[data-skip]');
-      if (sk) sk.onclick = () => { if (i === this.stepIdx) this.completeStep(i, true); };
+      if (sk) sk.onclick = () => this.completeStep(i, true);
       this.stepsEl.append(el);
       return el;
     });
@@ -724,24 +725,31 @@ export class App {
       el.classList.toggle('open', i === this.openStep);
       const s = this.steps[i];
       const st = el.querySelector('.status');
-      st.innerHTML = s.status && i === this.stepIdx ? this.studentView(() => s.status()) : '';
+      st.innerHTML = s.status && !this.stepDone[i] && (i === this.stepIdx || i === this.openStep) ? this.studentView(() => s.status()) : '';
     });
     const n = this.stepDone.filter(Boolean).length;
     this.progressBar.style.width = (100 * n) / this.steps.length + '%';
     if (this.pcount) this.pcount.innerHTML = `<b>${n}</b>/${this.steps.length}`;
   }
 
+  /**
+   * 步骤不强制顺序：每一步的完成条件都在检查，学生先做哪一步、跳过哪一步都可以——
+   * 做错了、漏了前面的调节，就会在现象和数据里看到后果。stepIdx 始终指向第一个还没完成的步骤。
+   */
   checkSteps() {
     this.tutor && this.tutor.tick();
     if (this.stepIdx >= this.steps.length) return;
-    const s = this.steps[this.stepIdx];
-    let ok = false;
-    try { ok = s.check ? !!this.studentView(() => s.check()) : false; } catch (err) { console.warn(err); }
-    if (ok) this.completeStep(this.stepIdx);
-    else if (s.status) {
-      const st = this.stepEls[this.stepIdx].querySelector('.status');
-      const html = this.studentView(() => s.status());
-      if (st.innerHTML !== html) st.innerHTML = html;
+    for (let i = this.stepIdx; i < this.steps.length; i++) {
+      if (this.stepDone[i]) continue;
+      const s = this.steps[i];
+      let ok = false;
+      try { ok = s.check ? !!this.studentView(() => s.check()) : false; } catch (err) { console.warn(err); }
+      if (ok) { this.completeStep(i); continue; }
+      if (s.status && (i === this.stepIdx || i === this.openStep)) {
+        const st = this.stepEls[i].querySelector('.status');
+        const html = this.studentView(() => s.status());
+        if (st.innerHTML !== html) st.innerHTML = html;
+      }
     }
   }
 
@@ -749,12 +757,13 @@ export class App {
     if (this.stepDone[i]) return;
     this.stepDone[i] = true;
     this.tutor && this.tutor.event(`${skipped ? '跳过' : this.running ? '自动完成' : '完成'}第 ${i + 1} 步「${this.steps[i].title}」`);
+    this.tutor && this.tutor.onStepDone(i);
     if (!skipped) this.toast(`完成：${this.steps[i].title}`, 'ok');
-    if (i === this.stepIdx) {
-      while (this.stepIdx < this.steps.length && this.stepDone[this.stepIdx]) this.stepIdx++;
-      this.openStep = this.stepIdx;
-      if (this.stepIdx >= this.steps.length && !this.running) this.toast('全部实验步骤已完成，可以生成实验报告。', 'ok');
-    }
+    const was = this.stepIdx;
+    while (this.stepIdx < this.steps.length && this.stepDone[this.stepIdx]) this.stepIdx++;
+    // 正在看的这一步完成了才翻到下一个未完成的步骤；学生在别的步骤上操作时不打断他
+    if (this.openStep === i || this.openStep === -1 || (i === was && this.openStep === was)) this.openStep = this.stepIdx;
+    if (this.stepIdx >= this.steps.length && !this.running) this.toast('全部实验步骤已完成，可以生成实验报告。', 'ok');
     this.updateStepUI();
     const el = this.stepEls[this.openStep];
     if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -763,7 +772,8 @@ export class App {
   // ============================ 一键运行 ============================
   async runStep(i) {
     if (this.running) return;
-    if (i !== this.stepIdx) { this.toast('请先完成前面的步骤（或使用「一键运行」）', 'warn'); return; }
+    if (this.stepDone[i]) { this.toast('这一步已经完成了', 'ok'); return; }
+    if (i > this.stepIdx) this.toast('前面还有步骤没做：自动完成这一步时可能要先把前面的调节补上', 'warn');
     await this._run([i]);
   }
   runCurrent() { return this.runStep(this.stepIdx); }
@@ -864,8 +874,8 @@ export class App {
         if (this._replaySkip) return rej(new ReplaySkip());
         const k = Math.min(1, (performance.now() - t0) / dur);
         const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
-        set(from + (to - from) * e);
-        this.changed();
+        // 中间帧由 requestAnimationFrame 调用，异常抛不回 await：必须转成 reject，否则 Promise 永远挂起、「一键运行」卡死
+        try { set(from + (to - from) * e); this.changed(); } catch (err) { return rej(err); }
         if (k < 1) requestAnimationFrame(step); else res();
       };
       step();
@@ -931,6 +941,8 @@ export class App {
     this.curTable = this.tables[i];
     this.tables.forEach((t, j) => t._tab.classList.toggle('on', i === j));
     const t = this.curTable;
+    // 所有表共用一个显示区：别的表不再挂在上面，否则它们数据一变就会把当前表的显示盖掉
+    for (const o of this.tables) if (o !== t) o.el = null;
     t.mount(this.dwrap);
     this.dside.innerHTML = '';
     for (const b of t.spec.buttons || []) {
@@ -938,7 +950,7 @@ export class App {
       btn.onclick = () => {
         this.tutor && this.tutor.event(`点了「${t.spec.title}」的「${b.label}」`);
         t.selfRead = this.readSelf && !this.running; t.pended = 0;
-        try { b.onClick(t); } finally { t.selfRead = false; }
+        try { t.press(b); } finally { t.selfRead = false; }
         if (t.pended && (this._readHint = (this._readHint || 0) + 1) <= 3) this.toast('已记下这一组。请读仪器，把读数填进表格中高亮的空格', 'ok');
       };
       this.dside.append(btn);
@@ -964,10 +976,11 @@ export class App {
     const i = this.tables.findIndex((t) => t.id === id);
     if (this.curTable !== this.tables[i]) this.showTable(i);
     const t = this.tables[i];
-    t.spec.buttons[btn].onClick(t);
+    t.press(t.spec.buttons[btn]);
     await this.wait(250);
   }
-  onTableChanged() { this.analysisDone = this.analysisDone && true; }
+  /** 数据改动后，之前的数据处理结果作废：「数据处理」这一步要用新数据重新处理（恢复设置时会把它复原） */
+  onTableChanged() { this.analysisDone = false; }
 
   // ============================ 数据处理 & 报告 ============================
   modal(title, html, buttons = []) {
@@ -991,7 +1004,18 @@ export class App {
 
   computeAnalysis() {
     let res;
-    try { res = this.studentView(() => this.exp.analyze()); } catch (err) { console.error(err); res = { html: `<p style="color:#f87171">数据处理出错：${err.message}</p>`, plots: [] }; }
+    try { res = this.studentView(() => this.exp.analyze()); } catch (err) { console.error(err); res = { html: `<p class="an-bad">这组数据没法按正常方法处理下去（${err.message}）。多半是某些数据缺失或明显不合理：对照下面标出的行，想一想是哪一步操作出了问题。</p>`, plots: [] }; }
+    if (!res) return res;
+    // 算不出来的量不显示成 NaN / Infinity，而是说明原因
+    if (typeof res.html === 'string' && /NaN|Infinity/.test(res.html)) {
+      // 公式（$…$、$$…$$）里换成公式中的文字，公式外换成带说明的文字
+      const re = /-?\bNaN\b|-?\bInfinity\b/g;
+      res.html = res.html.split(/(\$\$[\s\S]*?\$\$|\$[^$]*\$)/).map((seg) => seg.replace(re, seg.startsWith('$') ? '\\text{算不出}' : '<span class="an-na" title="数据不足或不合理，这个量算不出来">算不出</span>')).join('');
+    }
+    // 记录时条件有问题的行：放在数据处理最前面，让学生把结果的偏差和自己的操作对上
+    const fl = [];
+    for (const t of this.tables) t.rows.forEach((r, i) => { if (r._flaw) fl.push(`<li>「${t.spec.title}」第 ${i + 1} 行：${String(r._flaw).replace(/</g, '&lt;')}</li>`); });
+    if (fl.length) res.html = `<div class="an-flaws"><b>这些数据记录时条件有问题，照样参与了计算：</b><ul>${fl.join('')}</ul>看看下面的结果和图线里，它们造成了什么影响（偏离直线的点、偏大或偏小的结果、变大的不确定度）。想要更准的结果，可以删掉这些行，按正确的条件重测。</div>` + (res.html || '');
     return res;
   }
 
@@ -1131,6 +1155,7 @@ table{border-collapse:collapse;margin:8px 0;font-size:13px} td,th{border:1px sol
 
   // ============================ 杂项 ============================
   toast(msg, type = '') {
+    if (this._recWarn && type === 'warn' && !String(msg).startsWith('已记下')) this._recWarn.push(msg);
     const t = h('div', 'toast ' + type, msg);
     this.toastsEl.append(t);
     setTimeout(() => { t.style.transition = 'opacity .4s'; t.style.opacity = 0; setTimeout(() => t.remove(), 400); }, 2600);
@@ -1138,10 +1163,12 @@ table{border-collapse:collapse;margin:8px 0;font-size:13px} td,th{border:1px sol
   }
 
   restart() {
-    const { root, ExpClass, onExit } = this;
+    const { root, ExpClass, onExit, onRestart } = this;
     this.dispose();
-    const app = new App(root, ExpClass, { onExit });
+    const app = new App(root, ExpClass, { onExit, onRestart });
     window.__app = app;
+    // 新实例交还给路由（main.js），否则离开页面时只会销毁已经销毁过的旧实例，新实例的定时器与渲染循环留下来
+    onRestart && onRestart(app);
   }
   exit() { this.dispose(); this.onExit && this.onExit(); }
   dispose() {

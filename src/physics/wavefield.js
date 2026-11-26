@@ -6,7 +6,7 @@
 //   近场：带限角谱法（Matsushima & Shimobaba, Opt. Express 17, 19662 (2009)），传递函数取严格的
 //         H = exp(i k z √(1 − (λfx)² − (λfy)²))，并按网格可采样的最大频率截断，避免周期边界的混叠；
 //   远场：单次 FFT 菲涅耳变换，输出面像素 λz/L，网格随距离放大（相当于 LightPipes 的 Forvard/Fresnel 中远场情形）。
-import { fft2 } from './fourier.js';
+import { fft2, fft1d } from './fourier.js';
 
 export class Field {
   /** N：网格点数（2 的幂）；size：网格边长 mm；lam：波长 mm */
@@ -149,6 +149,37 @@ export function propagate(F, z) {
   const zc = (F.N * F.dx * F.dx) / F.lam;
   if (z <= zc) return { F: angularSpectrum(F, z), method: 'asm' };
   return { F: fresnelFar(F, z), method: 'fresnel' };
+}
+
+/**
+ * 一维版本：透过率只随 x 变化（单缝、光栅等，沿 y 无限长）的平面波传播 z（mm）。
+ * 沿 y 均匀的光场经二维传播后仍沿 y 均匀，各行只差一个常数因子，所以只算一行，结果与
+ * begin → mask → propagate 取中间一行相同（相差常数因子），计算量少 N 倍。
+ * 返回 { re, im, dx }：观察面一行的复振幅与像素间距（菲涅耳远场时 dx = λz/L，随 z 放大）。
+ */
+export function propagateRow(N, L, lam, t, z, ss = 3) {
+  const dx = L / N, re = new Float64Array(N), im = new Float64Array(N);
+  for (let j = 0; j < N; j++) { const x = (j - N / 2) * dx; let a = 0; for (let u = 0; u < ss; u++) a += t(x + ((u + 0.5) / ss - 0.5) * dx); re[j] = a / ss; }
+  if (z <= (L * L) / (N * lam)) { // 带限角谱法，与 angularSpectrum() 相同（只取 fy = 0）
+    fft1d(re, im, N, false);
+    const df = 1 / L, fLim = 1 / (lam * Math.sqrt((2 * df * z) ** 2 + 1)), k2 = 1 / (lam * lam);
+    for (let j = 0; j < N; j++) {
+      const fx = (j < N / 2 ? j : j - N) * df, q = k2 - fx * fx;
+      if (q <= 0 || Math.abs(fx) > fLim) { re[j] = 0; im[j] = 0; continue; }
+      const p = 2 * Math.PI * z * Math.sqrt(q), c = Math.cos(p), s = Math.sin(p), r = re[j], m = im[j];
+      re[j] = r * c - m * s; im[j] = r * s + m * c;
+    }
+    fft1d(re, im, N, true);
+    return { re, im, dx };
+  }
+  // 单次 FFT 菲涅耳变换，与 fresnelFar() 相同
+  const chirp = (d) => { for (let j = 0; j < N; j++) { const x = (j - N / 2) * d, p = (Math.PI / (lam * z)) * x * x, c = Math.cos(p), s = Math.sin(p), r = re[j], m = im[j]; re[j] = r * c - m * s; im[j] = r * s + m * c; } };
+  const chk = () => { for (let j = 1; j < N; j += 2) { re[j] = -re[j]; im[j] = -im[j]; } };
+  chirp(dx); chk(); fft1d(re, im, N, false); chk();
+  const dx2 = (lam * z) / L, scale = dx / Math.sqrt(lam * z);
+  chirp(dx2);
+  for (let j = 0; j < N; j++) { re[j] *= scale; im[j] *= scale; }
+  return { re, im, dx: dx2 };
 }
 
 /** 光强 |U|² */

@@ -186,11 +186,11 @@ export class SnakePendulumExperiment {
   }
   recPer(t) {
     const a = this.app, k = this.sel, tt = this.sw.value;
-    if (this.sw.run) return a.toast('秒表还在走，先停表', 'warn');
+    if (this.sw.run) a.toast('秒表还在走，先停表', 'warn');
     if (!(tt > 0)) return a.toast('秒表读数为 0', 'warn');
     const n = tt / this.period(k);
-    if (Math.abs(n - 10) > 0.25) return a.toast(`秒表读数 ${tt.toFixed(2)} s 约为选中摆的 ${n.toFixed(1)} 个周期，不是 10 个——是不是选错了摆，或者数错了？`, 'warn');
-    if (t.rows.some((r) => r.k === k)) return a.toast('这个摆已经校核过了', 'warn');
+    if (Math.abs(n - 10) > 0.25) a.toast(`秒表读数 ${tt.toFixed(2)} s 约为选中摆的 ${n.toFixed(1)} 个周期，不是 10 个——是不是选错了摆，或者数错了？`, 'warn');
+    if (t.rows.some((r) => r.k === k)) a.toast('这个摆已经校核过了', 'warn');
     t.addRow({ k, t10: tt });
   }
   /** 实际摆长下 m 列图样最清楚的时刻（各摆相位差最接近 2π/m 的整数倍） */
@@ -203,11 +203,11 @@ export class SnakePendulumExperiment {
   }
   recPat(t) {
     const a = this.app, tt = this.sw.value;
-    if (this.sw.run) return a.toast('秒表还在走，先停表', 'warn');
-    if (!(tt > 5)) return a.toast('秒表读数太小', 'warn');
+    if (this.sw.run) a.toast('秒表还在走，先停表', 'warn');
+    if (!(tt > 5)) a.toast('秒表读数太小', 'warn');
     const i = PATS.reduce((b, p, j) => (Math.abs(tt - GAMMA / p.m) < Math.abs(tt - GAMMA / PATS[b].m) ? j : b), 0);
     const tr = this.patTime(PATS[i].m);
-    if (Math.abs(tt - tr) > 2.5) return a.toast(`${tt.toFixed(2)} s 时摆球并没有${PATS[i].name}（差得较远），再观察一次`, 'warn');
+    if (Math.abs(tt - tr) > 2.5) a.toast(`${tt.toFixed(2)} s 时摆球并没有${PATS[i].name}（差得较远），再观察一次`, 'warn');
     t.set(i, 't', tt);
   }
 

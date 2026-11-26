@@ -131,7 +131,7 @@ export class FabryPerotExperiment {
     tel.add(mesh(new THREE.CylinderGeometry(1.5, 1.8, 14, 28), MAT.black(), 7, 0, 0).rotateZ(Math.PI / 2));
     tel.add(mesh(new THREE.CylinderGeometry(0.9, 0.9, 3, 20), MAT.black(), 15.5, 0, 0).rotateZ(Math.PI / 2));
     tel.add(mesh(new THREE.BoxGeometry(2, YB - 2.4, 2), MAT.dark(), 6, -(YB - 2.4) / 2, 0));
-    body.add(tel);
+    // 望远镜是单独的器材：模型挂在它自己名下，点它才能打开调焦等调节（以前画在干涉仪主体里，点到的是干涉仪）
     app.addComponent(new Component({
       key: 'fp', name: 'F-P 干涉仪', zone: 'none', fixed: true, object: body, labelY: YB + 8,
       desc: `两块平面玻璃内表面镀高反射膜（反射率约 ${Math.round(this.R * 100)}%）。G₂ 固定，背后两颗螺钉调倾角；G₁ 由测微丝杆移动：粗动手轮分度 0.01 mm，微动鼓轮分度 0.0001 mm。`,
@@ -143,7 +143,7 @@ export class FabryPerotExperiment {
       ],
     }));
     app.addComponent(new Component({
-      key: 'tel', name: '观察望远镜', zone: 'none', fixed: true, object: new THREE.Group(), showLabel: false,
+      key: 'tel', name: '观察望远镜', zone: 'none', fixed: true, object: new THREE.Group().add(tel), showLabel: false,
       desc: '调焦到无穷远观察等倾圆环。可以把望远镜（眼睛）在通光口径内上下左右平移。',
       controls: () => [
         { type: 'knob', label: '望远镜调焦', get: () => this.focus, set: (v) => (this.focus = v), min: -4, max: 4, step: 0.05, bigStep: 0.5, perRev: 2, digits: 2, unit: 'D', fmt: () => '使圆环最清晰' },

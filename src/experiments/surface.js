@@ -196,7 +196,7 @@ export class SurfaceExperiment {
     const a = this.app;
     if (this.hang !== 'pan') return a.toast('定标要挂砝码盘', 'warn');
     if (!t.rows.length && Math.abs(this.U - this.B * M_PAN * G * 1000) > 0.3 && Math.abs(this.U) > 0.3) a.toast('还没有调零：挂上砝码盘、未加砝码时，先把读数调到 0.0 mV', 'warn');
-    if (t.rows.some((r) => Math.abs(r.m - this.nW * 0.5) < 1e-6)) return a.toast('这个砝码数已经记过了', 'warn');
+    if (t.rows.some((r) => Math.abs(r.m - this.nW * 0.5) < 1e-6)) a.toast('这个砝码数已经记过了', 'warn');
     t.addRow({ m: this.nW * 0.5, U: this.Ushow });
   }
   rec1(t) {
@@ -211,8 +211,8 @@ export class SurfaceExperiment {
   rec2(t) {
     const a = this.app, i = t.rows.length - 1;
     if (i < 0) return a.toast('先记录 U₁', 'warn');
-    if (isFinite(t.rows[i].U2)) return a.toast('这一行已经有 U₂ 了：重新测一次，先记 U₁', 'warn');
-    if (this.attached) return a.toast('液膜还没断', 'warn');
+    if (isFinite(t.rows[i].U2)) a.toast('这一行已经有 U₂ 了：重新测一次，先记 U₁', 'warn');
+    if (this.attached) a.toast('液膜还没断', 'warn');
     if (this.z > 0) a.toast('吊环在水里，受到浮力：要在吊环完全离开水面后读 U₂', 'warn');
     t.set(i, 'U2', this.Ushow);
   }

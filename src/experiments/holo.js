@@ -367,8 +367,18 @@ export class HoloExperiment {
   /** 再现像亮度（相对 I_N）：衍射效率 × 照到全息图上的参考光 */
   imgB(o = this.optics()) { return this.slotHas('plate') && this.holo ? (this.holo.eta * o.Ir) / I_N : 0; }
   /** 暗室中眼睛的适应增益（瞳孔放大、暗适应）；开灯时为 1 */
-  adapt(peak) { return this.room ? 1 : clamp(0.6 / Math.max(peak, 1e-3), 0.5, 6); }
+  adapt(peak) { return this.room ? 1 : clamp(0.6 / Math.max(peak, 1e-4), 0.5, 60); } // 暗室中充分暗适应的眼睛增益很大：很暗的像也看得到，只是颗粒粗
 
+  /** 再现像的观感（给观察窗底部的提示用） */
+  quality() {
+    const h = this.holo; if (!h) return '';
+    const w = [];
+    if (h.eta < 0.01) w.push('很暗');
+    if (h.grain > 0.3) w.push('颗粒粗');
+    if (h.noise > h.eta * 0.4) w.push('发灰、有雾');
+    if (h.blur > 1) w.push('不够清晰');
+    return w.length ? `（${w.join('、')}）` : '';
+  }
   onRemove(c) { if (c.key === 'meter' || c.key === 'plate') this.app.changed(); }
   onPlace(c) {
     if (c.key === 'm1' && !this.app.isFree(c)) c.root.position.set(M1X, 0, this.z1);
@@ -406,7 +416,8 @@ export class HoloExperiment {
     const Etot = g * (a.Er + a.Eo + a.Ebg) + Ef;
     const x = Etot / this.E0;
     const Vm = Etot > 0 ? (g * a.Emod) / Etot : 0; // 曝光量的调制度
-    const t0 = 1 / (1 + x ** 3), slope = (3 * x ** 3) / (1 + x ** 3) ** 2;
+    // 振幅透过率特性 t_a = 1/(1+x^γ)，γ = 2：曝光差两三倍仍有可用的调制，只是效率低、噪声大
+    const t0 = 1 / (1 + x ** 2), slope = (2 * x ** 2) / (1 + x ** 2) ** 2;
     const lin = slope * Vm, dt = Math.min(lin, t0, 1 - t0), excess = Math.max(0, lin - dt);
     const fixed = this.tf >= 2;
     let eta, tp, noise;
@@ -415,7 +426,11 @@ export class HoloExperiment {
     else { eta = (dt / 2) ** 2; tp = Math.max(0.03, t0); noise = 0.001; }
     noise += eta * (0.45 / Math.max(K, 0.3)) + 0.04 * excess * (this.bleach ? 1 : 0.3);
     if (!fixed) { eta *= 0.5; tp *= 0.6; noise += 0.04; }
-    this.holo = { eta, tp, noise, x, Vm, K, g, fixed, bleached: this.bleach, Etot, Vcoh: a.Eint > 0 ? a.EmodC / a.Eint : 0, Vvib: a.EmodC > 0 ? a.Emod / a.EmodC : 0, Vk: a.Er + a.Eo > 0 ? (2 * Math.sqrt(a.Er * a.Eo)) / (a.Er + a.Eo) : 0, fog: (a.Er + a.Eo + a.Ebg) > 0 ? a.Ebg / (a.Er + a.Eo + a.Ebg) : 0 };
+    // 像的清晰程度：曝光不足 → 有效调制小、颗粒粗；曝光过度 → 非线性互调，像发糊发灰；曝光时振动 → 像被抹开
+    const Vvib = a.EmodC > 0 ? a.Emod / a.EmodC : 0;
+    const grain = clamp((0.6 - x) / 0.5, 0, 1) * 0.8 + clamp((0.5 - Vm) / 0.5, 0, 1) * 0.4;
+    const blur = clamp((x - 1.6) / 2, 0, 1) * 2.5 + clamp((0.85 - Vvib) / 0.6, 0, 1) * 3 + (fixed ? 0 : 0.8);
+    this.holo = { eta, tp, noise, x, Vm, K, g, fixed, grain: clamp(grain, 0, 1), blur, bleached: this.bleach, Etot, Vcoh: a.Eint > 0 ? a.EmodC / a.Eint : 0, Vvib: a.EmodC > 0 ? a.Emod / a.EmodC : 0, Vk: a.Er + a.Eo > 0 ? (2 * Math.sqrt(a.Er * a.Eo)) / (a.Er + a.Eo) : 0, fog: (a.Er + a.Eo + a.Ebg) > 0 ? a.Ebg / (a.Er + a.Eo + a.Ebg) : 0 };
     this.plateMat.color.set(this.bleach ? 0xdfe6e0 : new THREE.Color().setScalar(0.1 + 0.8 * tp));
     this.plateMat.opacity = this.bleach ? 0.35 : 0.9;
     this.app.toast(fixed ? '冲洗完成，干板放回干板架原位' : '冲洗完成，但定影不充分，干板发白', fixed ? 'ok' : 'warn');
@@ -645,7 +660,7 @@ export class HoloExperiment {
     const pReal = this.objPose(), lReal = this.lightDir(pReal, o0.uObj);
     const pImg = this.recPose || pReal, lImg = this.lightDir(pImg, this.recL);
     const f2 = (q) => `${q.x.toFixed(2)},${q.z.toFixed(2)},${q.rot.toFixed(3)}`, fv = (u) => `${u.x.toFixed(2)},${u.y.toFixed(2)},${u.z.toFixed(2)}`;
-    const key = [this.alpha, this.beta, this.on('obj'), f2(pReal), fv(lReal), f2(pImg), fv(lImg)].join('|');
+    const key = [this.alpha, this.beta, this.on('obj'), this.holo ? this.holo.blur.toFixed(1) : '', f2(pReal), fv(lReal), f2(pImg), fv(lImg)].join('|');
     const off = this._eyeOff || (this._eyeOff = document.createElement('canvas'));
     if (this._eyeKey !== key) {
       off.width = W; off.height = Hh;
@@ -653,6 +668,8 @@ export class HoloExperiment {
       if (this.on('obj')) this.drawScene(c2, W, Hh, cam, pReal, lReal); else { c2.fillStyle = '#000'; c2.fillRect(0, 0, W, Hh); }
       this._shade = c2.getImageData(0, 0, W, Hh).data;
       this.drawScene(c2, W, Hh, cam, pImg, lImg);
+      const bl = this.holo ? this.holo.blur : 0;
+      if (bl > 0.3) { const tmp = this._blurC || (this._blurC = document.createElement('canvas')); tmp.width = W; tmp.height = Hh; const t2 = tmp.getContext('2d'); t2.drawImage(off, 0, 0); c2.save(); c2.filter = `blur(${bl.toFixed(1)}px)`; c2.fillStyle = '#000'; c2.fillRect(0, 0, W, Hh); c2.drawImage(tmp, 0, 0); c2.restore(); }
       this._ghost = c2.getImageData(0, 0, W, Hh).data;
       this._eyeKey = key;
     }
@@ -675,6 +692,7 @@ export class HoloExperiment {
     const sx0 = Math.round(this.alpha * 9), sy0 = Math.round(this.beta * 9);
     const img = g.createImageData(W, Hh), d = img.data;
     const G = this.adapt(Math.max(Breal * Tp, Bimg, haze * 0.2));
+    const gr = hasPlate && this.holo ? this.holo.grain || 0 : 0;
     const tone = (b) => 1 - Math.exp(-1.4 * G * b);
     for (let y = 0; y < Hh; y++) for (let x = 0; x < W; x++) {
       const k = (y * W + x) * 4;
@@ -683,7 +701,7 @@ export class HoloExperiment {
       const sp = 0.45 + 0.55 * S.d[((((y >> 1) + sy0) % N) + N) % N * N + ((((x >> 1) + sx0) % N) + N) % N];
       const sp2 = S.d[(((y * 3 + 17) >> 1) % N) * N + (((x * 3 + sx0) >> 1) % N + N) % N];
       let red = s * Breal * (win ? Tp : 1) * sp;
-      if (win) red += sg * Bimg * sp + haze * sp2 * 0.2;
+      if (win) red += sg * Bimg * (gr > 0 ? (1 - gr) * sp + gr * 2.2 * sp2 * sp2 : sp) + haze * sp2 * 0.2;
       red = tone(red);
       let wr = 0, wg = 0, wb = 0;
       if (room) { const amb = (s > 0 ? s * 0.75 + 0.1 : 0.2) * (win ? Math.max(0.15, Tp) : 1); wr = wg = wb = amb; }
@@ -714,7 +732,7 @@ export class HoloExperiment {
     let foot = '';
     if (glare > 0.3) foot = '眼睛进入了参考光束！实际实验中切勿直视激光'; // 只在光束边沿（光强 < 中心的约 30%）时不报警，视野角上能看到扩束镜的亮点
     else if (hasMeter) foot = '干板架上是光功率计探头';
-    else if (hasPlate && this.holo && Bimg > 0.02) foot = Breal > 0.05 ? '物体仍被照明：看到的是物体本身和再现像的叠加' : '再现的虚像：移动头部观察视差';
+    else if (hasPlate && this.holo && Bimg > 0.0015) foot = Breal > 0.05 ? '物体仍被照明：看到的是物体本身和再现像的叠加' : `再现的虚像${this.quality()}：移动头部观察视差`;
     else if (hasPlate && this.holo) foot = o.Ir > 0 ? '再现像很暗或看不到' : '参考光没有照到全息图';
     else if (room) foot = '室内照明';
     v.foot(foot);
@@ -928,7 +946,7 @@ export class HoloExperiment {
       lines.push(`显影程度（相对 4 min）${h.g.toFixed(2)}，有效曝光量为干板最佳值的 ${(h.x * 100).toFixed(0)}%`);
       lines.push(`记录时的光强比 ${isFinite(h.K) ? h.K.toFixed(2) : '∞'}，相干性因子 ${h.Vcoh.toFixed(2)}，振动因子 ${h.Vvib.toFixed(2)}，杂散光占曝光量的 ${(h.fog * 100).toFixed(1)}%`);
       lines.push(`曝光量的调制度 ${h.Vm.toFixed(2)}，衍射效率 η ≈ ${(h.eta * 100).toFixed(1)}%（${h.bleached ? '漂白后的位相型' : '振幅型'}）`);
-      let grade = h.eta > 0.08 && h.noise < h.eta * 0.3 ? '再现像明亮清晰' : h.eta > 0.01 ? '能看到再现像，但较暗或有雾状噪声' : '基本看不到再现像';
+      let grade = h.eta > 0.08 && h.noise < h.eta * 0.3 && h.blur < 1 && h.grain < 0.3 ? '再现像明亮清晰' : h.eta > 0.0008 ? `能看到再现像，但${this.quality().replace(/[（）]/g, '') || '质量一般'}` : '基本看不到再现像';
       const why = [];
       if (h.Vvib < 0.5) why.push('曝光时平台振动');
       if (h.Vcoh < 0.6) why.push('光程差过大');
@@ -952,6 +970,6 @@ export class HoloExperiment {
 ${FIG.holoFig()}
 <h3>2. 再现</h3><p>冲洗后的干板振幅透过率与曝光量成线性关系时，用原参考光照明，透射光中含有 $|R|^2O$ 项，即原来的物光波：透过干板能在原处看到物体的三维虚像，移动头部可以看到不同侧面（视差）。</p>
 <h3>3. 实验条件</h3><p>(1) 光程差小于相干长度：多纵模 He-Ne 激光相邻纵模频差 $c/2L$，相干性随光程差周期变化，在 $\\Delta L=0$ 附近最好；<br>(2) 光强比 $K=I_r/I_o$ 取 3～6：太小时物光自身的干涉产生噪声，太大时条纹可见度 $2\\sqrt K/(1+K)$ 下降；<br>(3) 曝光量合适：使干板工作在 $t_a$–$E$ 曲线的线性段；<br>(4) 曝光时稳定：条纹间距约 $\\lambda/(2\\sin(\\theta/2))\\approx 1\\ \\mu\\text{m}$，光程变化 $\\lambda/4$ 就会抹平条纹。</p>
-<h3>4. 本仿真的计算模型</h3><p>按各元件的位置和镜架转角计算两路光程、光斑偏离和干板处的光强（高斯光束扩束、朗伯漫反射）。曝光期间逐时累加参考光、物光、杂散光的曝光量和干涉项，干涉项乘以纵模相干因子 $\\cos^2(\\pi\\Delta L/2L)$（三个纵模、强度 1:2:1 时的可见度；两个等强纵模为 $|\\cos(\\pi\\Delta L/2L)|$）和振动因子。冲洗按 $t_a=1/(1+x^3)$ 的特性曲线求调制，振幅型 $\\eta=(\\Delta t/2)^2$，漂白后 $\\eta=J_1^2(\\Delta\\varphi)$。再现画面由透视投影得到，叠加激光散斑。</p>`;
+<h3>4. 本仿真的计算模型</h3><p>按各元件的位置和镜架转角计算两路光程、光斑偏离和干板处的光强（高斯光束扩束、朗伯漫反射）。曝光期间逐时累加参考光、物光、杂散光的曝光量和干涉项，干涉项乘以纵模相干因子 $\\cos^2(\\pi\\Delta L/2L)$（三个纵模、强度 1:2:1 时的可见度；两个等强纵模为 $|\\cos(\\pi\\Delta L/2L)|$）和振动因子。冲洗按 $t_a=1/(1+x^2)$ 的特性曲线求调制，振幅型 $\\eta=(\\Delta t/2)^2$，漂白后 $\\eta=J_1^2(\\Delta\\varphi)$。再现画面由透视投影得到，叠加激光散斑。</p>`;
   }
 }

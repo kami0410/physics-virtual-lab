@@ -52,9 +52,9 @@ export class BohrExperiment {
   }
   startCapture() {
     const a = this.app;
-    if (this.motor) return a.toast('测阻尼振荡要关掉电机，让摆轮自由衰减', 'warn');
+    if (this.motor) a.toast('电机还开着：摆轮受强迫力作用，记下的不是自由衰减', 'warn');
     if (this.wheel.lastA < 20 && Math.abs(this.wheel.th) < 20 * DEG) return a.toast('摆轮几乎不动：先把摆轮转到约 160° 再松手', 'warn');
-    this.cap = { t0: this.wheel.t, damp: this.damp }; this.mem = null;
+    this.cap = { t0: this.wheel.t, damp: this.damp, motor: this.motor }; this.mem = null;
     a.toast('控制箱开始记录接下来 10 次振动的振幅和周期', 'ok');
   }
 
@@ -67,7 +67,7 @@ export class BohrExperiment {
     if (this.cap) {
       const pk = this.wheel.peaks.filter((p) => p.t > this.cap.t0), up = this.wheel.ups.filter((t) => t > this.cap.t0);
       if (pk.length >= 10 && up.length >= 11) {
-        this.mem = { damp: this.cap.damp, A: pk.slice(0, 10).map((p) => Math.round(p.A)), T: up.slice(0, 11).map((t, i, u) => (i ? Math.round((t - u[i - 1]) * 1000) / 1000 : 0)).slice(1) };
+        this.mem = { damp: this.cap.damp, motor: this.cap.motor, A: pk.slice(0, 10).map((p) => Math.round(p.A)), T: up.slice(0, 11).map((t, i, u) => (i ? Math.round((t - u[i - 1]) * 1000) / 1000 : 0)).slice(1) };
         this.cap = null; a.toast('阻尼振荡数据已存入控制箱，可以读取', 'ok');
       }
     }
@@ -209,31 +209,36 @@ export class BohrExperiment {
   }
   recFree(t) {
     const a = this.app;
-    if (this.motor) return a.toast('测自由振动要关电机', 'warn');
-    if (this.damp !== 0) a.toast('测固有周期应在阻尼挡 0 下进行', 'warn');
-    if (this.Ashow < 20) return a.toast('振幅太小了：把摆轮转到大角度再松手', 'warn');
+    if (this.Ashow < 20) a.toast('振幅太小了：把摆轮转到大角度再松手', 'warn');
     if (!isFinite(this.Tshow)) return a.toast('控制箱还没测出完整的一个周期，稍等', 'warn');
-    if (t.rows.some((r) => Math.abs(r.A - this.Ashow) < 3)) return a.toast('这个振幅附近已经记过了，等振幅再减小一些', 'warn');
-    t.addRow({ A: this.Ashow, T0: this.Tshow });
+    if (t.rows.some((r) => Math.abs(r.A - this.Ashow) < 3)) a.toast('这个振幅附近已经记过了，等振幅再减小一些', 'warn');
+    const fl = [];
+    if (this.motor) fl.push('电机开着，测到的是强迫力的周期而不是固有周期');
+    if (this.damp !== 0) fl.push(`阻尼挡是 ${this.damp}，不是 0`);
+    t.flagAll(t.addRow({ A: this.Ashow, T0: this.Tshow }), fl);
   }
   recDecay(t) {
     const a = this.app;
     if (!this.mem) return a.toast(this.cap ? '控制箱还在记录，稍等' : '控制箱里没有记录：先松开摆轮，再按“阻尼振荡：开始记录”', 'warn');
-    if (this.mem.damp !== 2) a.toast(`这组数据是在阻尼挡 ${this.mem.damp} 下记录的，本实验约定用阻尼挡 2`, 'warn');
-    if (this.mem.A[0] < 100) a.toast('起始振幅偏小：从约 160° 松手，10 次振动的振幅变化更明显', 'warn');
+    const fl = [];
+    if (this.mem.motor) fl.push('记录时电机开着，不是自由衰减');
+    if (this.mem.damp !== 2) fl.push(`这组数据是在阻尼挡 ${this.mem.damp} 下记录的，本实验约定用阻尼挡 2`);
+    if (this.mem.A[0] < 100) fl.push('起始振幅偏小，10 次振动的振幅变化不明显');
     this.mem.A.forEach((A, i) => { t.set(i, 'A', A); t.set(i, 'T', this.mem.T[i]); });
-    t.rows.forEach((r) => (r._damp = this.mem.damp));
+    t.rows.forEach((r) => { r._damp = this.mem.damp; delete r._flaw; });
+    if (fl.length) { t.flagAll(0, fl); t.rows.forEach((r) => (r._flaw = t.rows[0]._flaw)); t.changed(); }
   }
   recForced(t) {
     const a = this.app;
     if (!this.motor) return a.toast('电机没开，摆轮不是在做受迫振动', 'warn');
     if (!this.strobe) return a.toast('相位差要在闪光灯下读：打开闪光灯', 'warn');
     const dd = this.app.table('decay').rows.find((r) => r._damp != null)?._damp;
-    if (dd != null && dd !== this.damp) a.toast(`测阻尼系数用的是阻尼挡 ${dd}，现在是 ${this.damp}：两者必须相同`, 'warn');
-    if (!this.steadyNow()) a.toast('振幅还没有稳定，这时的振幅和相位差都不是稳态值', 'warn');
     if (!isFinite(this.Tshow) || !isFinite(this.phiShow)) return a.toast('控制箱还没测出周期，稍等', 'warn');
-    if (t.rows.some((r) => Math.abs(r.T - this.Tshow) < 0.0015)) return a.toast('这个周期已经记过了：改变强迫力周期', 'warn');
-    t.addRow({ T: this.Tshow, A: this.Ashow, phi: this.phiShow, _damp: this.damp });
+    if (t.rows.some((r) => Math.abs(r.T - this.Tshow) < 0.0015)) a.toast('这个周期已经记过了：改变强迫力周期', 'warn');
+    const fl = [];
+    if (dd != null && dd !== this.damp) fl.push(`测阻尼系数用的是阻尼挡 ${dd}，现在是 ${this.damp}`);
+    if (!this.steadyNow()) fl.push('振幅还没有稳定，这时的振幅和相位差都不是稳态值');
+    t.flagAll(t.addRow({ T: this.Tshow, A: this.Ashow, phi: this.phiShow, _damp: this.damp }), fl);
   }
 
   // ======================= 自动操作 =======================

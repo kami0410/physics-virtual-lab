@@ -132,7 +132,7 @@ export class QuasiSteadyExperiment {
     const a = this.app, h = this.held;
     if (!this.heat && this.t === 0) return a.toast('还没有开始加热', 'warn');
     if (h.m < 1) return a.toast('还没到第 1 分钟', 'warn');
-    if (t.rows.some((r) => r.t === h.m)) return a.toast(`第 ${h.m} 分钟已经记过了，等下一分钟`, 'warn');
+    if (t.rows.some((r) => r.t === h.m)) a.toast(`第 ${h.m} 分钟已经记过了，等下一分钟`, 'warn');
     t.addRow({ t: h.m, Vt: h.Vt, Vc: h.Vc, _V: this.V });
   }
 

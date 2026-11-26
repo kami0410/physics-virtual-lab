@@ -193,6 +193,18 @@ for (const lam of [656.3, 430]) {
   check('maskRadial 与 mask 相同（圆孔）', same(W.maskRadial(W.begin(N, L, 5e-4), (r) => (r <= 0.93 ? 1 : 0), 0.93), W.mask(W.begin(N, L, 5e-4), (x, y) => (Math.hypot(x, y) <= 0.93 ? 1 : 0))) < 1e-12);
 }
 
+// ---------- 5c. 一维传播 propagateRow 与二维网格中间一行相同（近场角谱法、远场菲涅耳各一例） ----------
+{
+  const N = 128, lam = 632.8e-6, a = 0.4, t = (x) => (Math.abs(x) <= a / 2 ? 1 : 0);
+  for (const z of [5, 2000]) {
+    const L = Math.max(1.6 * (a + 10 * Math.sqrt(lam * z)), 1.2 * a);
+    const F = W.mask(W.begin(N, L, lam), t, 2), out = z <= (L * L) / (N * lam) ? W.angularSpectrum(F, z) : W.fresnelFar(F, z);
+    const r = W.propagateRow(N, L, lam, t, z, 2);
+    let e = 0; for (let j = 0; j < N; j++) { const k = (N / 2) * N + j; e = Math.max(e, Math.abs(out.re[k] ** 2 + out.im[k] ** 2 - (r.re[j] ** 2 + r.im[j] ** 2))); }
+    check(`propagateRow 与二维传播相同（z = ${z} mm）`, e < 1e-9 && Math.abs(r.dx - out.dx) < 1e-12, `最大偏差 ${e}`);
+  }
+}
+
 // ---------- 6. 像质分析（点列图） ----------
 {
   // 抛物面镜对无穷远轴上物理想成像：几何弥散为零；同口径球面镜有球差

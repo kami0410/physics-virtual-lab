@@ -238,7 +238,7 @@ export class StokesExperiment {
   }
   recT(t) {
     const a = this.app, bl = this.ball;
-    if (this.sw.run) return a.toast('秒表还在走', 'warn');
+    if (this.sw.run) a.toast('秒表还在走', 'warn');
     if (!bl) return a.toast('还没有投放小球', 'warn');
     if (!(this.sw.value > 0)) return a.toast('秒表读数为零', 'warn');
     const i = t.rows.findIndex((r) => r.k === bl.b.id);
@@ -249,7 +249,7 @@ export class StokesExperiment {
   recM(t) {
     const a = this.app, k = this.tool;
     if (k === 'd') return a.toast('千分尺的读数记在小球表里', 'warn');
-    if (k === 'D') { const p = this.cal.problem(); if (p) return a.toast(p, 'warn'); }
+    if (k === 'D') { const p = this.cal.problem(); if (p) a.toast(p, 'warn'); }
     const i = t.rows.findIndex((r) => r.k === k);
     t.set(i, 'v', Math.round((k === 'D' ? this.cal.reading : this.tape.reading) * 100) / 100);
   }

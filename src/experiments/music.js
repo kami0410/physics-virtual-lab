@@ -288,31 +288,29 @@ export class MusicExperiment {
     const a = this.app, f = this.cap.comps[0].f;
     let best = -1, bc = Infinity;
     t.rows.forEach((r, i) => { const c = cents(f, r.ft); if (Math.abs(c) < Math.abs(bc)) { bc = c; best = i; } });
-    if (Math.abs(bc) > 40) return a.toast(`基频 ${f.toFixed(1)} Hz 离 C 大调的任何一个音都很远，调琴码 B`, 'warn');
-    if (Math.abs(bc) > 5) return a.toast(`离 ${t.rows[best].note} 还${bc > 0 ? '高' : '低'} ${Math.abs(bc).toFixed(0)} 音分：把琴码 B ${bc > 0 ? '往右（弦变长）' : '往左（弦变短）'}移一点`, 'warn');
+    if (Math.abs(bc) > 40) a.toast(`基频 ${f.toFixed(1)} Hz 离 C 大调的任何一个音都很远，调琴码 B`, 'warn');
     t.set(best, 'L', Math.round(this.L * 100) / 100);
     t.set(best, 'f', +f.toFixed(2));
+    if (Math.abs(bc) > 5) t.flagAll(best, [`离 ${t.rows[best].note} 还${bc > 0 ? '高' : '低'} ${Math.abs(bc).toFixed(0)} 音分，没有调准（琴码 B 要${bc > 0 ? '往右，弦变长' : '往左，弦变短'}）`]);
   }
   harmonics() { const c = this.cap.comps, L1 = this.dB(c[0].f); return [2, 3, 4, 5, 6].map((n) => Math.max(-40, this.dB(c[n - 1].f) - L1)); }
   recTimbre(t) {
     if (!this.stringCapOK()) return;
     const a = this.app, r = this.x0 / this.L;
     if (this.cap.comps.length < 6) return a.toast('弦太短、基频太高，第 6 次谐波超出了频谱范围：把弦放长一些', 'warn');
-    if (t.rows.some((x) => Math.abs(x.r - r) < 0.005)) return a.toast('这个拨弦位置已经记过了', 'warn');
-    if (t.rows.length && Math.abs(t.rows[0]._L - this.L) > 0.05) a.toast('这张表要求弦长不变，和第一行不一样', 'warn');
+    if (t.rows.some((x) => Math.abs(x.r - r) < 0.005)) a.toast('这个拨弦位置已经记过了', 'warn');
     const h = this.harmonics();
-    t.addRow({ r: +r.toFixed(4), ...Object.fromEntries(h.map((v, i) => [`h${i + 2}`, +v.toFixed(1)])), _L: this.L });
+    t.flagAll(t.addRow({ r: +r.toFixed(4), ...Object.fromEntries(h.map((v, i) => [`h${i + 2}`, +v.toFixed(1)])), _L: this.L }), t.rows.length && Math.abs(t.rows[0]._L - this.L) > 0.05 ? ['弦长和第一行不同'] : []);
   }
   recBeat(t) {
     const a = this.app, c = this.cap;
     if (!this.lastB || this.lastB.s !== this.s) return a.toast('先在当前滑块位置单独敲一次音叉 B，测出它的频率', 'warn');
     if (!c || c.kind !== 'forks' || c.s !== this.s) return a.toast('再同时敲 A 和 B，在波形上看拍', 'warn');
-    if (t.rows.some((r) => r.s === this.s)) return a.toast('这个滑块位置已经测过了', 'warn');
+    if (t.rows.some((r) => r.s === this.s)) a.toast('这个滑块位置已经测过了', 'warn');
     const dt = (this.c2 - this.c1) * TDIV[this.tb], fb = Math.abs(this.fA - this.lastB.f), n = dt * fb;
     if (dt <= 0) return a.toast('光标 2 应在光标 1 的右边', 'warn');
-    if (Math.round(n) < 2) return a.toast('两条光标之间不到 2 个拍：加大时基，或把光标拉开', 'warn');
-    if (Math.abs(n - Math.round(n)) > 0.15) return a.toast('光标没有都对准拍的最弱处（两条光标之间不是整数个拍）', 'warn');
-    t.addRow({ s: this.s, fB: +this.lastB.f.toFixed(2), dt: +dt.toFixed(4), n: Math.round(n) });
+    if (Math.round(n) < 2) a.toast('两条光标之间不到 2 个拍：加大时基，或把光标拉开', 'warn');
+    t.flagAll(t.addRow({ s: this.s, fB: +this.lastB.f.toFixed(2), dt: +dt.toFixed(4), n: Math.round(n) }), Math.abs(n - Math.round(n)) > 0.15 ? [`光标没有都对准拍的最弱处：两条光标之间约 ${n.toFixed(2)} 个拍，不是整数`] : []);
   }
 
   // ======================= 自动操作 =======================

@@ -308,7 +308,7 @@ export class BrewsterExperiment {
       {
         id: 'zero', title: '法线零点', fixedRows: true, initRows: () => [{}, {}, {}],
         columns: [{ key: 'T', label: '反射光回到小孔时载物台读数 /°', digits: 1 }],
-        buttons: [{ label: '记录载物台读数', onClick: (t) => { const i = t.firstEmpty('T'); if (i < 0) return this.app.toast('已记录 3 次', 'ok'); if (!this.lit() || !this.app.comp('sample').placed) return this.app.toast('没有反射光', 'warn'); const x = L_BACK * Math.tan(2 * this.theta * D2R), y = L_BACK * Math.tan(2 * this.tilt * D2R); if (Math.hypot(x, y) > 1.5) this.app.toast('反射光点没有回到小孔', 'warn'); t.set(i, 'T', this.readT()); } }],
+        buttons: [{ label: '记录载物台读数', onClick: (t) => { const i = t.firstEmpty('T'); if (i < 0) return this.app.toast('已记录 3 次', 'ok'); if (!this.lit() || !this.app.comp('sample').placed) return this.app.toast('没有反射光', 'warn'); const x = L_BACK * Math.tan(2 * this.theta * D2R), y = L_BACK * Math.tan(2 * this.tilt * D2R); t.set(i, 'T', this.readT()); if (Math.hypot(x, y) > 1.5) t.flagAll(i, ['反射光点没有回到小孔，载物台读数不是法线零点']); } }],
         note: '每次把载物台转开后再转回、使反射光点回到小孔中心，共记录 3 次取平均。',
       },
       {
@@ -351,24 +351,24 @@ export class BrewsterExperiment {
     const i = t.firstEmpty('T');
     if (i < 0) return this.app.toast('已记录 3 次', 'ok');
     if (!this.lit() || !this.app.comp('pol').placed || !this.app.comp('sample').placed) return this.app.toast('需要激光、偏振片和样品', 'warn');
-    if (!this.aimed()) this.app.toast('探测臂没有对准反射光方向', 'warn');
-    if (Math.abs(Math.abs(this.theta) - this.thB) > 0.8 || Math.abs(this.psi) > 2 * D2R) this.app.toast('反射光还没有调到最弱', 'warn');
-    t.set(i, 'T', this.readT()); t.set(i, 'P', Math.round(this.Pr * 10) / 10);
+    const fl = [];
+    if (!this.aimed()) fl.push('探测臂没有对准反射光方向');
+    if (Math.abs(Math.abs(this.theta) - this.thB) > 0.8 || Math.abs(this.psi) > 2 * D2R) fl.push('反射光还没有调到最弱');
+    t.set(i, 'T', this.readT()); t.set(i, 'P', Math.round(this.Pr * 10) / 10); t.flagAll(i, fl);
   }
   recP0(t) {
-    if (this.app.comp('sample').placed) return this.app.toast('请先取下样品', 'warn');
+    if (this.app.comp('sample').placed) this.app.toast('请先取下样品', 'warn');
     if (!this.app.comp('pol').placed) return this.app.toast('请放上偏振片', 'warn');
     const s = this.polState();
-    if (!s) return this.app.toast('偏振片不在 p 或 s 方向', 'warn');
-    if (Math.abs(angDiff(this.A, 0)) > 0.3) this.app.toast('探测臂没有正对入射光', 'warn');
+    if (!s) this.app.toast('偏振片不在 p 或 s 方向', 'warn');
     t.set(s === 'p' ? 0 : 1, 'P', this.reading().v);
+    if (Math.abs(angDiff(this.A, 0)) > 0.3) t.flagAll(s === 'p' ? 0 : 1, ['探测臂没有正对入射光']);
   }
   recCurve(t) {
     if (!this.lit() || !this.app.comp('sample').placed || !this.app.comp('pol').placed) return this.app.toast('需要激光、偏振片和样品', 'warn');
     const s = this.polState();
-    if (!s) return this.app.toast('偏振片不在 p 或 s 方向（透振方向与入射面的夹角应接近 0° 或 90°）', 'warn');
-    if (!this.aimed()) this.app.toast('探测臂没有对准反射光（示数不是最大）', 'warn');
-    t.addRow({ pol: s, T: this.readT(), P: this.reading().v });
+    if (!s) this.app.toast('偏振片不在 p 或 s 方向（透振方向与入射面的夹角应接近 0° 或 90°）', 'warn');
+    t.flagAll(t.addRow({ pol: s, T: this.readT(), P: this.reading().v }), this.aimed() ? [] : ['探测臂没有对准反射光（示数不是最大）']);
   }
 
   steps() {

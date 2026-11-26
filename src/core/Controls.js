@@ -50,7 +50,7 @@ export function buildControl(d, onChange) {
         timer = setTimeout(() => { rep = setInterval(fire, 60); }, 380);
       });
       const stop = () => { clearTimeout(timer); clearInterval(rep); };
-      b.addEventListener('pointerup', stop); b.addEventListener('pointerleave', stop);
+      b.addEventListener('pointerup', stop); b.addEventListener('pointerleave', stop); b.addEventListener('pointercancel', stop);
       return b;
     };
     const dial = h('div', 'dial'); const mark = h('div', 'mark'); dial.append(mark);
@@ -135,7 +135,9 @@ export function buildControl(d, onChange) {
 }
 
 function clampV(d, v) {
-  if (d.wrap) { const r = d.wrap; return ((v % r) + r) % r; }
+  // wrap: 数值 → 按该周期绕回；wrap: true → 周期由 set() 自己处理（角度 360、十进盘 10），这里不夹紧
+  if (d.wrap === true) return v;
+  if (typeof d.wrap === 'number' && d.wrap > 0) { const r = d.wrap; return ((v % r) + r) % r; }
   if (d.min != null) v = Math.max(d.min, v);
   if (d.max != null) v = Math.min(d.max, v);
   return v;

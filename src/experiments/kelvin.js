@@ -292,14 +292,17 @@ export class KelvinExperiment {
     const a = this.app;
     if (!this.valid()) return a.toast('电桥没有接好', 'warn');
     if (!this.sup.on || this.rev === 0) return a.toast('工作电流没有接通', 'warn');
-    if (!this.cir.dev('kg').closed) return a.toast('按下检流计按键才能判断是否平衡', 'warn');
-    if (this.gp.s * 100000 > 500) a.toast('保护电阻没有减到零，平衡判断不够灵敏', 'warn');
-    if (Math.abs(this.gDiv()) > 0.6) a.toast('检流计还没有指零', 'warn');
-    if (Math.abs(this.current()) < 1) a.toast('工作电流太小（不到 1 A），电桥不灵敏', 'warn');
+    const fl = [];
+    if (!this.cir.dev('kg').closed) fl.push('检流计按键没有按下，没法判断是否平衡');
+    else {
+      if (this.gp.s * 100000 > 500) fl.push('保护电阻没有减到零，平衡判断不够灵敏');
+      if (Math.abs(this.gDiv()) > 0.6) fl.push('检流计还没有指零');
+    }
+    if (Math.abs(this.current()) < 1) fl.push('工作电流太小（不到 1 A），电桥不灵敏');
     const key = this.rev > 0 ? 'R2p' : 'R2m', R2 = Math.round(this.dual.nominal() * 10) / 10, L = this.L;
     let i = t.rows.findIndex((r) => Math.abs(r.L - L) < 0.01 && r.R1 === this.R1 && !isFinite(r[key]));
-    if (i < 0) { t.addRow({ L, R1: this.R1, [key]: R2 }); return; }
-    t.set(i, key, R2);
+    if (i < 0) i = t.addRow({ L, R1: this.R1, [key]: R2 }); else t.set(i, key, R2);
+    t.flagAll(i, fl);
   }
 
   // ---------------- 自动操作 ----------------

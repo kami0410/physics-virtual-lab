@@ -287,7 +287,7 @@ export class HallExperiment {
   recHall(t) {
     if (!this.ready('H')) return;
     const Is = this.tst.Is, IM = this.tst.IM;
-    if (!(IM > 0)) return this.app.toast('Iₘ 为零，没有磁场', 'warn');
+    if (!(IM > 0)) this.app.toast('Iₘ 为零，没有磁场', 'warn');
     const col = COMBO[this.mag.s1 + this.mag.s2];
     let i = t.rows.findIndex((r) => Math.abs(r.Is - Is) < 1e-6 && Math.abs(r.IM - IM) < 1e-6);
     if (i < 0) i = t.addRow({ Is, IM });

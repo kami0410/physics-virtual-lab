@@ -425,7 +425,7 @@ export class YModulusExperiment {
   recLen(t) {
     const a = this.app, q = this.tool;
     if (q === 'd') return a.toast('直径记在下一张表里', 'warn');
-    if (q === 'b') { const p = this.cal.problem(); if (p) return a.toast(p, 'warn'); }
+    if (q === 'b') { const p = this.cal.problem(); if (p) a.toast(p, 'warn'); }
     if (q === 'D' && !a.comp('scope').placed) return a.toast('望远镜尺组还没有放好', 'warn');
     const i = t.rows.findIndex((r) => r.q === q);
     const v = q === 'L' ? this.tapeL.reading : q === 'D' ? this.tapeD.reading : this.cal.reading;
@@ -435,7 +435,7 @@ export class YModulusExperiment {
     const a = this.app;
     if (this.tool !== 'd') return a.toast('先在“量具”中选螺旋测微器', 'warn');
     const p = this.mic.problem();
-    if (p) { if (this.mic.squeeze > 0.0015) a.toast(p, 'warn'); else return a.toast(p, 'warn'); }
+    if (p) { if (this.mic.squeeze > 0.0015) a.toast(p, 'warn'); else a.toast(p, 'warn'); }
     const i = t.rows.findIndex((r) => r.k === this.micAt);
     t.set(i, 'r', Math.round(this.mic.reading * 1000) / 1000);
   }
@@ -503,8 +503,11 @@ export class YModulusExperiment {
         check: () => done('load', 'n2') >= 8,
         auto: async () => {
           app.showTable(0);
+          // 学生中途可能加减过砝码：按 n₀ 时的载荷逐级回到 +7 kg … +0 kg，每级都记
+          const k0 = this.k0 ?? Math.max(0, this.nMass - 7);
+          if (this.nMass !== k0 + 7) { this.setMass(k0 + 7); this.lastDir = -1; await this.settle(); }
           await app.wait(1500); await app.record('load', 1);
-          for (let i = 0; i < 7; i++) { this.setMass(this.nMass - 1); await this.settle(); await app.record('load', 1); }
+          for (let i = 6; i >= 0; i--) { this.setMass(k0 + i); await this.settle(); await app.record('load', 1); }
         },
       },
       {

@@ -28,7 +28,9 @@ export class Stage {
     scene.background = new THREE.Color(0x171b1a);
     scene.fog = new THREE.Fog(0x171b1a, 380, 1100);
     const pmrem = new THREE.PMREMGenerator(renderer);
-    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    this._envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
+    scene.environment = this._envRT.texture;
+    pmrem.dispose();
     scene.environmentIntensity = 0.55;
     this.scene = scene;
 
@@ -184,7 +186,10 @@ export class Stage {
       const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
       mats.forEach((m) => { if (m.map) m.map.dispose(); m.dispose(); });
     });
+    this._envRT && this._envRT.dispose();
     this.renderer.dispose();
+    // 立即释放 WebGL 上下文：浏览器同时存活的上下文有上限（Chrome 约 16 个），超出后最早的会丢失
+    this.renderer.forceContextLoss();
     this.renderer.domElement.remove();
     this.labelRenderer.domElement.remove();
   }

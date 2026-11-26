@@ -202,36 +202,40 @@ export class DaqExperiment {
   recCal(t) {
     const a = this.app;
     if (!this.ch1ok()) return;
-    if (this.m === 'U') return a.toast('托盘上放的是未知物体，标定要用砝码', 'warn');
+    if (this.m === 'U') a.toast('托盘上放的是未知物体，标定要用砝码', 'warn');
     const U = this.meanRead();
-    if (!t.rows.length && (this.m !== 0 || Math.abs(U) > 0.01)) return a.toast('第一行应在空载下记录，并先调零（输出在 ±10 mV 以内）', 'warn');
-    if (t.rows.length && t.rows[0]._G !== this.G) return a.toast(`增益要和第一行相同（×${t.rows[0]._G}）`, 'warn');
     const dir = this.dir === 'load' ? '加载' : '卸载';
-    if (t.rows.some((r) => r.m === this.m && r.dir === dir)) return a.toast('这一点已经测过了', 'warn');
-    t.addRow({ m: this.m, dir, U, _G: this.G, _z: this.zero });
+    if (t.rows.some((r) => r.m === this.m && r.dir === dir)) a.toast('这一点已经测过了', 'warn');
+    const fl = [];
+    if (!t.rows.length && this.m !== 0) fl.push('第一行一般在空载下记录');
+    if (this.m === 0 && Math.abs(U) > 0.01) fl.push(`空载输出 ${(U * 1000).toFixed(0)} mV，没有调零`);
+    if (t.rows.length && t.rows[0]._G !== this.G) fl.push(`增益和第一行（×${t.rows[0]._G}）不同`);
+    t.flagAll(t.addRow({ m: this.m, dir, U, _G: this.G, _z: this.zero }), fl);
   }
   recUnk(t) {
     const a = this.app, cal = a.table('cal').rows;
     if (!this.ch1ok()) return;
-    if (this.m !== 'U') return a.toast('托盘上要放未知物体', 'warn');
-    if (cal.length && (cal[0]._G !== this.G || Math.abs(cal[0]._z - this.zero) > 1e-9)) return a.toast('增益和调零要和标定时相同', 'warn');
+    if (this.m !== 'U') a.toast('托盘上要放未知物体', 'warn');
     t.set(0, 'U', this.meanRead());
+    if (cal.length && (cal[0]._G !== this.G || Math.abs(cal[0]._z - this.zero) > 1e-9)) t.flagAll(0, ['增益或调零和标定时不同，标定曲线不再适用']);
   }
   recAlias(t) {
     const a = this.app;
-    if (this.ch !== 2) return a.toast('采集通道要选 CH2', 'warn');
-    if (this.sample().clip) return a.toast('信号超量程', 'warn');
-    if (t.rows.length && t.rows[0]._fs !== this.fs) return a.toast(`采样频率要和第一行相同（${t.rows[0]._fs} Hz）`, 'warn');
-    if (t.rows.some((r) => Math.abs(r.f - this.f) < 0.05)) return a.toast('这个频率已经测过了', 'warn');
-    t.addRow({ f: this.f, fa: this.peakRead(), _fs: this.fs });
+    if (this.ch !== 2) a.toast('采集通道要选 CH2', 'warn');
+    if (t.rows.some((r) => Math.abs(r.f - this.f) < 0.05)) a.toast('这个频率已经测过了', 'warn');
+    const fl = [];
+    if (this.sample().clip) fl.push('信号超量程，波形被削顶，频谱里多出谐波');
+    if (t.rows.length && t.rows[0]._fs !== this.fs) fl.push(`采样频率和第一行（${t.rows[0]._fs} Hz）不同`);
+    t.flagAll(t.addRow({ f: this.f, fa: this.peakRead(), _fs: this.fs }), fl);
   }
   recQ(t) {
     const a = this.app;
-    if (this.ch !== 2) return a.toast('采集通道要选 CH2', 'warn');
-    if (this.sample().clip) return a.toast('信号超量程：幅度要小于 5 V', 'warn');
-    if (this.A < 1) return a.toast('信号幅度太小：取接近满量程的幅度（几伏）', 'warn');
-    if (t.rows.some((r) => r.bits === this.bits)) return a.toast('这个位数已经测过了', 'warn');
-    t.addRow({ bits: this.bits, LSB: +(lsb(this.bits) * 1e3).toFixed(4), rms: this.rmsRead() });
+    if (this.ch !== 2) a.toast('采集通道要选 CH2', 'warn');
+    if (t.rows.some((r) => r.bits === this.bits)) a.toast('这个位数已经测过了', 'warn');
+    const fl = [];
+    if (this.sample().clip) fl.push('信号超量程，削顶带来的误差远大于量化噪声');
+    if (this.A < 1) fl.push('信号幅度太小，量化噪声不再像均匀分布');
+    t.flagAll(t.addRow({ bits: this.bits, LSB: +(lsb(this.bits) * 1e3).toFixed(4), rms: this.rmsRead() }), fl);
   }
 
   // ======================= 自动操作 =======================

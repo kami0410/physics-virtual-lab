@@ -184,7 +184,18 @@ async function rescue(browser, id, seed, ops) {
 
 async function pool(tasks, k) {
   const out = []; let i = 0;
-  await Promise.all(Array.from({ length: k }, async () => { while (i < tasks.length) { const t = tasks[i++]; try { out.push(await t()); } catch (err) { out.push({ id: t.id, kind: t.kind, problems: ['测试本身出错：' + err.message], info: '' }); } } }));
+  // 单项超时：某个实验卡死时记为失败并继续，不让整轮测试挂住；每完成一项打印一行进度
+  const LIMIT = +arg('--task-timeout', 600) * 1000;
+  await Promise.all(Array.from({ length: k }, async () => {
+    while (i < tasks.length) {
+      const t = tasks[i++]; let timer, r;
+      try {
+        r = await Promise.race([t(), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`超过 ${LIMIT / 1000} s 没有结束（卡住）`)), LIMIT); })]);
+      } catch (err) { r = { id: t.id, kind: t.kind, problems: ['测试本身出错：' + err.message], info: '' }; }
+      clearTimeout(timer); out.push(r);
+      console.log(`  [${out.length}/${tasks.length}] ${r.problems.length ? '✗' : '✓'} ${t.id} ${t.kind}`);
+    }
+  }));
   return out;
 }
 

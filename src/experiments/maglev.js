@@ -198,33 +198,31 @@ export class MaglevExperiment {
   recFi(t) {
     const a = this.app;
     if (this.mode !== 'static') return a.toast('改到"静力测量"方式', 'warn');
-    if (Math.abs(this.gStat - 6) > 0.005) return a.toast('测微台要调到 6.00 mm', 'warn');
-    if (t.rows.some((r) => Math.abs(r.i - this.iStat) < 0.01)) return a.toast('这个电流已经测过了', 'warn');
-    t.addRow({ i: this.iStat, F: this.Fread() });
+    if (t.rows.some((r) => Math.abs(r.i - this.iStat) < 0.01)) a.toast('这个电流已经测过了', 'warn');
+    t.flagAll(t.addRow({ i: this.iStat, F: this.Fread() }), Math.abs(this.gStat - 6) > 0.005 ? [`气隙是 ${this.gStat.toFixed(2)} mm，不是 6.00 mm`] : []);
   }
   recFg(t) {
     const a = this.app;
     if (this.mode !== 'static') return a.toast('改到"静力测量"方式', 'warn');
-    if (Math.abs(this.iStat) > 0.0005) return a.toast('线圈电流要调到 0', 'warn');
-    if (t.rows.some((r) => Math.abs(r.g - this.gStat) < 0.05)) return a.toast('这个气隙已经测过了', 'warn');
-    t.addRow({ g: this.gStat, F: this.Fread() });
+    if (t.rows.some((r) => Math.abs(r.g - this.gStat) < 0.05)) a.toast('这个气隙已经测过了', 'warn');
+    t.flagAll(t.addRow({ g: this.gStat, F: this.Fread() }), Math.abs(this.iStat) > 0.0005 ? ['线圈里有电流，力里混入了电磁力，不只是永磁体的吸力'] : []);
   }
   recZp(t) {
     const a = this.app;
     if (!this.levitating()) return a.toast('浮子没有悬浮起来', 'warn');
-    if (this.cmode !== 'zp') return a.toast('控制方式要选"零功率"', 'warn');
-    if (!this.steady()) return a.toast('还没有稳定：等线圈电流回到零、气隙不再变化', 'warn');
-    if (t.rows.some((r) => r.dm === this.dm)) return a.toast('这个负载已经测过了', 'warn');
-    t.addRow({ dm: this.dm, g: this.gRead(), i: this.iRead() });
+    if (this.cmode !== 'zp') a.toast('控制方式要选"零功率"', 'warn');
+    if (t.rows.some((r) => r.dm === this.dm)) a.toast('这个负载已经测过了', 'warn');
+    t.flagAll(t.addRow({ dm: this.dm, g: this.gRead(), i: this.iRead() }), this.steady() ? [] : ['还没有稳定：线圈电流没回到零、气隙还在变']);
   }
   recOsc(t) {
     const a = this.app, r = this.ring;
     if (this.mode !== 'lev' || this.cmode !== 'pos') return a.toast('要在悬浮、定位方式下测', 'warn');
-    if (Math.abs(this.gset - 6) > 0.005 || this.dm) return a.toast('设定气隙 6.00 mm、不加砝码', 'warn');
     if (!r || r.fail) return a.toast('先等浮子稳定，再轻敲浮子测一次振荡', 'warn');
-    if (t.rows.length && Math.abs(t.rows[0]._Kd - r.Kd) > 1e-9) return a.toast(`K_d 要和第一行相同（${t.rows[0]._Kd}）`, 'warn');
-    if (t.rows.some((x) => Math.abs(x.Kp - r.Kp) < 0.005)) return a.toast('这个 K_p 已经测过了', 'warn');
-    t.addRow({ Kp: r.Kp, i: Math.round(r.i * 1000) / 1000, fd: +r.fd.toFixed(3), r: +r.r.toFixed(3), _Kd: r.Kd });
+    if (t.rows.some((x) => Math.abs(x.Kp - r.Kp) < 0.005)) a.toast('这个 K_p 已经测过了', 'warn');
+    const fl = [];
+    if (Math.abs(this.gset - 6) > 0.005 || this.dm) fl.push('设定气隙不是 6.00 mm 或加着砝码，工作点变了');
+    if (t.rows.length && Math.abs(t.rows[0]._Kd - r.Kd) > 1e-9) fl.push(`K_d 和第一行（${t.rows[0]._Kd}）不同`);
+    t.flagAll(t.addRow({ Kp: r.Kp, i: Math.round(r.i * 1000) / 1000, fd: +r.fd.toFixed(3), r: +r.r.toFixed(3), _Kd: r.Kd }), fl);
   }
 
   // ======================= 自动操作 =======================

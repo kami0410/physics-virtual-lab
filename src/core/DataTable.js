@@ -22,6 +22,7 @@ export class DataTable {
     }
     this.rows.push({ ...obj });
     const i = (this.fresh = this.rows.length - 1);
+    if (this._touched) this._touched.add(i);
     if (this.selfRead) for (const k of Object.keys(obj)) this.pend(this.rows[i], k);
     this.changed();
     return i;
@@ -29,6 +30,7 @@ export class DataTable {
   set(i, key, val) {
     if (!this.rows[i]) return;
     this.rows[i][key] = val;
+    if (this._touched) this._touched.add(i);
     if (this.selfRead) this.pend(this.rows[i], key);
     else if (this.rows[i]._pend) { delete this.rows[i]._pend[key]; if (this.rows[i]._chk) delete this.rows[i]._chk[key]; }
     this.fresh = i;
@@ -60,6 +62,41 @@ export class DataTable {
   /** 找到 key 列第一个空单元所在行 */
   firstEmpty(key) {
     return this.rows.findIndex((r) => r[key] == null || r[key] === '' || Number.isNaN(r[key]));
+  }
+  /**
+   * 给某行标上“操作条件有问题”：读数照样记下、参与数据处理，表里这一行标成警示色，悬停可看原因，报告里加注。
+   * 学生可以做错，再从现象和结果里看出错在哪里。
+   */
+  flag(i, msg) {
+    const r = this.rows[i]; if (!r || !msg) return;
+    r._flaw = r._flaw && !r._flaw.includes(msg) ? `${r._flaw}；${msg}` : msg;
+    this.changed();
+  }
+  /** 记录时发现的问题（数组）：照样记下，提示学生，并把这一行标出来 */
+  flagAll(i, msgs) {
+    if (i == null || i < 0 || !msgs || !msgs.length) return;
+    this.app && this.app.toast(`已记下这组读数，但${msgs.join('；')}。数据处理时会看到它的影响。`, 'warn');
+    this.flag(i, msgs.join('；'));
+  }
+  /**
+   * 按下记录按钮：记录函数里弹出的警告（条件不对但照样记下的情况）自动标到这次写入的行上。
+   * 拒绝记录的情况不会写入任何行，也就不会被标。
+   */
+  press(b) {
+    const app = this.app, warns = [], old = app && app._recWarn;
+    this._touched = new Set();
+    if (app) app._recWarn = warns;
+    try { b.onClick(this); } catch (err) {
+      // 条件离谱到读数本身不存在（例如该有的器材不在）：不让页面出错，只说明这一组没记下来
+      console.warn(err);
+      if (app) app.toast(`这一组没能记下来${warns.length ? '：' + warns.map((w) => String(w).replace(/<[^>]+>/g, '')).join('；') : '：现在的仪器状态下读不出这个量'}`, 'warn');
+      warns.length = 0;
+    } finally {
+      if (app) app._recWarn = old;
+      const rows = [...this._touched]; this._touched = null;
+      const msg = [...new Set(warns.map((w) => String(w).replace(/<[^>]+>/g, '').replace(/^提示：/, '').trim()))].join('；');
+      if (msg) for (const i of rows) this.flag(i, msg);
+    }
   }
   removeRow(i) { this.rows.splice(i, 1); this.changed(); }
   clear() { this.rows = this.spec.initRows ? this.spec.initRows() : []; this.changed(); }
@@ -105,9 +142,11 @@ export class DataTable {
         const pend = this.isPend(r, c.key), chk = r._chk && r._chk[c.key];
         return `<td class="${pend ? 'toread' : chk ? 'rd-' + chk : ''}"><input data-r="${i}" data-k="${c.key}" value="${this.fmt(c, v)}" placeholder="${pend ? '读数' : '—'}"${chk === 'bad' ? ' title="与仪器示数不符，请重新读数"' : ''}/></td>`;
       }).join('');
-      return `<tr class="${i === this.fresh ? 'fresh' : ''}"><td class="idx">${i + 1}</td>${tds}<td>${this.spec.fixedRows ? '' : `<button class="x" data-del="${i}" title="删除此行">✕</button>`}</td></tr>`;
+      const fl = r._flaw ? String(r._flaw).replace(/"/g, '&quot;') : '';
+      return `<tr class="${i === this.fresh ? 'fresh' : ''}${fl ? ' flaw' : ''}"${fl ? ` title="这一行记录时：${fl}"` : ''}><td class="idx">${i + 1}${fl ? '<span class="flaw-mk">!</span>' : ''}</td>${tds}<td>${this.spec.fixedRows ? '' : `<button class="x" data-del="${i}" title="删除此行">✕</button>`}</td></tr>`;
     }).join('');
-    this.el.innerHTML = `<table class="dt"><thead>${head}</thead><tbody>${body || `<tr><td class="empty" colspan="${cols.length + 2}">还没有数据。调好仪器后点击右侧的记录按钮，也可以直接在表格里填写。</td></tr>`}</tbody></table>`;
+    const notes = this.rows.map((r, i) => (r._flaw ? `<li><b>第 ${i + 1} 行</b>${String(r._flaw).replace(/</g, '&lt;')}</li>` : '')).join('');
+    this.el.innerHTML = `<table class="dt"><thead>${head}</thead><tbody>${body || `<tr><td class="empty" colspan="${cols.length + 2}">还没有数据。调好仪器后点击右侧的记录按钮，也可以直接在表格里填写。</td></tr>`}</tbody></table>${notes ? `<ul class="dt-flaws">${notes}</ul>` : ''}`;
     this.fresh = -1;
     this.el.querySelectorAll('input').forEach((inp) => {
       inp.addEventListener('change', () => {
@@ -144,7 +183,8 @@ export class DataTable {
   toHTML() {
     const cols = this.spec.columns;
     const head = `<tr><th>序号</th>${cols.map((c) => `<th>${c.label}</th>`).join('')}</tr>`;
-    const body = this.rows.map((r, i) => `<tr><td>${i + 1}</td>${cols.map((c) => `<td>${this.fmt(c, this.value(r, c.key, i))}</td>`).join('')}</tr>`).join('');
-    return `<h3>${this.spec.title}</h3><table>${head}${body}</table>`;
+    const body = this.rows.map((r, i) => `<tr><td>${i + 1}${r._flaw ? '*' : ''}</td>${cols.map((c) => `<td>${this.fmt(c, this.value(r, c.key, i))}</td>`).join('')}</tr>`).join('');
+    const notes = this.rows.map((r, i) => (r._flaw ? `<li>第 ${i + 1} 行：${r._flaw}</li>` : '')).join('');
+    return `<h3>${this.spec.title}</h3><table>${head}${body}</table>${notes ? `<ul class="flaw-notes">${notes}</ul>` : ''}`;
   }
 }

@@ -151,7 +151,7 @@ export class OscilloscopeExperiment {
     if (!this.gen.on || !this.unk.on) return app.toast('信号源没有输出', 'warn');
     if (s.ch[0].cpl === 'GND' || s.ch[1].cpl === 'GND') return app.toast('有通道耦合在 GND 位置', 'warn');
     const r = this.ratio();
-    if (r.e > 2e-3) return app.toast('图形还在快速变化，频率比不是简单整数比。继续细调信号发生器的频率', 'warn');
+    if (r.e > 2e-3) app.toast('图形还在快速变化，频率比不是简单整数比。继续细调信号发生器的频率', 'warn');
     if (r.e > 2e-4) app.toast('图形还在转动，再细调频率使它转得更慢，记录更准', 'warn');
     const tb = t.rows.find((x) => x.Nx === r.p && x.Ny === r.q && !t.isPend(x, 'Nx'));
     if (tb) app.toast(`频率比 ${r.p}:${r.q} 已经记录过，换一个比值`, 'warn');

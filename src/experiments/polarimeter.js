@@ -288,7 +288,8 @@ export class PolarimeterExperiment {
   rec(t) {
     const tb = this.tube();
     if (!tb) return this.app.toast('样品室中没有试管', 'warn');
-    if (!this.lampOn || this.warm < 0.9) return this.app.toast('钠光灯未开或尚未预热好', 'warn');
+    if (!this.lampOn) return this.app.toast('钠光灯没有打开，视场是黑的', 'warn');
+    if (this.warm < 0.9) this.app.toast('钠光灯还没有预热好，视场偏暗、颜色不纯，判断不准', 'warn');
     const i = t.rows.findIndex((r) => r.k === tb.key && (r.A == null || r.A === ''));
     if (i < 0) return this.app.toast(`「${tb.short}」的测量次数已满`, 'warn');
     if (this.bubble[tb.key]) this.app.toast('提示：试管中的气泡在通光区，视场被挡住，判断不准', 'warn');

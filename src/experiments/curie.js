@@ -142,11 +142,12 @@ export class CurieExperiment {
   rec(t, up) {
     const a = this.app, T = this.readT(), U = this.readU();
     if (!this.power) return a.toast('测试仪电源没开', 'warn');
-    if (up && !this.heating()) return a.toast('这是升温曲线：要在加热时记录', 'warn');
-    if (!up && this.heat) return a.toast('这是降温曲线：先关掉加热', 'warn');
-    if (t.rows.length && t.rows[0]._s !== this.si) return a.toast('这张表记的是另一个样品，换样品后请先清空表格', 'warn');
-    if (t.rows.some((r) => Math.abs(r.T - T) < 0.5)) return a.toast('这个温度附近已经记过了', 'warn');
-    t.addRow({ T, U, _s: this.si });
+    if (t.rows.some((r) => Math.abs(r.T - T) < 0.5)) a.toast('这个温度附近已经记过了', 'warn');
+    const fl = [];
+    if (up && !this.heating()) fl.push('这张是升温曲线，但现在没有在加热');
+    if (!up && this.heat) fl.push('这张是降温曲线，但加热还开着');
+    if (t.rows.length && t.rows[0]._s !== this.si) fl.push('这张表前面记的是另一个样品');
+    t.flagAll(t.addRow({ T, U, _s: this.si }), fl);
     this.drawChart();
   }
 

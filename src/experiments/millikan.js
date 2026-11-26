@@ -167,16 +167,17 @@ export class MillikanExperiment {
   recU(t) {
     const a = this.app, c = this.cur;
     if (!c || c.lost) return a.toast('没有正在跟踪的油滴', 'warn');
-    if (this.mode !== 'bal') return a.toast('先切到“平衡”状态，调到油滴静止，再记录平衡电压', 'warn');
+    if (t.rows.some((r) => r.drop === c.id)) a.toast('这颗油滴已经记过平衡电压了', 'warn');
+    const fl = [];
     const v = Math.abs(this.vOf(c, this.U)) * 1e6;
-    if (v > 4) a.toast(`油滴还在以 ${v.toFixed(0)} μm/s 的速度${this.vOf(c, this.U) > 0 ? '下降' : '上升'}，没有平衡`, 'warn');
-    if (this.tiltDeg > 0.5) a.toast('仪器没有调水平：电场不竖直，油滴会横向漂移', 'warn');
-    if (t.rows.some((r) => r.drop === c.id)) return a.toast('这颗油滴已经记过平衡电压了', 'warn');
-    t.addRow({ id: c.id, drop: c.id, U: this.U });
+    if (this.mode !== 'bal') fl.push('不在“平衡”状态，极板上的电压不是平衡电压');
+    else if (v > 4) fl.push(`油滴还在以 ${v.toFixed(0)} μm/s 的速度${this.vOf(c, this.U) > 0 ? '下降' : '上升'}，没有平衡`);
+    if (this.tiltDeg > 0.5) fl.push('仪器没有调水平：电场不竖直，油滴会横向漂移');
+    t.flagAll(t.addRow({ id: c.id, drop: c.id, U: this.U }), fl);
   }
   recT(t) {
     const a = this.app, c = this.cur;
-    if (this.sw.run) return a.toast('秒表还在走', 'warn');
+    if (this.sw.run) a.toast('秒表还在走', 'warn');
     if (!(this.sw.value > 0)) return a.toast('秒表读数为零', 'warn');
     const i = c ? t.rows.findIndex((r) => r.drop === c.id) : -1;
     if (i < 0) return a.toast('先给正在跟踪的这颗油滴记录平衡电压', 'warn');

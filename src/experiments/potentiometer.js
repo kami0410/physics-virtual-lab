@@ -397,8 +397,8 @@ export class PotentiometerExperiment {
     const app = this.app;
     if (!this.workOK()) { app.toast('工作回路没有电流（检查电源、开关 K₁ 和 A、B 两端的极性）', 'warn'); return false; }
     if (!this.compOK()) { app.toast('补偿回路没有接好', 'warn'); return false; }
-    if (this.sel.pos !== sel) { app.toast(sel === 's' ? 'K₂ 应扳向 Eₛ' : 'K₂ 应扳向 Eₓ', 'warn'); return false; }
-    if (!this.pot.pressed) { app.toast('按下滑键才能判断是否平衡', 'warn'); return false; }
+    if (this.sel.pos !== sel) app.toast(sel === 's' ? 'K₂ 没有扳向 Eₛ，平衡的不是标准电池' : 'K₂ 没有扳向 Eₓ，平衡的不是待测电池', 'warn');
+    if (!this.pot.pressed) app.toast('没有按下滑键，检流计不通电，并没有判断是否平衡', 'warn');
     if (this.gp.s * 10000 > 50) app.toast('保护电阻没有减到零，平衡判断不够灵敏', 'warn');
     if (Math.abs(this.g.theta * G_DIVS) > 0.5) app.toast('检流计还没有指零', 'warn');
     return true;
@@ -408,15 +408,15 @@ export class PotentiometerExperiment {
     t.addRow({ t: this.temp, n: this.pot.n, x: Math.round(this.pot.x * 1e4) / 1e4 });
   }
   recEx(t) {
-    if (!this.app.table('cal').completeRows().length) return this.app.toast('请先校准工作电流', 'warn');
+    if (!this.app.table('cal').completeRows().length) this.app.toast('请先校准工作电流', 'warn');
     if (!this.checkBal('x')) return;
     if (this.ex.I > 0.01) this.app.toast('负载开关 K₃ 合着，测到的是端电压而不是电动势', 'warn');
     t.addRow({ n: this.pot.n, x: Math.round(this.pot.x * 1e4) / 1e4 });
   }
   recR(t) {
-    if (!this.app.table('ex').completeRows().length) return this.app.toast('请先测电动势', 'warn');
+    if (!this.app.table('ex').completeRows().length) this.app.toast('请先测电动势', 'warn');
     if (!this.checkBal('x')) return;
-    if (!(this.ex.I > 0.05)) return this.app.toast('干电池没有接上负载（合上 K₃，电阻箱并在电池两端）', 'warn');
+    if (!(this.ex.I > 0.05)) this.app.toast('干电池没有接上负载（合上 K₃，电阻箱并在电池两端）', 'warn');
     t.addRow({ R: this.rl.nominal(), n: this.pot.n, x: Math.round(this.pot.x * 1e4) / 1e4 });
   }
 

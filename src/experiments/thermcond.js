@@ -16,6 +16,8 @@ const YP = 13; // 散热盘下表面高度 cm
 const SVG = (inner) => `<svg viewBox="0 0 64 40">${inner}</svg>`;
 const GEO = [['hB1', '样品厚度 h_B（位置 1）/mm', 'hB'], ['hB2', '样品厚度 h_B（位置 2）/mm', 'hB'], ['hB3', '样品厚度 h_B（位置 3）/mm', 'hB'], ['DB', '样品直径 D_B/mm', 'DB'], ['DP', '散热盘直径 D_P/mm', 'DP'], ['hP', '散热盘厚度 h_P/mm', 'hP'], ['m', '散热盘质量 m/g', 'm']];
 const MODES = { stack: 'A-B-P 叠放加热', AP: '移去样品，A 直接加热 P', P: '抬起 A，P 在空气中冷却' };
+/** 两个等半径圆盘错开 e 时的重叠面积比例 */
+const overlap = (e, R) => { const u = Math.min(1, Math.abs(e) / (2 * R)); return (2 / Math.PI) * (Math.acos(u) - u * Math.sqrt(1 - u * u)); };
 const clock = (s) => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return `${h}:${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
 
 export class ThermCondExperiment {
@@ -37,6 +39,8 @@ export class ThermCondExperiment {
     this.sim.set = 60;
     this.sensErr = [gauss(0.08), gauss(0.08)];
     this.cal = new Caliper({ range: 150 }); this.tool = 'hB'; this.hpos = 0; this.setTool('hB');
+    // 样品 B 叠放时不一定放正：随机错开几毫米，要学生自己推正
+    this.Bon = true; this.Adown = true; this.eB = (Math.random() < 0.5 ? -1 : 1) * rand(3, 8); this.syncMode();
     this.timeScale = 10; this.hist = []; this.coolT0 = null; this.peakP = -Infinity; this.assist = false; this.cap = 120;
   }
 
@@ -56,8 +60,25 @@ export class ThermCondExperiment {
   }
   async waitSim(sec) { const T = this.sim.t + sec; while (this.sim.t < T) await this.app.wait(40); }
 
-  setMode(m) {
+  /** 由“样品在不在两盘之间”“发热盘放没放下”得出装置状态 */
+  syncMode() {
+    const s = this.sim;
+    s.fc = this.Bon ? overlap(this.eB / 1000, this.geo.RB) : 1;
+    const m = !this.Adown ? 'P' : this.Bon ? 'stack' : 'AP';
+    if (m !== s.mode) this.setMode(m, true);
+  }
+  setB(on) {
+    if (on === this.Bon) return;
+    this.Bon = on;
+    if (on) this.eB = (Math.random() < 0.5 ? -1 : 1) * rand(2, 7); // 重新放上去，又不一定放正
+    this.syncMode(); this.app.renderInspector(); this.app.changed();
+  }
+  setA(down) { if (down === this.Adown) return; this.Adown = down; this.syncMode(); this.app.renderInspector(); this.app.changed(); }
+  pushB(e) { this.eB = clamp(e, -15, 15); this.syncMode(); }
+  get alignText() { const e = Math.abs(this.eB); return !this.Bon ? '样品不在散热盘上' : e < 0.8 ? '三个盘的边缘对齐' : `样品一侧比铜盘边缘多出约 ${e.toFixed(0)} mm`; }
+  setMode(m, fromParts = false) {
     const a = this.app, s = this.sim;
+    if (!fromParts) { this.Adown = m !== 'P'; if (m !== 'P') this.Bon = m === 'stack'; s.fc = this.Bon ? overlap(this.eB / 1000, this.geo.RB) : 1; }
     if (m === s.mode) return;
     if (m === 'P') { this.coolT0 = s.t; }
     if (m === 'AP') this.peakP = s.TP;
@@ -119,7 +140,10 @@ export class ThermCondExperiment {
       controls: () => [
         { type: 'toggle', label: '加热电源', get: () => this.sim.on, set: (v) => { this.sim.on = v; } },
         { type: 'knob', label: '温控设定', get: () => this.sim.set, set: (v) => (this.sim.set = clamp(v, 30, 95)), min: 30, max: 95, step: 0.1, bigStep: 1, perRev: 10, digits: 1, unit: '°C' },
-        { type: 'segment', label: '装置状态', get: () => this.sim.mode, set: (v) => this.setMode(v), options: Object.entries(MODES).map(([value, label]) => ({ value, label })) },
+        { type: 'toggle', label: '样品 B 放在散热盘 P 上', get: () => this.Bon, set: (v) => this.setB(v) },
+        ...(this.Bon ? [{ type: 'knob', label: '推动样品 B（左右）', get: () => this.eB, set: (v) => this.pushB(v), step: 0.1, bigStep: 1, perRev: 5, fmt: () => '用手推' }] : []),
+        { type: 'readout', label: '侧面看', get: () => this.alignText },
+        { type: 'toggle', label: '发热盘 A 放下（压紧）', get: () => this.Adown, set: (v) => this.setA(v) },
         { type: 'readout', label: '电子天平（散热盘 P）', get: () => `${(this.geo.mP * 1000).toFixed(2)} g` },
       ],
     }));
@@ -130,8 +154,8 @@ export class ThermCondExperiment {
   update() {
     const s = this.sim, hp = this.geo.hP * 100, hb = this.geo.hB * 100, R = this.geo.RP * 100;
     const yTop = YP + hp;
-    this.B.position.set(s.mode === 'stack' ? 0 : 24, s.mode === 'stack' ? yTop + hb / 2 : hb / 2, s.mode === 'stack' ? 0 : 12);
-    const yA = s.mode === 'stack' ? yTop + hb : s.mode === 'AP' ? yTop : yTop + hb + 9;
+    this.B.position.set(this.Bon ? this.eB / 10 : 24, this.Bon ? yTop + hb / 2 : hb / 2, this.Bon ? 0 : 12);
+    const yA = !this.Adown ? yTop + (this.Bon ? hb : 0) + 9 : this.Bon ? yTop + hb : yTop;
     this.A.position.y = yA; this.arm.position.y = yA + 15;
     this.wA.position.y = yA + 0.5;
     this.drawPanel(); this.drawTool();
@@ -245,19 +269,21 @@ export class ThermCondExperiment {
   }
   recGeo(t) {
     const a = this.app, p = this.cal.problem();
-    if (p) return a.toast(p, 'warn');
+    if (p) a.toast(p, 'warn');
     const k = this.tool === 'hB' ? `hB${this.hpos + 1}` : this.tool;
     t.set(t.rows.findIndex((r) => r.k === k), 'v', Math.round(this.cal.reading / 0.02) * 0.02);
   }
   recHeat(t) {
     const a = this.app, s = this.sim;
     if (!s.on) a.toast('加热电源没有打开', 'warn');
-    if (s.mode !== 'stack') return a.toast('现在不是 A-B-P 叠放的状态，这一组不是稳态加热的数据', 'warn');
+    if (s.mode !== 'stack') a.toast('现在不是 A-B-P 叠放的状态，这一组不是稳态加热的数据', 'warn');
+    else if (Math.abs(this.eB) > 1.5) a.toast(`样品 B 没有和铜盘对正（错开约 ${Math.abs(this.eB).toFixed(0)} mm），接触面积变小`, 'warn');
     t.addRow({ t: Math.round(s.t / 6) / 10, T1: this.T1, T2: this.T2 });
   }
   recCool(t) {
     const a = this.app, s = this.sim;
     if (s.mode !== 'P') return a.toast('先抬起发热盘 A，让散热盘在空气中自然冷却，再开始记录', 'warn');
+    if (this.Bon) a.toast('样品 B 还压在散热盘上，散热盘上表面被盖住，冷却比稳态时慢', 'warn');
     t.addRow({ t: Math.round(s.t - this.coolT0), T: this.T2 });
   }
 
@@ -293,12 +319,12 @@ export class ThermCondExperiment {
       },
       {
         title: '加热，等待稳态',
-        html: '<p>样品夹在发热盘和散热盘之间，三者要贴紧。打开加热电源，温控设定 70–80 °C。发热盘很快升到设定温度，散热盘则要几十分钟才稳定（可加快时间流速）。每隔约 10 分钟记一次 T₁、T₂，直到连续 3 次不变。</p>',
+        html: '<p>样品夹在发热盘和散热盘之间，三者要贴紧、边缘对齐（放偏了接触面积变小，测出的导热系数偏小）。打开加热电源，温控设定 70–80 °C。发热盘很快升到设定温度，散热盘则要几十分钟才稳定（可加快时间流速）。每隔约 10 分钟记一次 T₁、T₂，直到连续 3 次不变。</p>',
         hint: '稳态时，样品传给散热盘的热量恰好等于散热盘向空气散失的热量。',
         check: () => { const st = this.steady(); return !!(st && st.ok); },
         auto: async () => {
           await app.view('温控仪'); app.showTable(1); app.select(app.comp('rig'));
-          this.setMode('stack'); s.on = true; await this.knob(() => s.set, (v) => (s.set = v), 75, 500);
+          this.setMode('stack'); await this.knob(() => this.eB, (v) => this.pushB(v), 0, 400); s.on = true; await this.knob(() => s.set, (v) => (s.set = v), 75, 500);
           this.cap = 120;
           for (let i = 0; i < 30; i++) {
             await this.waitSim(600); await app.record('heat', 0);

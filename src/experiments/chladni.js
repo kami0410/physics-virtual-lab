@@ -105,7 +105,7 @@ export class ChladniExperiment {
     this.response();
     const a = this.app, T = Math.min(0.5, dt * (a.running ? Math.max(1, a.speed) : 1));
     for (let t = 0; t < T - 1e-9; t += 0.02) this.stepSand(Math.min(0.02, T - t));
-    if (this._moved) { this._moved = false; a.changed(); }
+    if (this._moved) { this._moved = false; this._sv = (this._sv | 0) + 1; a.changed(); } // _sv：沙粒分布的版本号，变了才重画板面纹理
     if (this.snd && this.ac) {
       const now = this.ac.currentTime, g = this.on ? Math.min(0.22, 0.004 * this.acc) : 0;
       this.osc.frequency.setTargetAtTime(this.f, now, 0.02); this.gain.gain.setTargetAtTime(g, now, 0.05);
@@ -174,19 +174,49 @@ export class ChladniExperiment {
     if (s !== this._gs || this._gd !== this.drive) { this._gs = s; this._gd = this.drive; this.genBox.setText(s, this.on ? 'Hz' : '', this.on ? `输出幅度 ${this.drive.toFixed(1)}` : '电源关'); }
     this.drawTop(); this.showAtlas();
   }
-  drawSand(g, W, H, x0, y0, S, dot) {
+  drawPlate(g, x0, y0, S) {
     g.fillStyle = '#1f2326'; g.fillRect(x0, y0, S, S);
     const grd = g.createLinearGradient(x0, y0, x0 + S, y0 + S); grd.addColorStop(0, 'rgba(255,255,255,.06)'); grd.addColorStop(1, 'rgba(0,0,0,.1)');
     g.fillStyle = grd; g.fillRect(x0, y0, S, S);
-    g.fillStyle = '#ece3cc';
-    for (let i = 0; i < NSAND; i++) { const x = this.sx[i]; if (x !== x) continue; g.fillRect(x0 + ((x + 1) / 2) * S - dot / 2, y0 + ((1 - this.sy[i]) / 2) * S - dot / 2, dot, dot); }
-    g.fillStyle = '#9aa1a8'; g.beginPath(); g.arc(x0 + S / 2, y0 + S / 2, S * 0.022, 0, 7); g.fill();
+  }
+  drawPin(g, x0, y0, S) { g.fillStyle = '#9aa1a8'; g.beginPath(); g.arc(x0 + S / 2, y0 + S / 2, S * 0.022, 0, 7); g.fill(); }
+  /** 俯视图：沙粒合成一条路径一次填充（6000 次 fillRect 改为一次 fill） */
+  drawSand(g, x0, y0, S, dot) {
+    this.drawPlate(g, x0, y0, S);
+    g.fillStyle = '#ece3cc'; g.beginPath();
+    for (let i = 0; i < NSAND; i++) { const x = this.sx[i]; if (x !== x) continue; g.rect(x0 + ((x + 1) / 2) * S - dot / 2, y0 + ((1 - this.sy[i]) / 2) * S - dot / 2, dot, dot); }
+    g.fill();
+    this.drawPin(g, x0, y0, S);
+  }
+  /** 三维板面的 512×512 纹理：沙粒直接写像素；沙粒没动就不重画、不重新上传显卡 */
+  drawSandTex() {
+    const ver = this._sv | 0;
+    if (ver === this._tv) return;
+    this._tv = ver;
+    const N = 512, g = this.tex.getContext('2d');
+    if (!this._texBg) { // 板面底色和渐变只画一次，之后每次整块复制
+      this.drawPlate(g, 0, 0, N);
+      this._texImg = g.getImageData(0, 0, N, N);
+      this._texPx = new Uint32Array(this._texImg.data.buffer);
+      this._texBg = this._texPx.slice();
+    }
+    const px = this._texPx, C = 0xffcce3ec; // #ece3cc（RGBA 字节按小端序存为 ABGR）
+    px.set(this._texBg);
+    for (let i = 0; i < NSAND; i++) {
+      const x = this.sx[i]; if (x !== x) continue;
+      const u = Math.round(((x + 1) / 2) * N) - 1, v = Math.round(((1 - this.sy[i]) / 2) * N) - 1;
+      if (u < 0 || v < 0 || u > N - 2 || v > N - 2) continue;
+      const k = v * N + u; px[k] = px[k + 1] = px[k + N] = px[k + N + 1] = C;
+    }
+    g.putImageData(this._texImg, 0, 0);
+    this.drawPin(g, 0, 0, N);
+    this.ctex.needsUpdate = true;
   }
   drawTop() {
     const v = this.tv, g = v.ctx, W = v.W, H = v.H, S = Math.min(W, H) * 0.9;
     g.fillStyle = '#d8d4cb'; g.fillRect(0, 0, W, H);
-    this.drawSand(g, W, H, (W - S) / 2, (H - S) / 2, S, Math.max(1, W / 260));
-    this.drawSand(this.tex.getContext('2d'), 512, 512, 0, 0, 512, 2); this.ctex.needsUpdate = true;
+    this.drawSand(g, (W - S) / 2, (H - S) / 2, S, Math.max(1, W / 260));
+    this.drawSandTex();
     const p = this.plate, d = this.dom;
     v.foot(!this.on ? '信号发生器没有打开' : !this.sand ? '板上没有沙：点“均匀撒一层沙”' : this.acc < 0.6 ? `f = ${this.f.toFixed(1)} Hz：不在共振频率上，沙粒不动` : d && d.r > 0.9 ? `f = ${this.f.toFixed(1)} Hz：共振，沙粒聚向节线（${p.name}）` : `f = ${this.f.toFixed(1)} Hz：接近共振，沙在跳动；微调频率使图形最清晰`);
   }
@@ -243,7 +273,7 @@ export class ChladniExperiment {
     if (!d || d.r < 0.5) return a.toast('现在不在共振频率上，沙粒不动、没有图形', 'warn');
     if (d.n >= ATLAS) return a.toast('这个模式超出了图谱的范围（频率太高），换一个低一些的共振', 'warn');
     if (d.r < 0.85) a.toast('离共振峰还有点距离，图形不够清晰，再微调一下频率', 'warn');
-    if (t.rows.some((r) => r.plate === this.pk && Math.round(r._k) === d.n + 1)) return a.toast('这块板的这个图形已经记过了', 'warn');
+    if (t.rows.some((r) => r.plate === this.pk && Math.round(r._k) === d.n + 1)) a.toast('这块板的这个图形已经记过了', 'warn');
     t.addRow({ plate: this.pk, f: this.f, k: d.n + 1, _k: d.n + 1, _h: this.plate.hm });
   }
 
@@ -377,6 +407,6 @@ export class ChladniExperiment {
     return `<h3>1. 薄板的弯曲振动</h3><p>厚度 $h$ 远小于边长 $L$ 的板作小振幅弯曲振动时，挠度 $w(x,y,t)$ 满足</p>$$D\\nabla^4w+\\rho h\\frac{\\partial^2w}{\\partial t^2}=0,\\qquad D=\\frac{Eh^3}{12(1-\\nu^2)}$$<p>$D$ 为板的抗弯刚度，$E$、$\\nu$、$\\rho$ 为材料的杨氏模量、泊松比和密度。在一定的支撑条件下它只有一系列分立的固有频率，每个频率对应一种振型。写成无量纲形式：</p>$$f_k=\\frac{\\lambda_k}{2\\pi L^2}\\sqrt{\\frac{D}{\\rho h}}$$<p>频率参数 $\\lambda_k$ 只取决于板的形状、支撑方式和泊松比，同一形状的板可以共用一张 λ 表。</p>
 <h3>2. 克拉尼图形</h3><p>板在某个固有频率上共振时形成二维驻波，振幅为零的点连成节线。撒在板上的沙粒在振动大的地方被抛起（当地加速度幅值超过 g），落点随机；落到节线附近就不再被抛起，于是逐渐聚集成线。这一方法由 E. F. F. Chladni 在 1787 年提出。</p>
 <h3>3. 振型图谱</h3>${img}<p>中心固定、四边自由的方板的前 ${ATLAS} 个模式。理想正方形板有很多成对的简并模式（形状相同、转过 90°）；实际的板总有微小的不对称，它们分裂成两个很近的共振频率。</p>
-<h3>4. 本仿真的计算模型</h3><p>振型和 λ 用瑞利–里茨法计算：基函数取两个方向勒让德多项式之积（到 17 阶），四边自由的边界条件是能量泛函的自然边界条件；中心螺钉处的挠度和两个转角用罚函数约束为零，多项式阶数有限相当于螺钉垫圈有一定大小。按 x、y 的奇偶性分成 4 块，用雅可比法求特征值。自由方板（不固定中心）的前几个 λ 为 13.47、19.60、24.27、34.80（ν = 0.3），与 A. W. Leissa 的 <i>Vibration of Plates</i>（NASA SP-160, 1969）表列值一致。</p><p>受迫振动按模式叠加：振动器使板中心作加速度幅值恒定的简谐运动，各模式的激励正比于振型在板面上的平均值，再加上代表板的不完善的小随机项；阻尼比约 0.004。</p>`;
+<h3>4. 本仿真的计算模型</h3><p>振型和 λ 用瑞利–里茨法计算：基函数取两个方向勒让德多项式之积（到 17 阶），四边自由的边界条件是能量泛函的自然边界条件；中心螺钉带垫圈（半径约 1 cm）：用罚函数约束中心挠度为零、垫圈范围内的平均转角为零（只约束中心一点的转角在薄板理论里不适定，结果会随多项式阶数一直变）。按 x、y 的奇偶性分成 4 块，用雅可比法求特征值。自由方板（不固定中心）的前几个 λ 为 13.47、19.60、24.27、34.80（ν = 0.3），与 A. W. Leissa 的 <i>Vibration of Plates</i>（NASA SP-160, 1969）表列值一致。</p><p>受迫振动按模式叠加：振动器使板中心作加速度幅值恒定的简谐运动，各模式的激励正比于振型在板面上的平均值，再加上代表板的不完善的小随机项；阻尼比约 0.004。</p>`;
   }
 }

@@ -224,11 +224,11 @@ export class DensityExperiment {
     const a = this.app;
     if (this.tool === 'cal') {
       if (this.feat !== 'z') return a.toast('读零点要先选“合拢读零点”，把两量爪合拢', 'warn');
-      if (this.calProblem()) return a.toast(this.calProblem(), 'warn');
+      if (this.calProblem()) a.toast(this.calProblem(), 'warn');
       t.set(0, 'v', Math.round(this.calRead * 100) / 100);
     } else if (this.tool === 'mic') {
       if (this.micAt !== 'z') return a.toast('读零点时测砧之间不能夹东西：选“零点”', 'warn');
-      const p = this.mic.problem(); if (p) return a.toast(p, 'warn');
+      const p = this.mic.problem(); if (p) a.toast(p, 'warn');
       t.set(1, 'v', Math.round(this.mic.reading * 1000) / 1000);
     } else a.toast('天平不需要在这里记零点：空盘时按“置零”即可', 'warn');
   }
@@ -236,7 +236,7 @@ export class DensityExperiment {
     const a = this.app;
     if (this.tool !== 'cal') return a.toast('这张表记游标卡尺的读数：先在读数窗选游标卡尺', 'warn');
     if (this.feat === 'z') return a.toast('现在量爪是合拢的（读零点）。选择要测的尺寸：外径、内径或高', 'warn');
-    const p = this.calProblem(); if (p) return a.toast(p, 'warn');
+    const p = this.calProblem(); if (p) a.toast(p, 'warn');
     const i = this.nextRow('cyl', this.feat), r = t.rows[i];
     if (r[this.feat] != null && r[this.feat] !== '' && isFinite(r[this.feat])) return a.toast(`${FEATS[this.feat]} 已经测满 ${N} 次`, 'warn');
     t.set(i, this.feat, Math.round(this.calRead * 100) / 100);
@@ -249,7 +249,7 @@ export class DensityExperiment {
     const a = this.app;
     if (this.tool !== 'mic' || this.micAt !== 'b') return a.toast('把钢球放进螺旋测微器的测砧之间（“测量”选“钢球直径”）', 'warn');
     const p = this.mic.problem();
-    if (p) { if (this.mic.squeeze > 0.0015) a.toast(p, 'warn'); else return a.toast(p, 'warn'); }
+    if (p) { if (this.mic.squeeze > 0.0015) a.toast(p, 'warn'); else a.toast(p, 'warn'); }
     const i = this.nextRow('ball', 'r'), r = t.rows[i];
     if (r.r != null && r.r !== '' && isFinite(r.r)) return a.toast(`已经测满 ${N} 次`, 'warn');
     t.set(i, 'r', Math.round(this.mic.reading * 1000) / 1000);

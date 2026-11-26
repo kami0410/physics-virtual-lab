@@ -226,7 +226,7 @@ export class PendulumExperiment {
     const a = this.app;
     if (this.tool !== 'd') return a.toast('先在“量具”中选游标卡尺', 'warn');
     const p = this.cal.problem();
-    if (p) return a.toast(p, 'warn');
+    if (p) a.toast(p, 'warn');
     let i = 0;
     if (this.ballIn) { i = t.rows.findIndex((r, k) => k > 0 && (r.r == null || r.r === '')); if (i < 0) i = 3; }
     t.set(i, 'r', Math.round((this.cal.reading + (this.ballIn ? gauss(0.004) : 0)) / 0.02) * 0.02);
@@ -239,7 +239,7 @@ export class PendulumExperiment {
   }
   recT(t, kind) {
     const a = this.app, si = this.startInfo;
-    if (this.sw.run) return a.toast('秒表还在走', 'warn');
+    if (this.sw.run) a.toast('秒表还在走', 'warn');
     if (!(this.sw.value > 0) || !si) return a.toast('秒表读数为零：先计时', 'warn');
     if (si.phase > 0.06 || (this.stopPhase ?? 0) > 0.06) a.toast('开表或停表时摆球不在最低点附近，计时误差大（应在摆球经过最低点时按表）', 'warn');
     if (kind === 'per') {

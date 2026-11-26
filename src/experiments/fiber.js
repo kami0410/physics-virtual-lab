@@ -179,35 +179,34 @@ export class FiberExperiment {
   recP(t) {
     const a = this.app, p = this.readP();
     if (p == null) return a.toast('功率计探头没有接收到光（出射端放的是观察屏）', 'warn');
-    if (this.R) return a.toast('光纤还绕在棒上，先取下', 'warn');
-    let i;
+    let i; const fl = [];
+    if (this.R && this.probe !== 'in') fl.push('光纤还绕在棒上，有弯曲损耗');
     if (this.probe === 'in') i = 0;
     else if (!this.cut) {
       i = 1;
-      if (this.frac() < 0.9) return a.toast('耦合还没有调好：继续微调 x、y、z 使输出功率最大', 'warn');
+      if (this.frac() < 0.9) fl.push('耦合还没有调到最好，输出功率偏小');
       this._key = this._fk;
     } else {
       i = 2;
-      if (this._key && this._key !== this._fk) return a.toast('截断前后入射端的耦合状态必须保持不变：微调架已经动过了', 'warn');
+      if (this._key && this._key !== this._fk) fl.push('截断前后微调架动过了，入射端耦合变了，截断法的前提不成立');
     }
-    t.set(i, 'P', p);
+    t.set(i, 'P', p); t.flagAll(i, fl);
   }
   recNA(t) {
     const a = this.app;
     if (this.out !== 'screen') return a.toast('出射端放的不是观察屏', 'warn');
-    if (this.Pout() < 1e-4) return a.toast('屏上光太弱，先把耦合调好', 'warn');
+    if (this.Pout() < 1e-5) return a.toast('屏上几乎看不到光斑，先把耦合调好', 'warn');
     if (this.D() > 2 * SCR) return a.toast('光斑超出了屏的坐标范围，把屏移近一些', 'warn');
-    if (t.rows.some((r) => Math.abs(r.s - this.s) < 0.25)) return a.toast('这个位置已经测过了', 'warn');
+    if (t.rows.some((r) => Math.abs(r.s - this.s) < 0.25)) a.toast('这个位置已经测过了', 'warn');
     t.addRow({ s: this.s, D: Math.round(this.D() * 2) / 2 });
   }
   recB(t) {
     const a = this.app, p = this.readP();
-    if (!this.cut) return a.toast('先截断光纤，在短光纤上做弯曲实验', 'warn');
+    if (!this.cut) a.toast('先截断光纤，在短光纤上做弯曲实验', 'warn');
     if (p == null || this.probe !== 'out') return a.toast('功率计探头要放在光纤出射端', 'warn');
     const R = this.R ? this.R.toFixed(1) : '不绕';
-    if (t.rows.some((r) => r.R === R)) return a.toast('这个半径已经测过了', 'warn');
-    if (t.rows.length && t.rows[0]._key !== this._fk) return a.toast('入射端耦合和第一行时不同：弯曲损耗要在耦合不变的条件下比较', 'warn');
-    t.addRow({ R, P: p, _R: this.R, _key: this._fk });
+    if (t.rows.some((r) => r.R === R)) a.toast('这个半径已经测过了', 'warn');
+    t.flagAll(t.addRow({ R, P: p, _R: this.R, _key: this._fk }), t.rows.length && t.rows[0]._key !== this._fk ? ['入射端耦合和第一行时不同，功率的变化不全是弯曲造成的'] : []);
   }
 
   // ======================= 自动操作 =======================

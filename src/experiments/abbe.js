@@ -577,7 +577,7 @@ export class AbbeExperiment {
     const s = this.orderStep(c), r = (this.rot * Math.PI) / 180;
     const X = this.fc().cx, k = Math.round(X / (s * Math.cos(r))); // 与频谱面视图一致：十字线相对频谱中心的位置（含滤波器架的共轴偏差）
     if (Math.abs(k) > 2) return this.app.toast('只需测 −2 ～ +2 级', 'warn');
-    if (Math.abs(X - k * s * Math.cos(r)) > Math.max(0.03, this.spotR(c))) return this.app.toast('十字线没有对准光点中心', 'warn');
+    if (Math.abs(X - k * s * Math.cos(r)) > Math.max(0.03, this.spotR(c))) this.app.toast('十字线没有对准光点中心', 'warn');
     const i = t.rows.findIndex((q) => q.k === k);
     t.set(i, 'x', Math.round((this.drum + gauss(0.003)) * 1000) / 1000);
   }

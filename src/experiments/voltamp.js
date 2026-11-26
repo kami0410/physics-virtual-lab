@@ -129,9 +129,9 @@ export class VoltAmpExperiment {
     ];
   }
   rec(t, part) {
-    const info = this.measureInfo();
-    if (!info) return this.app.toast('电路连接不正确：电流表应与待测元件串联，电压表并联在元件（或元件与电流表）两端', 'warn');
-    if (info.part !== part) return this.app.toast(`现在测的是 ${this.cir.dev(info.part).short}，不是这张表的元件`, 'warn');
+    // 接错了也照样能读两个表：读数不再是元件的 U、I，算出的电阻就是错的
+    const info = this.measureInfo() || (this.app.toast('电路连接不正确：电流表应与待测元件串联，电压表并联在元件（或元件与电流表）两端', 'warn'), { mode: '接线有误', part });
+    if (info.part !== part) this.app.toast(`现在测的是 ${this.cir.dev(info.part).short}，不是这张表的元件`, 'warn');
     if (!this.cir.dev('sw').closed || !this.cir.dev('supply').on) return this.app.toast('电路没有接通', 'warn');
     const a = this.am.read(), v = this.vm.read();
     if (this.am.over || this.vm.over) return this.app.toast('有电表超量程，不能读数', 'warn');

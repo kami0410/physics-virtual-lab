@@ -10,12 +10,14 @@ import { benchTable } from '../core/circuit.js';
 import { Component } from '../core/Component.js';
 import { MAT, mesh, meterBox } from '../core/Models.js';
 import { rand, clamp, relErr, pct, linFit } from '../core/Stats.js';
-import { coilL, coilM, wptSolve, peaks } from '../physics/wpt.js';
+import { coilL, coilM, coilMoff, wptSolve, peaks } from '../physics/wpt.js';
 
 const COIL = { N: 8, r0: 0.05, p: 0.005, rw: 0.00075 };
 const C1N = 10e-9, VS = 1, RS = 1, F1 = 250, F2 = 750; // kHz
 const RLS = [2, 5, 10, 20];
 const SQ2 = Math.SQRT2;
+const TXX = -22; // 发射线圈平面的位置（场景 x，cm）；导轨刻度从这里算起，读数就是间距 d
+const AL_RHO = 0.2, AL_YAW = 1.5; // 对正的标准：横向偏 0.2 cm、转角 1.5° 以内
 const SVG = (inner) => `<svg viewBox="0 0 64 40" fill="none" stroke="currentColor" stroke-width="1.5">${inner}</svg>`;
 
 export class WptExperiment {
@@ -28,15 +30,34 @@ export class WptExperiment {
     this.Lg = coilL(COIL); this.L = this.Lg * (1 + rand(-0.02, 0.02));
     this.C1 = C1N * (1 + rand(-0.005, 0.005)); this.C2f = this.C1 * (1 - rand(0.02, 0.04));
     this.R1 = rand(0.25, 0.35); this.R2 = rand(0.25, 0.35);
-    this.f = 400; this.d = 30; this.open = false; this.trim = 0; this.RL = 5;
-    this._mk = -1;
+    this.f = 400; this.open = false; this.trim = 0; this.RL = 5;
+    this.rho = 0; this.yaw = 0; // 接收线圈的横向偏移（cm）和转角（°）
+    this._mk = '';
+  }
+  /** 线圈间距 d（cm）：接收线圈滑座的导轨读数；不在导轨上时视为很远 */
+  get d() { const c = this.app.comp && this.app.comp('rx'); return c && c.placed ? c.pos : 200; }
+  set d(v) { const c = this.app.comp('rx'); if (c && c.placed) this.app.setRailPos(c, Math.round(v * 10) / 10); }
+  get rxOn() { const c = this.app.comp && this.app.comp('rx'); return !!(c && c.placed); }
+  aligned() { return Math.abs(this.rho) <= AL_RHO && Math.abs(this.yaw) <= AL_YAW; }
+  /** 沿导轨方向目测接收线圈：只能看出大致的偏移和转角 */
+  lookText() {
+    const r = Math.round(this.rho * 2) / 2, y = Math.round(this.yaw / 2) * 2, out = [];
+    if (Math.abs(r) >= 0.5) out.push(`中心偏${r > 0 ? '前' : '后'}约 ${Math.abs(r).toFixed(1)} cm`);
+    if (Math.abs(y) >= 2) out.push(`线圈平面${y > 0 ? '逆' : '顺'}时针转了约 ${Math.abs(y)}°`);
+    return out.length ? out.join('，') : '目测已基本同轴正对（更小的偏差要看接收电压是否最大）';
   }
   get f01() { return 1 / (2 * Math.PI * Math.sqrt(this.L * this.C1)) / 1e3; } // kHz
   get C2() { return this.C2f + this.trim * 1e-12; }
-  kAt(d) { if (this._mk !== d) { this._mk = d; this._m = coilM(COIL, d / 100) / this.Lg; } return this._m; } // 几何耦合系数
+  /** 几何耦合系数（按接收线圈的实际位姿，数值诺依曼积分） */
+  kAt(d, rho = this.rho, yaw = this.yaw) {
+    if (d > 100) return 0;
+    const key = `${d},${rho},${yaw}`;
+    if (this._mk !== key) { this._mk = key; this._m = coilMoff(COIL, d / 100, rho / 100, (yaw * Math.PI) / 180, 32) / this.Lg; }
+    return this._m;
+  }
   par(over = {}) {
     const o = { open: this.open, d: this.d, RL: this.RL, ...over };
-    return { Vs: VS, Rs: RS, R1: this.R1, R2: this.R2, f0r: 5e5, L1: this.L, L2: this.L, C1: this.C1, C2: this.C2, RL: o.RL, M: this.kAt(o.d) * this.L, open: o.open };
+    return { Vs: VS, Rs: RS, R1: this.R1, R2: this.R2, f0r: 5e5, L1: this.L, L2: this.L, C1: this.C1, C2: this.C2, RL: o.RL, M: this.kAt(o.d) * this.L, open: o.open || !this.rxOn };
   }
   sol(f = this.f, over) { return wptSolve(f * 1e3, this.par(over)); }
   /** 仪表读数（有效值）：I₁ mA、U₂ mV、P₁ mW */
@@ -45,7 +66,7 @@ export class WptExperiment {
     return { I1: r4((s.I1 / SQ2) * 1e3), U2: r4((s.U2 / SQ2) * 1e3), P1: r4(s.P1 * 1e3), P2: s.P2 * 1e3 };
   }
   peakList() {
-    const k = `${this.d},${this.open},${this.RL},${this.trim}`;
+    const k = `${this.d},${this.open},${this.RL},${this.trim},${this.rho},${this.yaw},${this.rxOn}`;
     if (k !== this._pk) { this._pk = k; this._pl = peaks((f) => this.sol(f).U2, F1, F2, 400); }
     return this._pl;
   }
@@ -58,9 +79,10 @@ export class WptExperiment {
     scene.add(benchTable(150, 86));
     app.stage.setLightTarget(0, 8, 0);
     const Y = 13, S = 100; // 场景单位：1 cm = 1
-    const rail = new THREE.Group(); scene.add(rail);
+    const rail = new THREE.Group();
     rail.add(mesh(new THREE.BoxGeometry(72, 1.2, 5), MAT.alu(), 6, 0.6, 0));
-    for (let x = -28; x <= 40; x += 2) rail.add(mesh(new THREE.BoxGeometry(0.15, 0.05, x % 10 === 0 ? 2.2 : 1.2), MAT.paint(0x222222), x, 1.23, 2));
+    for (let x = -28; x <= 40; x += 1) { const dd = x - TXX; rail.add(mesh(new THREE.BoxGeometry(0.12, 0.05, dd % 10 === 0 ? 2.2 : dd % 5 === 0 ? 1.6 : 1.0), MAT.paint(0x222222), x, 1.23, 1.4)); }
+    app.addRail({ id: 'wpt', origin: new THREE.Vector3(TXX, 0, 0), min: 3, max: 60, accepts: ['rx'] });
     const coilMesh = () => {
       const g = new THREE.Group(), pts = [];
       for (let t = 0; t <= COIL.N * 2 * Math.PI; t += 0.08) { const r = (COIL.r0 + (COIL.p * t) / (2 * Math.PI)) * S; pts.push(new THREE.Vector3(0, r * Math.sin(t), r * Math.cos(t))); }
@@ -70,17 +92,28 @@ export class WptExperiment {
       g.add(mesh(new THREE.BoxGeometry(4, 0.8, 5), MAT.paint(0x3a3f44), 0, -Y + 1.6, 0));
       g.position.y = Y; return g;
     };
-    this.tx = coilMesh(); this.tx.position.x = -22; scene.add(this.tx);
-    this.rx = coilMesh(); this.rx.rotation.y = Math.PI; scene.add(this.rx);
-    this.bulbM = MAT.emissive(0xffd36b, 0);
-    this.bulb = mesh(new THREE.SphereGeometry(1.1, 16, 12), this.bulbM, 0, 2.2, 7); scene.add(this.bulb);
-    const rlBox = mesh(new THREE.BoxGeometry(6, 2.4, 3.4), MAT.paint(0x6b5a35), 0, 1.2, 7); scene.add(rlBox); this.rlBox = rlBox;
+    this.tx = coilMesh(); this.tx.position.x = TXX; rail.add(this.tx);
     app.addComponent(new Component({
-      key: 'coils', name: '线圈、导轨与负载', zone: 'none', fixed: true, required: true, object: rail, labelY: 26,
-      icon: SVG('<ellipse cx="18" cy="20" rx="5" ry="14"/><ellipse cx="46" cy="20" rx="5" ry="14"/><path d="M23 14q9-4 18 0M23 26q9 4 18 0" stroke-dasharray="2 2"/>'),
-      desc: `两只相同的平面螺旋线圈：${COIL.N} 匝，内半径 ${(COIL.r0 * 100).toFixed(1)} cm，匝距 ${COIL.p * 1000} mm。发射线圈固定，接收线圈在导轨上移动，d 为两线圈平面的间距。发射回路串联电容 C₁ = 10.00 nF（标称）。接收回路串联固定电容 C₂ 和微调电容 C_t（0–800 pF）以及负载电阻 R_L（负载旁有一只指示灯）。接收回路可以改成开路（拆下电容和负载），这时测到的是感应电动势。`,
+      key: 'coils', name: '导轨与发射线圈', zone: 'none', fixed: true, required: true, object: rail, labelY: 26,
+      icon: SVG('<ellipse cx="18" cy="20" rx="5" ry="14"/><path d="M4 36h56"/>'),
+      desc: `发射线圈固定在导轨左端，与右面的信号源、电容 C₁ = 10.00 nF（标称）串联。线圈 ${COIL.N} 匝，内半径 ${(COIL.r0 * 100).toFixed(1)} cm，匝距 ${COIL.p * 1000} mm。导轨刻度的零点在发射线圈平面上，接收线圈滑座的读数就是两线圈的间距 d。`,
+    }));
+    // 接收线圈：导轨上的滑座，可横向微调和转动
+    const rxG = new THREE.Group();
+    this.rx = coilMesh(); this.rx.rotation.y = Math.PI; this.rx.position.x = 0; rxG.add(this.rx);
+    this.bulbM = MAT.emissive(0xffd36b, 0);
+    this.bulb = mesh(new THREE.SphereGeometry(1.1, 16, 12), this.bulbM, 4, 2.2, 7); rxG.add(this.bulb);
+    this.rlBox = mesh(new THREE.BoxGeometry(6, 2.4, 3.4), MAT.paint(0x6b5a35), 4, 1.2, 7); rxG.add(this.rlBox);
+    rxG.add(mesh(new THREE.BoxGeometry(5, 1, 6), MAT.paint(0x2d3338), 0, 1.7, 0));
+    rxG.add(mesh(new THREE.BoxGeometry(0.15, 0.3, 2.6), MAT.paint(0xc41e3a), 0, 1.3, 1.6)); // 指针
+    app.addComponent(new Component({
+      key: 'rx', name: '接收线圈（滑座）', zone: 'rail', rail: 'wpt', defaultPos: 50, required: true, object: rxG, labelY: 24,
+      icon: SVG('<ellipse cx="32" cy="20" rx="6" ry="15"/><path d="M20 36h24"/>'),
+      desc: '与发射线圈相同。放上导轨后拖动滑座改变间距；线圈支架可以在滑座上横向移动、绕竖直轴转动——两线圈必须同轴正对，否则耦合变弱，测出的 k 偏离诺依曼公式。接收回路串联固定电容 C₂、微调电容 C_t（0–800 pF）和负载电阻 R_L（负载旁有指示灯）；也可以改成开路（拆下电容和负载），这时测到的是感应电动势。',
       controls: () => [
-        { type: 'knob', label: '线圈间距 d', get: () => this.d, set: (v) => { this.d = Math.round(clamp(v, 3, 60) * 10) / 10; app.changed(); }, min: 3, max: 60, step: 0.1, bigStep: 1, perRev: 5, digits: 1, unit: 'cm' },
+        { type: 'knob', label: '支架横向位置', get: () => this.rho, set: (v) => { this.rho = Math.round(clamp(v, -4, 4) * 100) / 100; }, step: 0.05, bigStep: 0.5, perRev: 2, fmt: () => '前后移动' },
+        { type: 'knob', label: '支架转角', get: () => this.yaw, set: (v) => { this.yaw = Math.round(clamp(v, -30, 30) * 10) / 10; }, step: 0.2, bigStep: 2, perRev: 10, fmt: () => '绕竖直轴转' },
+        { type: 'readout', label: '沿导轨方向看', get: () => this.lookText() },
         { type: 'segment', label: '接收回路', options: [{ value: false, label: '谐振（接 C₂、C_t、R_L）' }, { value: true, label: '开路（测感应电压）' }], get: () => this.open, set: (v) => { this.open = v; app.changed(); } },
         { type: 'knob', label: '微调电容 C_t', get: () => this.trim, set: (v) => { this.trim = Math.round(clamp(v, 0, 800)); app.changed(); }, min: 0, max: 800, step: 1, bigStep: 20, perRev: 100, digits: 0, unit: 'pF' },
         { type: 'segment', label: '负载电阻 R_L', options: RLS.map((r) => ({ value: r, label: `${r} Ω` })), get: () => this.RL, set: (v) => { this.RL = v; app.changed(); } },
@@ -106,9 +139,14 @@ export class WptExperiment {
     }));
     this.view = app.addView({ id: 'sweep', title: '扫频：U₂ – f', w: 300, h: 200, res: 1.6 });
   }
+  onPlace(c) {
+    if (c.key === 'rx') {
+      const s = () => (Math.random() < 0.5 ? -1 : 1);
+      this.rho = Math.round(s() * rand(0.8, 2.2) * 100) / 100; this.yaw = Math.round(s() * rand(4, 12) * 10) / 10;
+    }
+  }
   update() {
-    this.rx.position.x = -22 + this.d;
-    this.bulb.position.x = this.rlBox.position.x = -22 + this.d + 4;
+    this.rx.position.z = this.rho; this.rx.rotation.y = Math.PI + (this.yaw * Math.PI) / 180;
     const r = this.reads();
     this.bulbM.emissiveIntensity = this.open ? 0 : Math.min(4, r.P2 / 20);
     const g = `${this.f.toFixed(2)}`; if (g !== this._g) { this._g = g; this.gBox.setText(g, 'kHz', '正弦 1.0 V 峰值'); }
@@ -165,53 +203,70 @@ export class WptExperiment {
       },
     ];
   }
-  atF0() { const f0 = this.f0rec(); if (f0 == null) { this.app.toast('先测发射线圈的谐振频率 f₀', 'warn'); return false; } if (Math.abs(this.f - f0) > 0.05) { this.app.toast(`频率要保持在 f₀ = ${f0} kHz`, 'warn'); return false; } return true; }
+  atF0() { const f0 = this.f0rec(); if (f0 == null) { this.app.toast('先测发射线圈的谐振频率 f₀', 'warn'); return false; } return true; }
+  /** 频率偏离已测的 f₀ 时的问题说明 */
+  offF0() { const f0 = this.f0rec(); return f0 != null && Math.abs(this.f - f0) > 0.05 ? `频率 ${this.f} kHz 不是 f₀ = ${f0} kHz` : null; }
   recF0(t) {
     const a = this.app, r0 = t.rows[0];
     if (typeof r0?.val !== 'number' || (r0._pend && r0._pend.val)) {
-      if (this.d < 40) return a.toast('接收线圈离得太近，会影响发射回路：先移到 40 cm 以外', 'warn');
-      if (Math.abs(this.f - this.f01) / this.f01 > 0.0015) return a.toast('发射电流还没有到最大：继续细调频率', 'warn');
-      return t.set(0, 'val', this.f);
+      const fl = [];
+      if (this.d < 40) fl.push(`接收线圈只在 ${this.d} cm 处，它的耦合会使发射电流的峰偏移`);
+      if (Math.abs(this.f - this.f01) / this.f01 > 0.0015) fl.push('发射电流还没有调到最大，这个频率不是谐振频率');
+      t.set(0, 'val', this.f); return t.flagAll(0, fl);
     }
-    if (this.open) return a.toast('接收回路要用谐振接法', 'warn');
-    if (this.d > 30) return a.toast('接收线圈太远，接收电压太小不好判断：移近到 20 cm 左右', 'warn');
     if (!this.atF0()) return;
-    if (Math.abs(this.C2 - this.C1) / this.C1 > 0.004) return a.toast('接收电压还没有调到最大：继续调微调电容', 'warn');
-    t.set(1, 'val', this.trim);
+    const fl = [];
+    if (this.open) fl.push('接收回路是开路，调微调电容不起作用');
+    if (this.d > 30) fl.push('接收线圈太远，接收电压太小，最大值不好判断');
+    const o = this.offF0(); if (o) fl.push(o);
+    if (Math.abs(this.C2 - this.C1) / this.C1 > 0.004) fl.push('接收电压还没有调到最大，接收回路没有调谐到 f₀');
+    t.set(1, 'val', this.trim); t.flagAll(1, fl);
   }
   tuned() { return Math.abs(this.C2 - this.C1) / this.C1 <= 0.004; }
   recK(t) {
     const a = this.app;
-    if (!this.open) return a.toast('接收回路要改为开路', 'warn');
     if (!this.atF0()) return;
-    if (t.rows.some((r) => Math.abs(r.d - this.d) < 0.05)) return a.toast('这个间距已经测过了', 'warn');
-    const r = this.reads(); t.addRow({ d: this.d, I1: r.I1, U2: r.U2 });
+    if (t.rows.some((r) => Math.abs(r.d - this.d) < 0.05)) a.toast('这个间距已经测过了', 'warn');
+    const fl = [];
+    if (!this.open) fl.push('接收回路是谐振接法，U₂ 是负载电压而不是感应电动势，算出的 k 不对');
+    const o = this.offF0(); if (o) fl.push(o);
+    if (!this.aligned()) fl.push('两线圈没有同轴正对，耦合系数偏离诺依曼公式');
+    const r = this.reads(); t.flagAll(t.addRow({ d: this.d, I1: r.I1, U2: r.U2 }), fl);
   }
   recSplit(t) {
     const a = this.app;
-    if (this.open) return a.toast('接收回路要用谐振接法', 'warn');
-    if (!this.tuned()) return a.toast('接收回路还没有调谐好', 'warn');
+    if (this.open) a.toast('接收回路要用谐振接法', 'warn');
     const p = this.peakList();
     if (p.length < 2) return a.toast('扫频曲线只有一个峰：线圈再靠近一些', 'warn');
-    if (t.rows.some((r) => Math.abs(r.d - this.d) < 0.05)) return a.toast('这个间距已经测过了', 'warn');
-    if (t.rows.length && t.rows[0]._RL !== this.RL) return a.toast(`负载电阻要和第一行相同（${t.rows[0]._RL} Ω）`, 'warn');
-    t.addRow({ d: this.d, fL: Math.round(p[0] * 10) / 10, fH: Math.round(p.at(-1) * 10) / 10, _RL: this.RL });
+    if (t.rows.some((r) => Math.abs(r.d - this.d) < 0.05)) a.toast('这个间距已经测过了', 'warn');
+    const fl = [];
+    if (!this.tuned()) fl.push('接收回路没有调谐好，两个峰高低不等、位置也偏了');
+    if (t.rows.length && t.rows[0]._RL !== this.RL) fl.push(`负载电阻和第一行（${t.rows[0]._RL} Ω）不同`);
+    t.flagAll(t.addRow({ d: this.d, fL: Math.round(p[0] * 10) / 10, fH: Math.round(p.at(-1) * 10) / 10, _RL: this.RL }), fl);
   }
   recEff(t) {
     const a = this.app;
-    if (this.open) return a.toast('接收回路要用谐振接法', 'warn');
-    if (!this.tuned()) return a.toast('接收回路还没有调谐好', 'warn');
+    if (this.open) a.toast('接收回路要用谐振接法', 'warn');
     if (!this.atF0()) return;
-    if (t.rows.some((r) => Math.abs(r.d - this.d) < 0.05)) return a.toast('这个间距已经测过了', 'warn');
-    if (t.rows.length && t.rows[0]._RL !== this.RL) return a.toast(`负载电阻要和第一行相同（${t.rows[0]._RL} Ω）`, 'warn');
-    const r = this.reads(); t.addRow({ d: this.d, I1: r.I1, P1: r.P1, U2: r.U2, _RL: this.RL });
+    if (t.rows.some((r) => Math.abs(r.d - this.d) < 0.05)) a.toast('这个间距已经测过了', 'warn');
+    const fl = [];
+    if (!this.tuned()) fl.push('接收回路没有调谐好，传输效率偏低');
+    const o = this.offF0(); if (o) fl.push(o);
+    if (t.rows.length && t.rows[0]._RL !== this.RL) fl.push(`负载电阻和第一行（${t.rows[0]._RL} Ω）不同`);
+    if (!this.aligned()) fl.push('两线圈没有同轴正对');
+    const r = this.reads(); t.flagAll(t.addRow({ d: this.d, I1: r.I1, P1: r.P1, U2: r.U2, _RL: this.RL }), fl);
   }
 
   // ======================= 自动操作 =======================
   async seg(comp, key, v) { const a = this.app; a.select(a.comp(comp)); if (this[key] !== v) { this[key] = v; a.renderInspector(); a.changed(); await a.wait(120); } }
   async adj(comp, key, to, ms = 250) { const a = this.app; a.select(a.comp(comp)); if (Math.abs(this[key] - to) > 1e-9) await a.tween(() => this[key], (v) => (this[key] = v), to, ms); this[key] = to; a.changed(); await a.wait(60); }
   async toF0() { const f0 = this.f0rec() ?? Math.round(this.f01 * 100) / 100; await this.adj('gen', 'f', f0, 200); }
-  async tune() { if (!this.tuned()) await this.adj('coils', 'trim', Math.round((this.C1 - this.C2f) * 1e12), 300); }
+  async tune() { if (!this.tuned()) await this.adj('rx', 'trim', Math.round((this.C1 - this.C2f) * 1e12), 300); }
+  async alignRx() {
+    const a = this.app; a.select(a.comp('rx'));
+    if (Math.abs(this.rho) > 0.05) await this.adj('rx', 'rho', Math.round(rand(-0.05, 0.05) * 100) / 100, 400);
+    if (Math.abs(this.yaw) > 0.3) await this.adj('rx', 'yaw', Math.round(rand(-0.3, 0.3) * 10) / 10, 400);
+  }
   steps() {
     const app = this.app, rows = (id) => app.table(id).completeRows(), f0t = () => app.table('f0').rows;
     const has = (i) => typeof f0t()[i]?.val === 'number' && !(f0t()[i]._pend && f0t()[i]._pend.val);
@@ -221,14 +276,23 @@ export class WptExperiment {
         html: '<p>把接收线圈移到 40 cm 以外（耦合可以忽略）。调信号源频率，使发射电流 $I_1$ 最大，这时的频率就是发射回路的谐振频率 $f_0$。</p>',
         hint: '先用大步长找到电流的大致峰值，再用 10 Hz 的细调找最大值。',
         check: () => has(0),
-        auto: async () => { app.showTable(0); await app.view('全景'); await this.seg('coils', 'open', false); await this.adj('coils', 'd', 50, 300); await this.adj('gen', 'f', Math.round(this.f01 * 100) / 100, 500); await app.record('f0', 0); },
+        auto: async () => { app.showTable(0); await app.view('全景'); if (this.rxOn && this.d < 40) await this.adj('rx', 'd', 50, 300); await this.adj('gen', 'f', Math.round(this.f01 * 100) / 100, 500); await app.record('f0', 0); },
+      },
+      {
+        title: '放上接收线圈，与发射线圈同轴正对',
+        html: '<p>把接收线圈装到导轨上。线圈支架放上去时总有些偏斜：选中它，沿导轨方向看两线圈是否同轴，用<b>支架横向位置</b>和<b>支架转角</b>把它摆正。目测摆到基本正对后，可以把接收回路改成开路、把线圈移到 10 cm 左右，细调这两项使接收电压最大。</p>',
+        hint: '横向偏 1 cm 时，10 cm 间距下互感约小 1.5%；偏 2 cm 约小 4%。转角的影响在近距离时反而使互感略大（线圈一侧靠近了），远距离时使互感变小。',
+        status: () => (this.rxOn ? this.lookText() : '接收线圈还在器材柜里'),
+        check: () => this.rxOn && this.aligned(),
+        diagnose: () => (!this.rxOn ? [{ msg: '接收线圈还没放上导轨。', fix: { label: '帮我放上', run: () => app.autoPlace('rx', { pos: 30 }) } }] : !this.aligned() ? [{ msg: `接收线圈没有正对：${this.lookText()}。`, fix: { label: '帮我摆正', run: () => this.alignRx() } }] : []),
+        auto: async () => { await app.view('线圈'); if (!this.rxOn) await app.autoPlace('rx', { pos: 30 }); await this.alignRx(); },
       },
       {
         title: '调谐接收线圈',
-        html: '<p>接收线圈移到 20 cm 左右，频率保持 $f_0$ 不动，调微调电容 $C_t$ 使接收电压 $U_2$ 最大，接收回路就和发射回路调到了同一谐振频率。</p>',
+        html: '<p>接收线圈移到 20 cm 左右，接收回路用谐振接法，频率保持 $f_0$ 不动，调微调电容 $C_t$ 使接收电压 $U_2$ 最大，接收回路就和发射回路调到了同一谐振频率。</p>',
         check: () => has(1),
-        diagnose: () => (!has(0) ? [{ msg: '先测发射线圈的谐振频率。' }] : []),
-        auto: async () => { app.showTable(0); await app.view('线圈'); await this.seg('coils', 'open', false); await this.adj('coils', 'd', 20, 300); await this.toF0(); await this.tune(); await app.record('f0', 0); },
+        diagnose: () => (!has(0) ? [{ msg: '先测发射线圈的谐振频率。' }] : !this.rxOn ? [{ msg: '接收线圈还没放上导轨。', fix: { label: '帮我放上', run: () => app.autoPlace('rx', { pos: 20 }) } }] : []),
+        auto: async () => { app.showTable(0); await app.view('线圈'); if (!this.rxOn) await app.autoPlace('rx', { pos: 20 }); await this.seg('rx', 'open', false); await this.adj('rx', 'd', 20, 300); await this.toF0(); await this.tune(); await app.record('f0', 0); },
       },
       {
         title: '互感法测耦合系数',
@@ -236,8 +300,8 @@ export class WptExperiment {
         status: () => `已测 ${rows('k').length} 个间距`,
         check: () => rows('k').length >= 5,
         auto: async () => {
-          app.showTable(1); await app.view('全景'); await this.seg('coils', 'open', true); await this.toF0();
-          for (const d of [4, 5, 6, 8, 10, 12, 15, 20, 25, 30]) { if (rows('k').some((r) => Math.abs(r.d - d) < 0.05)) continue; await this.adj('coils', 'd', d, 200); await app.record('k', 0); }
+          app.showTable(1); await app.view('全景'); await this.seg('rx', 'open', true); await this.toF0();
+          for (const d of [4, 5, 6, 8, 10, 12, 15, 20, 25, 30]) { if (rows('k').some((r) => Math.abs(r.d - d) < 0.05)) continue; await this.adj('rx', 'd', d, 200); await app.record('k', 0); }
         },
       },
       {
@@ -247,8 +311,8 @@ export class WptExperiment {
         status: () => `已测 ${rows('split').length} 个间距`,
         check: () => rows('split').length >= 3,
         auto: async () => {
-          app.showTable(2); await app.view('线圈'); await this.seg('coils', 'open', false); await this.seg('coils', 'RL', rows('split')[0]?._RL ?? 5); await this.tune();
-          for (const d of [3, 4, 5, 6, 8]) { if (rows('split').some((r) => Math.abs(r.d - d) < 0.05)) continue; await this.adj('coils', 'd', d, 200); if (this.peakList().length >= 2) await app.record('split', 0); }
+          app.showTable(2); await app.view('线圈'); await this.seg('rx', 'open', false); await this.seg('rx', 'RL', rows('split')[0]?._RL ?? 5); await this.tune();
+          for (const d of [3, 4, 5, 6, 8]) { if (rows('split').some((r) => Math.abs(r.d - d) < 0.05)) continue; await this.adj('rx', 'd', d, 200); if (this.peakList().length >= 2) await app.record('split', 0); }
         },
       },
       {
@@ -258,8 +322,8 @@ export class WptExperiment {
         status: () => `已测 ${rows('eff').length} 个间距`,
         check: () => rows('eff').length >= 6,
         auto: async () => {
-          app.showTable(3); await app.view('全景'); await this.seg('coils', 'open', false); await this.seg('coils', 'RL', rows('eff')[0]?._RL ?? 5); await this.tune(); await this.toF0();
-          for (const d of [4, 6, 8, 9, 10, 11, 12, 13, 14, 16, 20, 25, 30]) { if (rows('eff').some((r) => Math.abs(r.d - d) < 0.05)) continue; await this.adj('coils', 'd', d, 200); await app.record('eff', 0); }
+          app.showTable(3); await app.view('全景'); await this.seg('rx', 'open', false); await this.seg('rx', 'RL', rows('eff')[0]?._RL ?? 5); await this.tune(); await this.toF0();
+          for (const d of [4, 6, 8, 9, 10, 11, 12, 13, 14, 16, 20, 25, 30]) { if (rows('eff').some((r) => Math.abs(r.d - d) < 0.05)) continue; await this.adj('rx', 'd', d, 200); await app.record('eff', 0); }
         },
       },
       {

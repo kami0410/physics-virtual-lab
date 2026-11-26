@@ -117,7 +117,7 @@ export class WorkFunctionExperiment {
     const i = t.rows.findIndex((r) => Math.abs(r.If - this.If) < 0.0005);
     if (i < 0) return a.toast(`灯丝电流 ${this.If.toFixed(3)} A 不在表中，调到 ${IFS.map((x) => x.toFixed(2)).join('、')} A 之一`, 'warn');
     if (!UAS.includes(this.Ua)) return a.toast(`阳极电压 ${this.Ua} V 不在表中，调到 ${UAS.join('、')} V 之一`, 'warn');
-    if (!this.stable()) return a.toast('阳极电流还在变：灯丝温度没有稳定，等示数不变再记录', 'warn');
+    if (!this.stable()) a.toast('阳极电流还在变：灯丝温度没有稳定，等示数不变再记录', 'warn');
     t.set(i, `u${this.Ua}`, +this.fmtIa(this.Ia()));
   }
 

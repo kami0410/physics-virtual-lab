@@ -212,7 +212,7 @@ export class PhotoelectricExperiment {
   }
   recUa(t) {
     if (this.mode !== 'stop') return this.app.toast('请切换到截止电压挡', 'warn');
-    if (this.cover || !this.lampOn) return this.app.toast('光电管没有受到光照', 'warn');
+    if (this.cover || !this.lampOn) this.app.toast('光电管没有受到光照', 'warn');
     if (this.readCur() == null) return;
     if (this.range !== 5) this.app.toast('提示：零电流法应使用 10⁻¹³ A 量程，否则判断“零”不准', 'warn');
     const d = this.display();

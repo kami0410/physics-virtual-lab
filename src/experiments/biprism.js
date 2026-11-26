@@ -334,8 +334,8 @@ export class BiprismExperiment {
     if (!im) return this.app.toast('请先在双棱镜和测微目镜之间放入凸透镜', 'warn');
     const r = im.m > 1 ? 0 : 1;
     const row = t.rows[r];
-    const key = row.x1 == null ? 'x1' : row.x2 == null ? 'x2' : null;
-    if (!key) return this.app.toast(`${row.what}已经记录过`, 'warn');
+    const key = row.x1 == null ? 'x1' : 'x2'; // 两个都记过：覆盖第二个（并提示）
+    if (row.x1 != null && row.x2 != null) this.app.toast(`${row.what}已经记录过，这次覆盖了第二个读数`, 'warn');
     if (!im.sharp) this.app.toast('狭缝像不清晰：透镜不在成像位置', 'warn');
     const X = this.eyeX();
     const near = im.xs.reduce((a, c) => (Math.abs(c - X) < Math.abs(a - X) ? c : a));

@@ -310,7 +310,7 @@ export class SlitExperiment {
     if (!this.app.comp('det').placed) { this.app.toast('请先放置光电探头', 'warn'); return false; }
     const m = this.meterText();
     if (m.over) { this.app.toast('光功率计超量程，请换大一挡量程', 'warn'); return false; }
-    t.addRow({ x: Math.round(this.stage * 100) / 100, I: m.value, rng: RANGES[this.range] >= 1000 ? '2 mW' : RANGES[this.range] + ' μW' });
+    t.addRow({ x: Math.round(this.stage * 100) / 100, I: m.value, rng: RANGES[this.range] >= 1000 ? '2 mW' : RANGES[this.range] + ' μW', _type: this.type });
     return true;
   }
 
@@ -418,7 +418,15 @@ export class SlitExperiment {
   }
 
   analyze() {
-    const rows = this.app.table('scan').completeRows().slice().sort((a, b) => a.x - b.x);
+    const r = this._analyze();
+    const note = this.app.table('scan').completeRows().some((x) => x._type === 'double') ? '表中有用<b>双缝</b>扫出的数据。双缝图样的暗纹间距由缝间距决定，按单缝公式算出来的“缝宽”其实是把缝间距和缝宽混在一起了，结果不对。' : '';
+    if (note && r && typeof r.html === 'string') r.html = `<div class="an-flaws">${note}</div>` + r.html;
+    return r;
+  }
+  _analyze() {
+    const all = this.app.table('scan').completeRows();
+    // 缝宽按单缝公式 a·sinθ = kλ 求；双缝的暗纹间距由缝间距决定，混进来会把缝间距当成缝宽
+    const rows = all.slice().sort((a, b) => a.x - b.x);
     if (rows.length < 15) return { html: '<p>数据点太少（至少 15 个，建议 50 个以上）。</p>', ok: false };
     const L = this.L || 800;
     const x = rows.map((r) => r.x), P = rows.map((r) => r.I);

@@ -126,7 +126,7 @@ export class RlcExperiment {
     if (s.mode !== 'CH1' && s.mode !== 'DUAL') return app.toast('垂直方式请选 CH1 或双踪', 'warn'), false;
     if (s.ch[0].cpl !== 'DC') return app.toast('观察暂态过程应使用 DC 耦合', 'warn'), false;
     if (!this.eng.triggered) return app.toast('波形不稳定，请调触发', 'warn'), false;
-    if (s.tvar < 0.999) return app.toast('扫描“微调”不在校准位置，时间读数不准', 'warn'), false;
+    if (s.tvar < 0.999) app.toast('扫描“微调”不在校准位置，时间读数不准', 'warn');
     this.osc.refresh(this.cir);
     if (this.osc.busy || !this.osc.sig) return app.toast('示波器还在计算电路，稍等再记录', 'warn'), false;
     return true;
@@ -196,7 +196,7 @@ export class RlcExperiment {
     const { p } = this.peaks(w);
     if (p.length < 2) return app.toast('看不到两个过冲峰：电路不是欠阻尼状态，减小电阻', 'warn');
     const h1 = this.hDiv(p[0].h), h2 = this.hDiv(p[1].h), D = (2 * (p[1].t - p[0].t)) / this.tEff();
-    if (h2 < 0.3) return app.toast('第二个峰太低（不到 0.3 格），减小 V/div 或减小电阻', 'warn');
+    if (h2 < 0.3) app.toast('第二个峰太低（不到 0.3 格），减小 V/div 或减小电阻', 'warn');
     if (h1 > 8) return app.toast('过冲超出屏幕，增大 V/div', 'warn');
     if (D > 10.2) return app.toast('两个周期超出屏幕，增大 TIME/DIV', 'warn');
     if (D < 3) app.toast('两个周期不到 3 格，可减小 TIME/DIV', 'warn');
@@ -209,8 +209,8 @@ export class RlcExperiment {
     const { uf, u0, p } = this.peaks(w);
     const over = p.length ? p[0].h / Math.abs(uf - u0) : 0;
     const Rt = this.rbox.nominal() + R_GEN + this.RL, Rc = 2 * Math.sqrt(this.ind.L / (this.cbox.value() + 20e-12));
-    if (this.hDiv(p.length ? p[0].h : 0) > 0.1) return app.toast(`还能看到过冲（约 ${pct(over, 1)}），继续增大电阻`, 'warn');
-    if (Rt > 1.4 * Rc) return app.toast('已经明显过阻尼（上升很慢）。减小电阻，找刚好不过冲的位置', 'warn');
+    if (this.hDiv(p.length ? p[0].h : 0) > 0.1) app.toast(`还能看到过冲（约 ${pct(over, 1)}），继续增大电阻`, 'warn');
+    else if (Rt > 1.4 * Rc) app.toast('已经明显过阻尼（上升很慢）。减小电阻，找刚好不过冲的位置', 'warn');
     t.addRow({ R: this.rbox.nominal() });
   }
 

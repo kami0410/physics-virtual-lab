@@ -291,10 +291,10 @@ export class HelmholtzExperiment {
   rec(t) {
     const app = this.app, k = this.config();
     if (!this.tm.comp.placed) return app.toast('特斯拉计没有放上', 'warn');
-    if (!k) return app.toast('线圈中没有电流（检查接线和恒流源输出）', 'warn');
+    if (!k) app.toast('线圈中没有电流（检查接线和恒流源输出）', 'warn');
     if (!this.zeroed()) app.toast('特斯拉计没有在断电时调零，读数里混有地磁场', 'warn');
     const B = this.refresh();
-    t.addRow({ cfg: this.cfgName(k, this.coil.sp), k, sp: this.coil.sp, I: this.src.shownI(), x: Math.round(this.coil.x * 1000), B });
+    t.addRow({ cfg: k ? this.cfgName(k, this.coil.sp) : '线圈中无电流', k, sp: this.coil.sp, I: this.src.shownI(), x: Math.round(this.coil.x * 1000), B });
   }
   zeroed() { return Math.abs(this.tm.zero - this.Bbg) < 0.004; }
 

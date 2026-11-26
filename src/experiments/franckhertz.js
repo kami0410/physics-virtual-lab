@@ -301,7 +301,7 @@ export class FranckHertzExperiment {
   analyze() {
     const a = this.app;
     const d = a.table('iv').rows.map((r) => [+r.V, +r.I]).filter(([V, I]) => isFinite(V) && isFinite(I)).sort((p, q) => p[0] - q[0]);
-    if (d.length < 30) return { html: '<p>数据太少：请逐点测量 I_A–U_G2K，至少 30 组，测到 80 V 以上。</p>', ok: false };
+    if (d.length < 8) return { html: '<p>数据太少，连峰都找不出来：请逐点测量 I_A–U_G2K，测到 80 V 以上。</p>', ok: false };
     const ext = (sign) => {
       const out = [];
       for (let i = 0; i < d.length; i++) {
@@ -326,7 +326,8 @@ export class FranckHertzExperiment {
       return out;
     };
     const pk = ext(1), vl = ext(-1).filter(([V]) => V > (pk[0] ? pk[0][0] : 0));
-    if (pk.length < 4) return { html: `<p>只找到 ${pk.length} 个峰，数据不够（要测到 80 V 以上，电流不要超量程）。</p>`, ok: false };
+    if (pk.length < 2) return { html: `<p>只找到 ${pk.length} 个峰，至少要两个峰才能求间距（要测到更高的电压，电流不要超量程）。</p>`, ok: false };
+    const fewNote = pk.length < 4 ? `<div class="an-flaws">只找到 ${pk.length} 个峰（一般要测到 80 V 以上、有 5～6 个峰），下面的结果误差会很大。</div>` : '';
     const n = pk.map((_, i) => i + 1), Vs = pk.map((p) => p[0]);
     const fit = linFit(n, Vs);
     const dif = Vs.slice(1).map((v, i) => v - Vs[i]);
@@ -345,7 +346,7 @@ export class FranckHertzExperiment {
       { title: 'I_A–U_G2K', xLabel: 'U_G2K / V', yLabel: 'I_A / nA', series: [{ type: 'line', data: d }, { type: 'scatter', data: pk.map((p) => [p[0], p[1]]) }] },
       { title: '峰位 U_n–n', xLabel: 'n', yLabel: 'U_n / V', series: [{ type: 'scatter', data: n.map((k, i) => [k, Vs[i]]) }, { type: 'line', data: [[0.5, fit.b + 0.5 * U1], [pk.length + 0.5, fit.b + (pk.length + 0.5) * U1]], dash: [5, 4] }] },
     ];
-    return { html, ok: true, answers: [{ label: '$U_1$', unit: 'V', value: U1, digits: 2, tolRel: 0.01 }], plots };
+    return { html: fewNote + html, ok: true, answers: [{ label: '$U_1$', unit: 'V', value: U1, digits: 2, tolRel: 0.01 }], plots };
   }
 
   principle() {

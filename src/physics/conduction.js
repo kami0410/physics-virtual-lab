@@ -23,7 +23,7 @@ export class LeeDisc {
    *   mP、cP、RP、hP 散热盘质量、比热、半径、厚度；CA 发热盘热容；Gc 接触换热系数 W/(m²K)；eps 散热盘发射率；Ta 室温
    */
   constructor(p) {
-    Object.assign(this, { N: 8, Pmax: 90, GA: 0.12, Gc: 4000, eps: 0.2, Ta: 20 }, p);
+    Object.assign(this, { N: 8, Pmax: 90, GA: 0.12, Gc: 4000, eps: 0.2, Ta: 20, fc: 1 }, p); // fc：样品与铜盘的接触面积比例（放偏时 < 1）
     this.TA = this.Ta; this.TP = this.Ta; this.TB = new Array(this.N).fill(this.Ta);
     this.set = 75; this.on = false; this.integ = 0; this.mode = 'stack'; this.power = 0; this.t = 0;
   }
@@ -49,7 +49,7 @@ export class LeeDisc {
     let qA = this.power - this.GA * (this.TA - this.Ta), qP = 0;
     if (this.mode === 'stack') {
       // 接触热阻 + 半层样品
-      const gEnd = 1 / (1 / this.Gc + dx / 2 / lam) * AB, gIn = (lam / dx) * AB;
+      const gEnd = 1 / (1 / this.Gc + dx / 2 / lam) * AB * this.fc, gIn = (lam / dx) * AB;
       const T = this.TB, C = rc * AB * dx, f = new Array(N).fill(0);
       const qTop = gEnd * (this.TA - T[0]), qBot = gEnd * (T[N - 1] - this.TP);
       f[0] += qTop; f[N - 1] -= qBot;

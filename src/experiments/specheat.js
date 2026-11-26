@@ -193,7 +193,7 @@ export class SpecHeatExperiment {
   nextRow(k) { const i = this.app.table('time').rows.findIndex((r) => !(r[k] != null && r[k] !== '' && isFinite(r[k]))); return i; }
   recTime(t) {
     const a = this.app, k = this.cur;
-    if (this.sw.run) return a.toast('秒表还在走：先停表再记录', 'warn');
+    if (this.sw.run) a.toast('秒表还在走：先停表再记录', 'warn');
     if (!(this.sw.value > 0)) return a.toast('秒表读数为 0：还没有计时', 'warn');
     const i = this.nextRow(k);
     if (i < 0) return a.toast(`${METALS[k].name}样品已经测满 ${N} 次`, 'warn');
