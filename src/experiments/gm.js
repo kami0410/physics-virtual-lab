@@ -12,6 +12,9 @@ import { plateau, observed, corrected, twoSourceTau, twoSourceApprox, poisson, p
 
 const SHELF = [1, 0.45, 0.22, 0.11, 0.045];
 const XS = [0, 25, 50, 75, 100, 150, 200, 250, 300]; // mg/cm²
+// 铝吸收片一套 5 片（面密度 mg/cm²），叠起来组成各种厚度
+const FOILS = [25, 25, 50, 100, 100];
+const FOIL_SET = { 0: [], 25: [0], 50: [2], 75: [2, 0], 100: [3], 150: [3, 2], 200: [3, 4], 250: [3, 4, 2], 300: [3, 4, 2, 0, 1] };
 const TS = [1, 10, 30, 60, 100, 200, 300];
 const NREP = 200, KT = 40;
 const SVG = (inner) => `<svg viewBox="0 0 64 40" fill="none" stroke="currentColor" stroke-width="1.5">${inner}</svg>`;
@@ -26,14 +29,70 @@ export class GmExperiment {
     this.pl = { Vs: Math.round(rand(330, 370)), len: rand(250, 300), slope: rand(0.03, 0.06) };
     this.tau = rand(180, 280) * 1e-6; this.nb = rand(0.35, 0.6);
     this.RA = rand(1000, 1150); this.RB = rand(950, 1100); this.mu = rand(6.0, 7.4); // cm²/g
-    this.V = 0; this.src = 'none'; this.shelf = 2; this.x = 0; this.T = 10;
+    this.V = 0; this.T = 10; // 放射源、托架层、吸收片都由拖放决定（src / shelf / x）
     this.run = null; this.rep = null; this.last = null; this.timeScale = 10;
+  }
+  /** 托盘放在铅室第几层（不在铅室里为 0） */
+  get shelf() { const m = /^sh(\d)$/.exec(this.app.slotOf('tray') || ''); return m ? +m[1] : 0; }
+  /** 铅室里托盘上的源：none / A / B / AB */
+  get src() {
+    if (!this.shelf) return 'none';
+    const a = this.app.slotOf('srcA') === 'tA', b = this.app.slotOf('srcB') === 'tB';
+    return a && b ? 'AB' : a ? 'A' : b ? 'B' : 'none';
+  }
+  /** 托盘上叠的铝片总面密度 */
+  get x() { return this.app.stackOf ? this.app.stackOf('foil').reduce((t, c) => t + FOILS[+c.key.slice(4)], 0) : 0; }
+  canPlace(comp, o = {}) {
+    if ((o.slot === 'tA' || o.slot === 'tB' || /^fo\d$/.test(o.slot || '')) && !this.app.comp('tray').placed) return '托盘还在器材柜里：先把托盘放到铅室的托架上';
+    return null;
+  }
+  canRemove(comp, o = {}) {
+    // 托盘拿回器材柜：上面的源和吸收片放回台面
+    if (comp.key === 'tray' && !o.to) this.clearTray();
+    return null;
+  }
+  clearTray() {
+    const a = this.app;
+    for (const k of ['A', 'B']) if (a.slotOf('src' + k) === 't' + k) a.moveSlot(a.comp('src' + k), 'r' + k, { silent: true });
+    for (const c of a.stackOf('foil').slice()) a.moveSlot(c, 'fr' + c.key.slice(4), { silent: true });
+  }
+  onPlace() { if (!this.srcM) return; this.app.renderInspector(); this.app.changed(); }
+  onSlotChange() { this.onPlace(); }
+  onRemove() { this.onPlace(); }
+  /** 托盘上的挂点跟着托盘走 */
+  syncTray() {
+    const a = this.app, t = a.comp('tray'), base = t.placed ? t.root.position : a.zones.find((z) => z.id === 'trayRest').pos;
+    for (const z of a.zones) {
+      let off = null;
+      if (z.id === 'tA') off = [-1.6, 0.35, 0]; else if (z.id === 'tB') off = [1.6, 0.35, 0];
+      else { const m = /^fo(\d)$/.exec(z.id); if (m) off = [0, 1.3 + +m[1] * 0.3, 0]; }
+      if (!off) continue;
+      z.pos.set(base.x + off[0], base.y + off[1], base.z + off[2]);
+      if (z.marker) z.marker.position.copy(z.pos).y += 0.15;
+      if (z.occupant && !(a.drag && a.drag.comp === z.occupant)) z.occupant.root.position.copy(z.pos);
+    }
+  }
+  // ---- 自动操作：摆源、换层、加吸收片 ----
+  async setShelf(k) { const a = this.app; if (this.shelf !== k) { await a.autoPut('tray', 'sh' + k); await a.wait(80); } }
+  async setSrc(v) {
+    const a = this.app;
+    if (!a.comp('tray').placed) await this.setShelf(2);
+    for (const k of ['A', 'B']) {
+      const want = v.includes(k), on = a.slotOf('src' + k) === 't' + k;
+      if (want && !on) await a.autoPut('src' + k, 't' + k);
+      if (!want && on) { a.moveSlot(a.comp('src' + k), 'r' + k, { silent: true }); await a.wait(80); }
+    }
+  }
+  async setX(x) {
+    const a = this.app; if (this.x === x) return;
+    for (const c of a.stackOf('foil').slice().reverse()) a.moveSlot(c, 'fr' + c.key.slice(4), { silent: true });
+    for (const i of FOIL_SET[x]) await a.autoPut('foil' + i, 'fo0');
   }
   cond() { return `${this.V}|${this.src}|${this.shelf}|${this.x}`; }
   /** 真实计数率（含本底） */
   trueRate() {
     const s = (this.src === 'A' || this.src === 'AB' ? this.RA : 0) + (this.src === 'B' || this.src === 'AB' ? this.RB : 0);
-    return plateau(this.V, this.pl) * (s * SHELF[this.shelf - 1] * Math.exp((-this.mu * this.x) / 1000) + this.nb);
+    return plateau(this.V, this.pl) * (s * (SHELF[this.shelf - 1] || 0) * Math.exp((-this.mu * this.x) / 1000) + this.nb);
   }
   obsRate() { return observed(this.trueRate(), this.tau); }
   discharge() { return this.V > this.pl.Vs + this.pl.len + 20; }
@@ -85,20 +144,39 @@ export class GmExperiment {
     for (let k = 0; k < 5; k++) lead.add(mesh(new THREE.BoxGeometry(11.6, 0.3, 9), MAT.paint(0x8a8f96), 0, 16 - k * 3, 0));
     lead.add(mesh(new THREE.CylinderGeometry(1.6, 1.6, 9, 24), MAT.chrome(), 0, 22, 0));
     lead.add(mesh(new THREE.CylinderGeometry(1.3, 1.3, 0.2, 24), MAT.paint(0x2a1d10), 0, 17.4, 0));
-    this.srcM = new THREE.Group(); lead.add(this.srcM);
-    this.srcA = mesh(new THREE.CylinderGeometry(1.2, 1.2, 0.5, 24), MAT.paint(0xc9a23a), -1.4, 0, 0); this.srcM.add(this.srcA);
-    this.srcB = mesh(new THREE.CylinderGeometry(1.2, 1.2, 0.5, 24), MAT.paint(0xb06a2c), 1.4, 0, 0); this.srcM.add(this.srcB);
-    this.foil = mesh(new THREE.BoxGeometry(6, 0.12, 5), MAT.alu(), 0, 1.2, 0); this.srcM.add(this.foil);
+    this.srcM = true;
+    // 托盘：放到五层托架中的一层（第 1 层离窗口最近）
+    for (let k = 1; k <= 5; k++) app.addSlot({ id: 'sh' + k, pos: new THREE.Vector3(-24, 16 - (k - 1) * 3 + 0.15, 0), accepts: ['tray'], label: `第 ${k} 层托架`, r: 1.4, snap: 3 });
+    app.addSlot({ id: 'trayRest', pos: new THREE.Vector3(-6, 0, 16), accepts: ['tray'], label: '台面', r: 3, snap: 8 });
+    const tg = new THREE.Group(); tg.add(mesh(new THREE.BoxGeometry(7, 0.3, 5.5), MAT.paint(0x9aa0a6)));
+    app.addComponent(new Component({ key: 'tray', name: '源托盘', zone: 'slot', defaultSlot: 'sh2', object: tg, labelY: 3, icon: SVG('<rect x="12" y="22" width="40" height="5"/>'),
+      desc: '放源和铝吸收片的托盘，插到铅室里五层托架中的一层。层数越靠上（第 1 层）离计数管窗口越近，计数率越高。' }));
+    // 两枚 β 源：平时放在铅罐里，用时放到托盘上
+    for (const [k, col, x] of [['A', 0xc9a23a, -10], ['B', 0xb06a2c, -6]]) {
+      app.addSlot({ id: 't' + k, pos: new THREE.Vector3(0, 0, 0), accepts: ['src' + k], label: '托盘上', r: 1.2, snap: 3 });
+      app.addSlot({ id: 'r' + k, pos: new THREE.Vector3(x, 0, 22), accepts: ['src' + k], label: '铅罐', r: 2, snap: 6 });
+      const g = new THREE.Group(); g.add(mesh(new THREE.CylinderGeometry(1.2, 1.2, 0.5, 24), MAT.paint(col)));
+      app.addComponent(new Component({ key: 'src' + k, name: `β 源 ${k}（⁹⁰Sr–⁹⁰Y）`, zone: 'slot', defaultSlot: 't' + k, object: g, labelY: 2.5, icon: SVG('<circle cx="32" cy="22" r="10"/>'),
+        desc: `⁹⁰Sr–⁹⁰Y β 源 ${k}，放在托盘的${k === 'A' ? '左' : '右'}边位置。用镊子夹取，不用时放回铅罐。测本底时两个源都要放回铅罐。` }));
+    }
+    // 铝吸收片：一片片叠在托盘上方
+    for (let k = 0; k < 5; k++) app.addSlot({ id: 'fo' + k, pos: new THREE.Vector3(0, 0, 0), accepts: FOILS.map((_, i) => 'foil' + i), label: '源上方（叠吸收片）', r: 1.4, snap: 3, stack: 'foil', level: k });
+    FOILS.forEach((m, i) => {
+      app.addSlot({ id: 'fr' + i, pos: new THREE.Vector3(4 + i * 4.5, 0.1, 20), accepts: ['foil' + i], label: '台面', r: 2, snap: 6 });
+      const g = new THREE.Group(); g.add(mesh(new THREE.BoxGeometry(6, 0.08 + m / 1500, 5), MAT.alu()));
+      app.addComponent(new Component({ key: 'foil' + i, name: `铝吸收片 ${m} mg/cm²`, group: '铝吸收片', zone: 'slot', defaultSlot: 'fo0', object: g, labelY: 2, showLabel: false, icon: SVG('<rect x="12" y="18" width="40" height="4"/>'),
+        desc: `铝吸收片，面密度 ${m} mg/cm²。一套 5 片（25、25、50、100、100），叠在源上方组成 0～300 mg/cm² 的各种厚度。` }));
+    });
     this.flash = MAT.emissive(0xff6a3a, 0);
     lead.add(mesh(new THREE.SphereGeometry(0.5, 12, 8), this.flash, 0, 27.2, 0));
     app.addComponent(new Component({
       key: 'lead', name: '铅室与放射源', zone: 'none', fixed: true, required: true, object: lead, labelY: 30,
       icon: SVG('<rect x="16" y="4" width="32" height="32"/><path d="M28 4V-2M36 4V-2"/><rect x="26" y="26" width="12" height="3"/>'),
-      desc: '端窗型 G-M 计数管装在铅室顶部，窗口朝下。下面五层托架，第 1 层离窗口最近。两枚 ⁹⁰Sr–⁹⁰Y β 源 A、B 可以单独放，也可以并排一起放（位置不变）。源上方可以盖铝吸收片，规格以面密度表示（mg/cm²）。',
+      desc: '端窗型 G-M 计数管装在铅室顶部，窗口朝下。下面五层托架，第 1 层离窗口最近。从器材柜拿源托盘插到某一层，把 β 源 A、B 放到托盘上（可以单放、也可以一起放，位置不变），源上方可以叠铝吸收片（面密度 mg/cm²）。计数过程中动了源、托盘或吸收片，本次计数作废。',
       controls: () => [
-        { type: 'segment', label: '放射源', options: [{ value: 'none', label: '不放（测本底）' }, { value: 'A', label: '源 A' }, { value: 'B', label: '源 B' }, { value: 'AB', label: 'A + B' }], get: () => this.src, set: (v) => { this.src = v; app.changed(); } },
-        { type: 'segment', label: '托架层', options: SHELF.map((_, i) => ({ value: i + 1, label: `第 ${i + 1} 层` })), get: () => this.shelf, set: (v) => { this.shelf = v; app.changed(); } },
-        { type: 'segment', label: '铝吸收片', options: XS.map((x) => ({ value: x, label: x ? `${x}` : '无' })), get: () => this.x, set: (v) => { this.x = v; app.changed(); } },
+        { type: 'readout', label: '托盘', get: () => (this.shelf ? `第 ${this.shelf} 层` : '不在铅室里') },
+        { type: 'readout', label: '托盘上的源', get: () => ({ none: '没有（测本底）', A: '源 A', B: '源 B', AB: 'A + B' })[this.src] },
+        { type: 'readout', label: '铝吸收片', get: () => (this.x ? `${this.x} mg/cm²` : '无') },
       ],
     }));
     const sc = (this.sBox = meterBox(22, 10, 12, 'G-M 定标器')); sc.group.position.set(14, 0, -14); scene.add(sc.group);
@@ -127,8 +205,7 @@ export class GmExperiment {
     return '待机';
   }
   update() {
-    this.srcA.visible = this.src === 'A' || this.src === 'AB'; this.srcB.visible = this.src === 'B' || this.src === 'AB';
-    this.srcM.position.y = 16 - (this.shelf - 1) * 3 + 0.4; this.foil.visible = this.x > 0; this.foil.scale.y = 1 + this.x / 60;
+    this.syncTray();
     this.flash.emissiveIntensity = this.busy() ? 2 + Math.random() * 2 : 0.2;
     const n = String(this.shown()), sub = this.status();
     if (n + sub !== this._s) { this._s = n + sub; this.sBox.setText(n, '', sub); }
@@ -257,7 +334,7 @@ export class GmExperiment {
         check: () => rows('plat').length >= 8,
         auto: async () => {
           app.showTable(0); await app.view('全景');
-          await this.seg('lead', 'src', 'A'); await this.seg('lead', 'x', 0); await this.seg('lead', 'shelf', rows('plat')[0]?._shelf ?? 2);
+          await this.setShelf(rows('plat')[0]?._shelf ?? 2); await this.setSrc('A'); await this.setX(0);
           const top = this.pl.Vs + this.pl.len + 20;
           for (let V = 300; V <= top; V += 25) { if (rows('plat').some((r) => r.V === V)) continue; await this.adj('scaler', 'V', V, 150); await this.count(10); await app.record('plat', 0); }
           await this.adj('scaler', 'V', this.workV(), 300);
@@ -270,7 +347,7 @@ export class GmExperiment {
         check: () => typeof app.table('stat').rows[0]?.mean === 'number',
         auto: async () => {
           app.showTable(1); await app.view('全景');
-          await this.adj('scaler', 'V', this.workV(), 200); await this.seg('lead', 'src', 'A'); await this.seg('lead', 'x', 0); await this.seg('lead', 'shelf', 5);
+          await this.adj('scaler', 'V', this.workV(), 200); await this.setShelf(5); await this.setSrc('A'); await this.setX(0);
           app.select(app.comp('scaler')); this.startRep(); await app.until(() => !this.rep, 60000); await app.record('stat', 0);
         },
       },
@@ -282,8 +359,8 @@ export class GmExperiment {
         check: () => dead().every((r) => typeof r.N === 'number'),
         auto: async () => {
           app.showTable(2); await app.view('铅室');
-          await this.adj('scaler', 'V', Vw(), 200); await this.seg('lead', 'x', 0); await this.seg('lead', 'shelf', 1);
-          for (const [i, s] of [[0, 'A'], [1, 'AB'], [2, 'B'], [3, 'none']]) { if (typeof dead()[i].N === 'number') continue; await this.seg('lead', 'src', s); await this.count(s === 'none' ? 300 : 200); await app.record('dead', 0); }
+          await this.adj('scaler', 'V', Vw(), 200); await this.setShelf(1); await this.setX(0);
+          for (const [i, s] of [[0, 'A'], [1, 'AB'], [2, 'B'], [3, 'none']]) { if (typeof dead()[i].N === 'number') continue; await this.setSrc(s); await this.count(s === 'none' ? 300 : 200); await app.record('dead', 0); }
         },
       },
       {
@@ -293,9 +370,9 @@ export class GmExperiment {
         check: () => rows('abs').length >= 6,
         auto: async () => {
           app.showTable(3); await app.view('铅室');
-          await this.adj('scaler', 'V', rows('abs')[0]?._V ?? Vw(), 200); await this.seg('lead', 'src', 'A'); await this.seg('lead', 'shelf', rows('abs')[0]?._shelf ?? 2);
-          for (const x of XS) { if (rows('abs').some((r) => r.x === x)) continue; await this.seg('lead', 'x', x); await this.count(60); await app.record('abs', 0); }
-          await this.seg('lead', 'x', 0);
+          await this.adj('scaler', 'V', rows('abs')[0]?._V ?? Vw(), 200); await this.setShelf(rows('abs')[0]?._shelf ?? 2); await this.setSrc('A');
+          for (const x of XS) { if (rows('abs').some((r) => r.x === x)) continue; await this.setX(x); await this.count(60); await app.record('abs', 0); }
+          await this.setX(0);
         },
       },
       {

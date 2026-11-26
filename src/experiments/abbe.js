@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { meta, thumb, cm } from './abbe.meta.js';
 import { Component } from '../core/Component.js';
+import { Mount } from '../core/Mount.js';
 import { AXIS_Y, MAT, mesh, labTable, opticalRail, carriage, laserMesh, lensMesh, whiteScreen, Beam, ICONS } from '../core/Models.js';
 import { fft2, fIdx } from '../physics/fourier.js';
 import { linFit, gauss, rand, relErr, pct, texU } from '../core/Stats.js';
@@ -58,8 +59,7 @@ export class AbbeExperiment {
     this.d = rand(0.088, 0.115); // 光栅常数 mm
     this.dx = this.d / P; this.S = N * this.dx; // 物面采样间隔与视场 mm
     this.laserOn = false;
-    this.obj = 'grid'; this.rot = rand(-6, 6);
-    this.ftype = 'glass';
+    this.rot = rand(-6, 6); // 物片插在物架上，obj 由插的是哪块决定；滤波元件同理（ftype）
     this.X0 = 12.5 + rand(-0.6, 0.6); this.Y0 = rand(-0.5, 0.5); // 光轴所对应的测微鼓轮读数、升降读数
     this.drum = 10 + rand(0, 5); this.yk = 0;
     this.slitW = 0.3; this.slitRot = 0; this.iris = 3; this.stopD = 0.6;
@@ -93,6 +93,23 @@ export class AbbeExperiment {
   }
   spotAt(dist) { const c = this.chain(); return c.beam ? Math.abs(2 * c.R1 * (1 - dist * c.V1)) * 10 : null; } // mm
 
+  /** 物架上插的物片（没插为 open：物架的圆形通光孔） */
+  get obj() { return this.om ? this.om.value || 'open' : 'grid'; }
+  /** 滤波器架上插的元件（没插为 none：空架） */
+  get ftype() { return this.fm ? this.fm.value || 'none' : 'none'; }
+  onPlace() { if (this.app.exp !== this) return; this.app.renderInspector(); this.app.changed(); }
+  onSlotChange() { this.onPlace(); }
+  onRemove() { this.onPlace(); }
+  canPlace(comp, o = {}) {
+    if (this.om && this.om.owns(comp) && o.slot === 'objSeat' && !this.app.comp('obj').placed) return '导轨上还没有物架，物片没地方插';
+    if (this.fm && this.fm.owns(comp) && o.slot === 'fSeat' && !this.app.comp('filt').placed) return '导轨上还没有滤波器架';
+    return null;
+  }
+  canRemove(comp) {
+    // 拿走架子时，插在上面的片子一起拿下来放到台面上
+    for (const [k, m] of [['obj', this.om], ['filt', this.fm]]) if (comp.key === k && m.item) this.app.moveSlot(this.app.comp(m.item.key), `${m.id}_r${m.items.indexOf(m.item)}`, { silent: true });
+    return null;
+  }
   // ---------------- 物与频谱 ----------------
   letterMask() {
     if (this.letter) return this.letter;
@@ -111,6 +128,7 @@ export class AbbeExperiment {
     const L = type === 'gword' || type === 'word' ? this.letterMask() : null;
     const wrapP = (v) => ((v % P) + P) % P;
     const at = (X, Y) => {
+      if (type === 'open') return 1; // 没插物片：只有物架的通光孔
       const xr = c * X + s * Y, yr = -s * X + c * Y; // 物坐标系（物转过 rot）
       if (type === 'grid') return wrapP(xr) < 5 && wrapP(yr) < 5 ? 1 : 0;
       if (type === 'grating') return wrapP(xr) < 3 ? 1 : 0; // 透光部分占 3/8：占空比为 1/2 时 ±2 级恰好缺级，要测的光点就没有了
@@ -228,6 +246,7 @@ export class AbbeExperiment {
     const bx = this.binMM(c), r = (this.rot * Math.PI) / 180, cs = Math.cos(r), sn = Math.sin(r), q = N / P;
     const at = (m, n) => { const X = (m * cs - n * sn) * q * bx, Y = (m * sn + n * cs) * q * bx; return this.T(X, Y, c); };
     const D = at(0, 0) > 0.5;
+    if (this.obj === 'open') return D ? '均匀亮场' : '视场全暗';
     if (this.obj === 'grid' || this.obj === 'grating') {
       const a = this.obj === 'grid' ? 5 / 8 : 3 / 8, pass = [];
       for (let m = -3; m <= 3; m++) for (let n = -3; n <= 3; n++) {
@@ -312,10 +331,10 @@ export class AbbeExperiment {
     og.add(mesh(new THREE.BoxGeometry(0.8, 4, 1.2), MAT.dark(), 0, -5.6, 0));
     this.objHolder = og; oc.top.add(og);
     app.addComponent(new Component({
-      key: 'obj', name: '物（光栅/网格字）', icon: ICONS.grating, zone: 'rail', defaultPos: 60, required: true, object: oc.group, labelY: 31,
-      desc: '物架上可换装正交光栅、一维光栅、网格字和透明字，并可绕光轴转动。',
+      key: 'obj', name: '物架', icon: ICONS.grating, zone: 'rail', defaultPos: 60, required: true, object: oc.group, labelY: 31,
+      desc: '物片（正交光栅、一维光栅、网格字、透明字）从器材柜拿来插在物架上，物架可绕光轴转动。没插物片时只有物架的圆形通光孔。',
       controls: () => [
-        { type: 'segment', label: '物', get: () => this.obj, set: (v) => (this.obj = v), options: OBJS.map((o) => ({ label: o.name, value: o.key })) },
+        { type: 'readout', label: '物架上', get: () => (this.om.item ? this.om.item.name : '空：从器材柜拿物片插上') },
         { type: 'knob', label: '物绕光轴转角', get: () => this.rot, set: (v) => (this.rot = Math.max(-45, Math.min(45, v))), min: -45, max: 45, step: 0.5, bigStep: 5, perRev: 30, digits: 1, unit: '°' },
       ],
     }));
@@ -340,17 +359,52 @@ export class AbbeExperiment {
     fc.top.add(fg);
     app.addComponent(new Component({
       key: 'filt', name: '频谱面滤波器架', icon: ICONS.filter, zone: 'rail', defaultPos: 100, required: true, object: fc.group, labelY: 30,
-      desc: '可插入毛玻璃（带十字线，用于观察和测量频谱）、可调狭缝、可变光阑、挡光点。架子横向由测微鼓轮（分度 0.01 mm）移动，纵向可升降。',
+      desc: '从器材柜拿毛玻璃（带十字线，用于观察和测量频谱）、可调狭缝、可变光阑或挡光点插在架上，一次插一件。架子横向由测微鼓轮（分度 0.01 mm）移动，纵向可升降。',
       controls: () => [
-        { type: 'segment', label: '插入', get: () => this.ftype, set: (v) => (this.ftype = v), options: FILTERS.map((f) => ({ label: f.name, value: f.key })) },
+        { type: 'readout', label: '架上', get: () => (this.fm.item ? this.fm.item.name : '空架') },
         { type: 'knob', label: '横向测微鼓轮', get: () => this.drum, set: (v) => (this.drum = Math.max(0, Math.min(25, v))), min: 0, max: 25, step: 0.01, bigStep: 0.1, perRev: 0.5, digits: 3, unit: 'mm', sub: '鼓轮转一圈，架子横移 0.5 mm' },
         { type: 'knob', label: '升降', get: () => this.yk, set: (v) => (this.yk = Math.max(-3, Math.min(3, v))), min: -3, max: 3, step: 0.01, bigStep: 0.1, perRev: 0.5, digits: 2, unit: 'mm' },
-        { type: 'knob', label: '狭缝宽度', get: () => this.slitW, set: (v) => (this.slitW = Math.round(Math.max(0.05, Math.min(3, v)) * 100) / 100), min: 0.05, max: 3, step: 0.01, bigStep: 0.1, perRev: 0.5, digits: 2, unit: 'mm' },
-        { type: 'knob', label: '狭缝转角', get: () => this.slitRot, set: (v) => (this.slitRot = Math.round(((v % 180) + 180) % 180 * 2) / 2), wrap: 180, step: 0.5, bigStep: 15, perRev: 90, digits: 1, unit: '°', sub: '0° 为竖直狭缝' },
-        { type: 'knob', label: '可变光阑直径', get: () => this.iris, set: (v) => (this.iris = Math.round(Math.max(0.2, Math.min(8, v)) * 100) / 100), min: 0.2, max: 8, step: 0.05, bigStep: 0.5, perRev: 2, digits: 2, unit: 'mm' },
-        { type: 'segment', label: '挡光点直径', get: () => this.stopD, set: (v) => (this.stopD = v), options: [0.3, 0.6, 1.0, 1.5].map((d) => ({ label: `Φ${d} mm`, value: d })) },
       ],
     }));
+    // 滤波元件：插到滤波器架上（跟着架子横移、升降）
+    const tv = new THREE.Vector3();
+    const plate = (col, extra) => { const g = new THREE.Group(); g.add(mesh(new THREE.BoxGeometry(0.25, 6, 6), col)); if (extra) extra(g); return g; };
+    const icon = (inner) => `<svg viewBox="0 0 64 40"><rect x="20" y="4" width="24" height="32" fill="none" stroke="currentColor" stroke-width="2"/>${inner}</svg>`;
+    this.fm = new Mount(app, {
+      id: 'fSeat', label: '滤波器架', pos: new THREE.Vector3(100, AXIS_Y, 0), r: 2, snap: 6,
+      follow: () => { fg.updateWorldMatrix(true, false); return fg.localToWorld(tv.set(-0.5, 0, 0)); },
+      rest: (i) => new THREE.Vector3(80 + i * 7, 0.2, 26),
+      items: [
+        { key: 'fGlass', name: '毛玻璃（带十字线）', value: 'glass', labelY: 5, object: plate(MAT.paint(0xd9d6d0)), icon: icon('<rect x="22" y="6" width="20" height="28" fill="currentColor" opacity=".35"/><path d="M32 6v28M22 20h20" stroke="currentColor"/>'),
+          desc: '观察频谱用：衍射光点打在毛玻璃上，十字线用来对准光点读鼓轮。毛玻璃会把光散开，插着它像屏上看不到像。' },
+        { key: 'fSlit', name: '可调狭缝', value: 'slit', labelY: 5, object: plate(MAT.dark(), (g) => g.add(mesh(new THREE.BoxGeometry(0.3, 5, 0.15), MAT.emissive(0xf2efe8, 0.2)))), icon: icon('<path d="M32 6v28" stroke="currentColor" stroke-width="3"/>'),
+          desc: '方向滤波用：只让频谱面上沿狭缝方向的一列光点通过。',
+          controls: () => [
+            { type: 'knob', label: '狭缝宽度', get: () => this.slitW, set: (v) => (this.slitW = Math.round(Math.max(0.05, Math.min(3, v)) * 100) / 100), min: 0.05, max: 3, step: 0.01, bigStep: 0.1, perRev: 0.5, digits: 2, unit: 'mm' },
+            { type: 'knob', label: '狭缝转角', get: () => this.slitRot, set: (v) => (this.slitRot = Math.round(((v % 180) + 180) % 180 * 2) / 2), wrap: 180, step: 0.5, bigStep: 15, perRev: 90, digits: 1, unit: '°', sub: '0° 为竖直狭缝' },
+          ] },
+        { key: 'fIris', name: '可变光阑', value: 'iris', labelY: 5, object: plate(MAT.dark(), (g) => { const r = mesh(new THREE.TorusGeometry(1.6, 0.25, 8, 24), MAT.chrome()); r.rotation.y = Math.PI / 2; g.add(r); }), icon: icon('<circle cx="32" cy="20" r="7" fill="none" stroke="currentColor" stroke-width="2"/>'),
+          desc: '低通滤波用：只让 0 级附近的低频成分通过。',
+          controls: () => [
+            { type: 'knob', label: '可变光阑直径', get: () => this.iris, set: (v) => (this.iris = Math.round(Math.max(0.2, Math.min(8, v)) * 100) / 100), min: 0.2, max: 8, step: 0.05, bigStep: 0.5, perRev: 2, digits: 2, unit: 'mm' },
+          ] },
+        { key: 'fStop', name: '挡光点板', value: 'stop', labelY: 5, object: plate(MAT.glass(0xd9e6ee, 0.5), (g) => g.add(mesh(new THREE.BoxGeometry(0.3, 0.5, 0.5), MAT.black()))), icon: icon('<circle cx="32" cy="20" r="3" fill="currentColor"/>'),
+          desc: '高通滤波用：玻璃板上有几个不同直径的不透光圆点，挡住 0 级及附近的低频成分。',
+          controls: () => [
+            { type: 'segment', label: '对准光路的挡光点', get: () => this.stopD, set: (v) => (this.stopD = v), options: [0.3, 0.6, 1.0, 1.5].map((d) => ({ label: `Φ${d} mm`, value: d })) },
+          ] },
+      ],
+    });
+    // 物片：插到物架上
+    const slide = () => { const g = new THREE.Group(); g.add(mesh(new THREE.BoxGeometry(0.25, 5, 5), MAT.glass(0xd9e6ee, 0.55))); g.add(mesh(new THREE.BoxGeometry(0.3, 5.4, 0.4), MAT.dark(), 0, 0, 2.7)); g.add(mesh(new THREE.BoxGeometry(0.3, 5.4, 0.4), MAT.dark(), 0, 0, -2.7)); return g; };
+    const ov = new THREE.Vector3();
+    this.om = new Mount(app, {
+      id: 'objSeat', label: '物架', pos: new THREE.Vector3(60, AXIS_Y, 0), r: 2, snap: 6,
+      follow: () => { og.updateWorldMatrix(true, false); return og.localToWorld(ov.set(-0.6, 0, 0)); },
+      rest: (i) => new THREE.Vector3(50 + i * 7, 0.2, 26),
+      items: OBJS.map((o) => ({ key: 'o_' + o.key, name: o.name, value: o.key, labelY: 5, object: slide(), icon: ICONS.grating,
+        desc: { grid: '正交光栅（网格），周期约 0.08 mm。', grating: '一维光栅，用来测频谱点间距、求光栅常数。', gword: '用网格做成的“光”字，做低通滤波去网格。', word: '透明的“光”字，做高通滤波看边缘增强。' }[o.key] + '插到物架上使用。' })),
+    });
 
     const sc = carriage(0x9aa3b2, AXIS_Y);
     const ws = whiteScreen(14, 14); sc.top.add(ws.group);
@@ -400,6 +454,7 @@ export class AbbeExperiment {
     } else this.cones.forEach((k) => k.hide());
     this.drumMesh.rotation.y = this.drum * 4 * Math.PI;
     this.fplate.position.y = this.yk * 0.3;
+    this.om.sync(); this.fm.sync();
     this.drawSpec(c);
     this.drawImage(c);
     this.drawTextures(c);
@@ -586,7 +641,7 @@ export class AbbeExperiment {
     if (!c.scrOK || !this.laserOn) return this.app.toast('像屏上没有像', 'warn');
     if (c.filtOn && this.ftype === 'glass') return this.app.toast('毛玻璃挡住了像，请换上滤波器', 'warn');
     if (!this.see) return this.app.toast('请先在右侧选择“我在像屏上看到的像”', 'warn');
-    t.addRow({ obj: OBJS.find((o) => o.key === this.obj).name + (Math.abs(this.rot) > 1 ? `（转 ${this.rot.toFixed(0)}°）` : ''), filt: this.filterText(), see: this.see, exp: this.classify(), okey: this.obj, fkey: c.filtOn ? this.ftype : 'none' });
+    t.addRow({ obj: (OBJS.find((o) => o.key === this.obj) || { name: '（物架上没插物片）' }).name + (Math.abs(this.rot) > 1 ? `（转 ${this.rot.toFixed(0)}°）` : ''), filt: this.filterText(), see: this.see, exp: this.classify(), okey: this.obj, fkey: c.filtOn ? this.ftype : 'none' });
   }
 
   /** 等高共轴调节：光路顺序、光束、透镜焦距与各元件通光孔（cm） */
@@ -630,15 +685,15 @@ export class AbbeExperiment {
       },
       {
         title: '放置物和傅里叶透镜，在像屏上成清晰的像',
-        html: '<p>在平行光中放入<b>物</b>（先用正交光栅），其后放<b>傅里叶透镜 L</b>（物距略大于 f），在远处放<b>像屏</b>。移动像屏，使屏上得到清晰的放大倒立像。</p>',
+        html: '<p>在平行光中放<b>物架</b>，插上<b>正交光栅</b>物片，其后放<b>傅里叶透镜 L</b>（物距略大于 f），在远处放<b>像屏</b>。移动像屏，使屏上得到清晰的放大倒立像。</p>',
         hint: '物距取 17～20 cm，像距约 80～100 cm，放大约 5 倍。',
         check: () => { const k = c(); if (!k.scrOK || (k.filtOn && this.ftype === 'glass')) return false; const im = this.imaging(k); return Math.abs(im.s - im.v) < 15 && Math.abs(im.M) > 2.5; },
         status: () => { const k = c(); if (!k.lensOK) return ''; return `物距 <b>${((k.L - k.ob)).toFixed(1)} cm</b>`; },
         auto: async () => {
           await app.view('物与透镜');
-          app.select(null); this.obj = 'grid'; this.rot = 0;
-          await put('obj', 60, 6); await put('lens', 78, 6);
-          this.ftype = 'none';
+          app.select(null); this.rot = 0;
+          await put('obj', 60, 6); await this.om.set('grid'); await put('lens', 78, 6);
+          await this.fm.set(null);
           await put('screen', 150, 30);
           await app.view('全景');
           const k = c(), u = (k.L - k.ob) * 10, v = (u * FL * 10) / (u - FL * 10);
@@ -647,13 +702,12 @@ export class AbbeExperiment {
       },
       {
         title: '在频谱面上观察频谱',
-        html: '<p>把<b>滤波器架</b>放到 L 的后焦面附近，插入<b>毛玻璃</b>，前后移动架子，使毛玻璃上的衍射光点最小最清晰——这就是物的频谱面。转动物，观察频谱如何随之转动。</p>',
+        html: '<p>把<b>滤波器架</b>放到 L 的后焦面附近，从器材柜拿<b>毛玻璃</b>插在架上，前后移动架子，使毛玻璃上的衍射光点最小最清晰——这就是物的频谱面。转动物，观察频谱如何随之转动。</p>',
         check: () => { const k = c(); return k.filtOn && this.ftype === 'glass' && k.zs != null && Math.abs(k.fl - k.zs) < 0.4; },
         status: () => { const k = c(); return k.filtOn ? `光点半径约 <b>${Math.max(0.01, this.spotR(k)).toFixed(2)} mm</b>` : ''; },
         auto: async () => {
-          this.ftype = 'glass';
           await app.autoPlace('filt', { pos: 100 }); await app.view('频谱面');
-          app.select(app.comp('filt')); this.ftype = 'glass'; app.changed();
+          await this.fm.set('glass'); app.select(app.comp('filt'));
           await app.moveTo('filt', c().zs + gauss(0.05), 1200);
           await center();
         },
@@ -665,7 +719,7 @@ export class AbbeExperiment {
         status: () => `已测 <b>${app.table('spec').completeRows().length}</b> / 5`,
         auto: async () => {
           const t = app.table('spec'); app.showTable(app.tables.indexOf(t));
-          app.select(app.comp('obj')); this.obj = 'grating'; app.changed();
+          await this.om.set('grating'); app.select(app.comp('obj'));
           await app.tween(() => this.rot, (v) => (this.rot = v), 0, 300);
           app.select(app.comp('filt'));
           const s = this.orderStep(c()), off = this.drum - this.X0 - this.fc().cx; // 滤波器架的共轴偏差使频谱整体平移
@@ -683,10 +737,10 @@ export class AbbeExperiment {
         status: () => `已记录 <b>${obs().filter((r) => r.okey === 'grid' && r.fkey === 'slit').length}</b> / 3`,
         auto: async () => {
           const t = app.table('obs'); app.showTable(app.tables.indexOf(t));
-          app.select(app.comp('obj')); this.obj = 'grid'; this.rot = 0; app.changed();
+          await this.om.set('grid'); this.rot = 0; app.select(app.comp('obj')); app.changed();
           await center();
-          this.ftype = 'none'; app.changed(); await look('正交网格');
-          this.ftype = 'slit'; this.slitW = 0.3; app.changed(); await app.view('频谱面');
+          await this.fm.set(null); app.changed(); await look('正交网格');
+          this.slitW = 0.3; await this.fm.set('slit'); app.changed(); await app.view('频谱面');
           for (const a of [0, 90, 45]) {
             await app.tween(() => this.slitRot, (v) => (this.slitRot = v), a, 500);
             await app.view('像屏'); await look();
@@ -698,8 +752,8 @@ export class AbbeExperiment {
         html: '<p>物换成<b>网格字</b>，在频谱面放<b>可变光阑</b>并对准 0 级。逐渐缩小光阑，直到只让 0 级附近的低频成分通过：像上的网格消失，只剩“光”字。再继续缩小，看看字会怎样。</p>',
         check: () => obs().some((r) => r.okey === 'gword' && r.fkey === 'iris'),
         auto: async () => {
-          app.select(app.comp('obj')); this.obj = 'gword'; app.changed();
-          app.select(app.comp('filt')); this.ftype = 'iris'; this.iris = 4; app.changed(); await app.view('频谱面');
+          await this.om.set('gword');
+          this.iris = 4; await this.fm.set('iris'); app.select(app.comp('fIris')); app.changed(); await app.view('频谱面');
           await look();
           await app.tween(() => this.iris, (v) => (this.iris = v), (this.orderStep(c()) * 1.1), 900);
           await app.view('像屏'); await look();
@@ -711,9 +765,9 @@ export class AbbeExperiment {
         html: '<p>物换成<b>透明字</b>，在频谱面放<b>挡光点</b>挡住 0 级及其附近的低频成分，像屏上只剩字的轮廓。</p>',
         check: () => obs().some((r) => r.fkey === 'stop'),
         auto: async () => {
-          app.select(app.comp('obj')); this.obj = 'word'; app.changed();
-          app.select(app.comp('filt')); this.ftype = 'none'; app.changed(); await look();
-          this.ftype = 'stop'; this.stopD = 0.6; app.changed(); await app.view('像屏'); await look();
+          await this.om.set('word');
+          await this.fm.set(null); app.changed(); await look();
+          this.stopD = 0.6; await this.fm.set('stop'); app.changed(); await app.view('像屏'); await look();
         },
       },
       {

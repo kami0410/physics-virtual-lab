@@ -53,7 +53,7 @@ export class SlitExperiment {
     if (this.L == null) return null;
     const dbl = this.type === 'double';
     return {
-      v: 1, s: { ap: dbl ? 'double' : 'slit', p: dbl ? { a: +this.a.toFixed(4), d: 0.25 } : { a: +this.a.toFixed(4) }, lam: 632.8, white: false, z: Math.round(this.L), R: 0, N: 512, gamma: 0.6, expo: 0, srcW: 0, dl: 0 },
+      v: 1, s: { ap: dbl ? 'double' : 'slit', p: dbl ? { a: 0.06, d: 0.25 } : { a: +this.a.toFixed(4) }, lam: 632.8, white: false, z: Math.round(this.L), R: 0, N: 512, gamma: 0.6, expo: 0, srcW: 0, dl: 0 },
       t: `来自“单缝衍射的光强分布”：缝宽 a = ${this.a.toFixed(3)} mm，缝到探测面 ${(this.L / 10).toFixed(1)} cm，He-Ne 激光。把观察距离从几毫米拖到几米，看图样怎样从缝的几何投影过渡到 sinc² 形的夫琅禾费衍射。`,
     };
   }
@@ -61,7 +61,15 @@ export class SlitExperiment {
   onPlace() { if (this.app.exp !== this) return; this.app.renderInspector(); this.app.changed(); }
   onSlotChange() { this.onPlace(); }
   onRemove() { this.onPlace(); }
-  aps() { return slitApertures(this.type, this.a, 0.25, 0); }
+  /** 透光区：双缝片（两条 0.06 mm 宽、中心距 0.25 mm 的缝）贴在可调单缝前，实际透光的是两者重叠的部分；
+   *  单缝开得比双缝片窄时，双缝被挡掉一部分甚至全挡住 */
+  aps() {
+    const s = slitApertures('single', this.a, 0.25, 0);
+    if (this.type !== 'double') return s;
+    const [l, r] = s[0], out = [];
+    for (const [p, q] of slitApertures('double', 0.06, 0.25, 0)) { const x0 = Math.max(p, l), x1 = Math.min(q, r); if (x1 > x0) out.push([x0, x1]); }
+    return out.length ? out : [[0, 0]];
+  }
   beam() { return { w: BEAM_W, c: this.slitOff }; }
   /** 屏上相对光强（以入射光束中心光强为 1） */
   I(x) {

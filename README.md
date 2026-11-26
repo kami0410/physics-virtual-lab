@@ -6,7 +6,7 @@
 
 **在浏览器里动手做大学物理实验：自己摆器材、调仪器、读数、记录、处理数据。**
 
-64 个实验 · 力学 / 热学 / 电磁学 / 光学 / 近代物理 · 可完全离线运行 · 个人与教学免费使用
+65 个实验 · 力学 / 热学 / 电磁学 / 光学 / 近代物理 · 可完全离线运行 · 个人与教学免费使用
 
 ### [▶ 在线体验：打开网页就能做实验](https://kami0410.github.io/physics-virtual-lab/)
 
@@ -62,7 +62,7 @@ npm run dev        # 打开 http://127.0.0.1:5173
 
 **[⬇ 下载离线版 physics-virtual-lab.html](https://github.com/kami0410/physics-virtual-lab/releases/latest/download/physics-virtual-lab.html)**（约 5 MB，[所有版本](https://github.com/kami0410/physics-virtual-lab/releases/latest)）
 
-一个文件就是完整的实验室，64 个实验、三维模型、公式字体都在里面。下载后双击，用 Chrome / Edge / Firefox 打开就能用，不需要联网、不需要安装。拷到 U 盘、发到群里都行。
+一个文件就是完整的实验室，65 个实验、三维模型、公式字体都在里面。下载后双击，用 Chrome / Edge / Firefox 打开就能用，不需要联网、不需要安装。拷到 U 盘、发到群里都行。
 
 想自己从源码生成：运行 `npm run build:single`，得到 `dist-single/index.html`。
 
@@ -161,7 +161,7 @@ npm run dev        # 打开 http://127.0.0.1:5173
 </details>
 
 <details>
-<summary><b>近代物理（6）</b></summary>
+<summary><b>近代物理（7）</b></summary>
 
 | 实验 | 测量内容 |
 |---|---|
@@ -171,6 +171,7 @@ npm run dev        # 打开 http://127.0.0.1:5173
 | 电子荷质比的测定 | e/m |
 | 塞曼效应 | 由汞 546.1 nm 谱线分裂求 e/m |
 | 金属电子逸出功的测定 | 钨的逸出功（理查森直线法） |
+| G-M 计数器与放射性统计 | 坪曲线、计数的泊松分布、双源法测死时间、β 射线在铝中的吸收 |
 
 </details>
 

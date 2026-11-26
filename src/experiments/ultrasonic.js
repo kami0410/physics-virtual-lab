@@ -29,7 +29,7 @@ export class UltrasonicExperiment {
   constructor(app) {
     this.app = app;
     this.laserOn = false; this.genOn = false;
-    this.liq = 'water';
+    this.liq = null; // 液槽一开始是空的：把液体瓶拖到液槽上倒进去
     this.T = rand(17, 26);
     this.f0 = rand(10.2, 11.4); // 换能器谐振频率 MHz
     this.Q = rand(45, 70);
@@ -43,14 +43,33 @@ export class UltrasonicExperiment {
     this.assist = !this.app.readSelf; // 自己读数时默认不显示读数辅助
   }
 
-  get vs() { return LIQ[this.liq].v(this.T) * 1000; } // mm/s
+  get vs() { return LIQ[this.liq || 'water'].v(this.T) * 1000; } // mm/s
+  /** 倒液体：把液体瓶拖到液槽上方，倒完瓶子自动放回原处 */
+  canPlace(comp, o = {}) {
+    if (!comp.key.startsWith('bt_') || o.slot !== 'pour') return null;
+    if (!this.app.comp('cell').placed) return '导轨上还没有超声池';
+    const k = comp.key.slice(3);
+    if (this.liq === k) return `液槽里已经是${LIQ[k].name}了`;
+    if (this.liq) return `液槽里还有${LIQ[this.liq].name}，混进去声速就不对了：先在超声池面板上把液体倒掉`;
+    if (this.genOn) return '信号源开着：空槽通电会损坏压电晶片，先关信号源再加液体';
+    return null;
+  }
+  onPlace(c) {
+    if (c && c.key.startsWith('bt_') && this.app.slotOf(c.key) === 'pour') {
+      this.liq = c.key.slice(3); this.app.toast(`已向液槽倒入${LIQ[this.liq].name}`, 'ok');
+      setTimeout(() => { if (this.app.slotOf(c.key) === 'pour') this.app.moveSlot(c, 'bt_r_' + this.liq, { silent: true }); }, 600);
+    }
+    if (this.app.exp === this && this.liquid) { this.app.renderInspector(); this.app.changed(); }
+  }
+  onSlotChange(c) { this.onPlace(c); }
+  async pour(k) { if (this.liq === k) return; if (this.liq) this.liq = null; await this.app.autoPut('bt_' + k, 'pour'); await this.app.wait(700); }
   get Lam() { return this.vs / (this.nu * 1e6); } // 声波波长 mm
   P(k) { const c = this.app.comp(k); return c.placed ? c.pos * 10 : null; }
   lit() { const l = this.app.comp('laser'); return this.laserOn && l.placed; }
   /** 换能器的谐振响应 */
   get resp() { const x = (2 * this.Q * (this.nu - this.f0)) / this.f0; return 1 / Math.sqrt(1 + x * x); }
   /** 拉曼–奈斯参数（相位调制深度） */
-  get vRN() { return this.genOn && this.app.comp('cell').placed ? 0.62 * this.amp * this.resp * LIQ[this.liq].k : 0; }
+  get vRN() { return this.genOn && this.app.comp('cell').placed && this.liq ? 0.62 * this.amp * this.resp * LIQ[this.liq].k : 0; }
   /** 各级相对光强 */
   orders() {
     const v = this.vRN, out = [];
@@ -120,9 +139,10 @@ export class UltrasonicExperiment {
     cc.top.add(cg);
     app.addComponent(new Component({
       key: 'cell', name: '超声池与信号源', icon: ICONS.cell, zone: 'rail', defaultPos: 36, required: true, object: cc.group, labelY: 30,
-      desc: '玻璃液槽，顶部的压电陶瓷晶片由高频信号源驱动，在液体中形成超声驻波。液槽可绕竖直轴微转。附有温度计。',
+      desc: '玻璃液槽，顶部的压电陶瓷晶片由高频信号源驱动，在液体中形成超声驻波。液槽可绕竖直轴微转。附有温度计。液槽开始是空的：从器材柜拿液体瓶拖到液槽上倒进去。',
       controls: () => [
-        { type: 'segment', label: '液体', get: () => this.liq, set: (v) => (this.liq = v), options: Object.entries(LIQ).map(([k, o]) => ({ label: o.name, value: k })) },
+        { type: 'readout', label: '液槽里', get: () => (this.liq ? LIQ[this.liq].name : '空') },
+        { type: 'button', label: '倒掉液体', onClick: () => { if (!this.liq) return; if (this.genOn) { app.toast('先关信号源再倒液体', 'warn'); return; } this.liq = null; app.renderInspector(); app.changed(); } },
         { type: 'toggle', label: '信号源输出', get: () => this.genOn, set: (v) => (this.genOn = v) },
         { type: 'knob', label: '频率（粗调）', get: () => this.nu, set: (v) => (this.nu = v), min: 8, max: 13, step: 0.01, bigStep: 0.1, perRev: 0.5, digits: 3, unit: 'MHz' },
         { type: 'knob', label: '频率（细调）', get: () => this.nu, set: (v) => (this.nu = v), min: 8, max: 13, step: 0.001, bigStep: 0.01, perRev: 0.05, digits: 3, unit: 'MHz' },
@@ -157,6 +177,19 @@ export class UltrasonicExperiment {
 
     this.beamA = new Beam(0xff2a2a, 0.07, 0.3); this.beamB = new Beam(0xff2a2a, 0.07, 0.3); scene.add(this.beamA.group, this.beamB.group);
     this.fan = []; for (let i = 0; i < 8; i++) { const b = new Beam(0xff3030, 0.04, 0.15); scene.add(b.group); this.fan.push(b); }
+    // 液体瓶：拖到液槽上方倒进去
+    app.addSlot({ id: 'pour', pos: new THREE.Vector3(0, AXIS_Y + 7, 0), accepts: Object.keys(LIQ).map((k) => 'bt_' + k), label: '倒进液槽', r: 2.5, snap: 8 });
+    Object.entries(LIQ).forEach(([k, o], i) => {
+      app.addSlot({ id: 'bt_r_' + k, pos: new THREE.Vector3(26 + i * 6, 0, 22), accepts: ['bt_' + k], label: '台面', r: 3, snap: 8 });
+      const bg = new THREE.Group();
+      bg.add(mesh(new THREE.CylinderGeometry(1.6, 1.6, 6, 20), MAT.glass(k === 'glycerol' ? 0xf3e7b0 : k === 'ethanol' ? 0xd7f0ff : 0x9ad1f5, 0.5), 0, 3, 0));
+      bg.add(mesh(new THREE.CylinderGeometry(0.7, 0.7, 1.4, 16), MAT.dark(), 0, 6.7, 0));
+      app.addComponent(new Component({
+        key: 'bt_' + k, name: `${o.name}（瓶）`, group: '液体瓶', noFree: true, zone: 'slot', defaultSlot: 'bt_r_' + k, object: bg, labelY: 9,
+        icon: '<svg viewBox="0 0 64 40"><rect x="24" y="10" width="16" height="26" rx="3" fill="currentColor"/><rect x="28" y="4" width="8" height="6" fill="currentColor"/></svg>',
+        desc: `${o.name}。拖到超声池上方就倒进液槽；液槽里已有别的液体时要先倒掉。`,
+      }));
+    });
     this.eyeView = app.addView({ id: 'eye', title: '测微目镜视场', w: 250, h: 250, res: 1.4 });
     this.readView = app.addView({ id: 'read', title: '固定刻度与鼓轮', w: 290, h: 100, res: 1.5 });
   }
@@ -177,7 +210,9 @@ export class UltrasonicExperiment {
     const app = this.app;
     this.laserAp.material.emissiveIntensity = this.lit() ? 3 : 0.1;
     this.cellG.rotation.y = (this.alpha * Math.PI) / 180 * 4;
-    this.liquid.material.color.set(this.liq === 'water' ? 0x9ad1f5 : this.liq === 'ethanol' ? 0xd7f0ff : 0xf3e7b0);
+    this.liquid.visible = !!this.liq;
+    { const z = app.zones.find((q) => q.id === 'pour'); if (z) { this.cellG.updateWorldMatrix(true, false); this.cellG.getWorldPosition(z.pos).y += 7; if (z.marker) z.marker.position.copy(z.pos).y += 0.15; } }
+    if (this.liq) this.liquid.material.color.set(this.liq === 'water' ? 0x9ad1f5 : this.liq === 'ethanol' ? 0xd7f0ff : 0xf3e7b0);
     this.eyeDrum.rotation.y = this.drive * Math.PI * 2;
     this.gen.setText(this.genOn ? this.nu.toFixed(3) : '----', 'MHz', `输出 ${this.amp.toFixed(1)} V   T = ${this.T.toFixed(1)} °C`);
     const V3 = (x, z = 0) => this.app.coaxV(x, AXIS_Y, z); // 光束沿实际光路
@@ -261,7 +296,7 @@ export class UltrasonicExperiment {
         id: 'cond', title: '频率与温度', fixedRows: true,
         initRows: () => [{}],
         columns: [{ key: 'liq', label: '液体', type: 'text', readonly: true }, { key: 'nu', label: '频率 ν/MHz', digits: 3 }, { key: 'T', label: '温度 T/°C', digits: 1 }],
-        buttons: [{ label: '读取频率计和温度计', onClick: (t) => { if (!this.genOn) return this.app.toast('信号源未开', 'warn'); t.set(0, 'liq', LIQ[this.liq].name); t.set(0, 'nu', Math.round(this.nu * 1000) / 1000); t.set(0, 'T', Math.round(this.T * 10) / 10); } }],
+        buttons: [{ label: '读取频率计和温度计', onClick: (t) => { if (!this.genOn) return this.app.toast('信号源未开', 'warn'); if (!this.liq) return this.app.toast('液槽是空的', 'warn'); t.set(0, 'liq', LIQ[this.liq].name); t.set(0, 'nu', Math.round(this.nu * 1000) / 1000); t.set(0, 'T', Math.round(this.T * 10) / 10); } }],
         note: '在测光点位置的同时读取，频率和液体不要改变。',
       },
     ];
@@ -300,9 +335,9 @@ export class UltrasonicExperiment {
     return [
       {
         title: '在光具座上放置器材',
-        html: '<p>按 <b>激光器 → 超声池 → 会聚透镜 → 测微目镜</b> 放置。目镜分划板到透镜的距离约等于透镜焦距。</p>',
-        check: () => ['laser', 'cell', 'lens', 'eye'].every(on) && this.lensOk && this.P('laser') < this.P('cell'),
-        auto: async () => { await app.view('全景'); for (const [k, x] of [['laser', 28], ['cell', 36], ['lens', 50], ['eye', 50 + this.fL / 10 + 1.5]]) await app.autoPlace(k, { pos: x }); },
+        html: '<p>按 <b>激光器 → 超声池 → 会聚透镜 → 测微目镜</b> 放置。目镜分划板到透镜的距离约等于透镜焦距。把<b>水</b>倒进液槽。</p>',
+        check: () => ['laser', 'cell', 'lens', 'eye'].every(on) && this.liq && this.lensOk && this.P('laser') < this.P('cell'),
+        auto: async () => { await app.view('全景'); for (const [k, x] of [['laser', 28], ['cell', 36], ['lens', 50], ['eye', 50 + this.fL / 10 + 1.5]]) await app.autoPlace(k, { pos: x }); if (!this.liq) await this.pour('water'); },
       },
       {
         title: '打开激光器，调节目镜看清叉丝',

@@ -22,7 +22,7 @@ export class Mount {
     app.addSlot({ id, pos: pos.clone(), rotY, accepts: items.map((i) => i.key), label, r, snap });
     items.forEach((it, i) => {
       app.addSlot({ id: `${id}_r${i}`, pos: rest(i), rotY: restRotY, accepts: [it.key], label: restLabel, r: 3, snap: 8 });
-      app.addComponent(new Component({ key: it.key, name: it.name, group: it.group, zone: 'slot', defaultSlot: id, object: it.object, labelY: it.labelY ?? 3, icon: it.icon, desc: it.desc, showLabel: it.showLabel, noFree: true }));
+      app.addComponent(new Component({ key: it.key, name: it.name, group: it.group, zone: 'slot', defaultSlot: id, object: it.object, labelY: it.labelY ?? 3, icon: it.icon, desc: it.desc, showLabel: it.showLabel, controls: it.controls, noFree: true }));
     });
     if (placeFirst) app.place(app.comp(items[0].key), { slot: id, silent: true });
   }

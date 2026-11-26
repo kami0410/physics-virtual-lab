@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { meta, thumb } from './young.meta.js';
 import { GPU, GLSL } from '../core/gpu.js';
 import { Component } from '../core/Component.js';
+import { Mount } from '../core/Mount.js';
 import { drawMicroReticle, drawMicroDrum } from '../core/Reticle.js';
 import { AXIS_Y, MAT, mesh, labTable, opticalRail, carriage, lampHousing, glowSprite, ICONS, Beam, knobMesh } from '../core/Models.js';
 import { linFit, mean, uA, texU, gauss, rand, relErr, pct, sig } from '../core/Stats.js';
@@ -30,7 +31,6 @@ export class YoungExperiment {
     this.beta = rand(2, 5) * (Math.random() < 0.5 ? -1 : 1); // 单缝取向 (°)
     this.gamma = rand(-0.6, 0.6); // 双缝取向 (°)
     this.lat = rand(0.6, 1.2) * (Math.random() < 0.5 ? -1 : 1); // 双缝横向偏离光轴 mm
-    this.plate = 'A';
     this.dA = rand(0.395, 0.405); this.aA = 0.08; // 标定双缝
     this.dB = rand(0.27, 0.34); this.aB = 0.07; // 未知双缝
     this.eyeOff = rand(-0.3, 0.3);
@@ -54,8 +54,18 @@ export class YoungExperiment {
   }
   get R() { const s = this.P('slit'), b = this.P('ds'); return s != null && b != null && b > s ? b - s : null; }
   get D() { const b = this.P('ds'), e = this.P('eye'); return b != null && e != null && e > b ? e - b : null; }
-  get d() { return this.plate === 'A' ? this.dA : this.dB; }
-  get a() { return this.plate === 'A' ? this.aA : this.aB; }
+  /** 双缝架上插的是哪块双缝片（A / B，没插为 null），由拖放决定 */
+  get plate() { return this.pm ? this.pm.value : null; }
+  get d() { return this.plate === 'B' ? this.dB : this.dA; }
+  get a() { return this.plate === 'B' ? this.aB : this.aA; }
+  onPlace() { if (this.app.exp !== this) return; this.app.renderInspector(); this.app.changed(); }
+  onSlotChange() { this.onPlace(); }
+  onRemove() { this.onPlace(); }
+  canRemove(comp) {
+    // 拿走双缝架时，插在上面的双缝片一起拿下来放到台面上
+    if (comp.key === 'ds' && this.plate) this.app.moveSlot(this.app.comp('pl' + this.plate), 'dsSeat_r' + (this.plate === 'A' ? 0 : 1), { silent: true });
+    return null;
+  }
   get src() { const l = this.app.comp('lamp'), s = this.app.comp('slit'); return this.lampOn && l.placed && s.placed && l.pos < s.pos ? this.warm * Math.min(1, this.w / 0.1) * this.app.coaxT('eye') : 0; }
   /** 空间相干性：单缝等效宽度对双缝处两点的相干度 |sin u/u| */
   get V() { return Math.abs(this.Vs); }
@@ -73,6 +83,7 @@ export class YoungExperiment {
     const S = this.src;
     if (!S || this.R == null || this.D == null || !this.app.comp('eye').placed) return 0;
     if (!this.app.comp('ds').placed) return 0.3 * S;
+    if (!this.plate) return 0.02 * S; // 双缝架上没插双缝片：架子的挡板把光挡住，只漏一点杂散光
     const Xp = X - this.xc;
     const u = (Math.PI * this.a * Xp) / (LAMBDA * this.D);
     const env = Math.abs(u) < 1e-9 ? 1 : (Math.sin(u) / u) ** 2;
@@ -130,23 +141,38 @@ export class YoungExperiment {
     const bc = carriage(0x9aa3b2, AXIS_Y);
     const bg = new THREE.Group();
     bg.add(mesh(new THREE.BoxGeometry(0.4, 6, 6), MAT.dark()));
-    this.plateG = new THREE.Group();
-    this.plateG.add(mesh(new THREE.BoxGeometry(0.15, 3.4, 3.4), MAT.glass(0xd9e6ee, 0.6), -0.3, 0, 0));
-    this.slitMarks = [mesh(new THREE.BoxGeometry(0.05, 2.6, 0.08), MAT.emissive(0xfafaf0, 0.4), -0.4, 0, -0.25), mesh(new THREE.BoxGeometry(0.05, 2.6, 0.08), MAT.emissive(0xfafaf0, 0.4), -0.4, 0, 0.25)];
-    this.slitMarks.forEach((m) => this.plateG.add(m));
-    bg.add(this.plateG);
+    this.bg = bg;
     const bk = knobMesh(0.8, 1.6); bk.position.set(0, -3.6, 3); bk.rotation.x = Math.PI / 2; bg.add(bk);
     bc.top.add(bg);
     app.addComponent(new Component({
-      key: 'ds', name: '双缝（带横向微调）', icon: ICONS.dslit, zone: 'rail', defaultPos: 24, required: true, object: bc.group, labelY: 30,
-      desc: `玻璃基片上刻有两组双缝：A 组为标定双缝，间距 d = ${this.dA.toFixed(3)} mm（出厂标定），缝宽约 0.08 mm；B 组间距未知。双缝架可横向微调、绕光轴转动。`,
+      key: 'ds', name: '双缝架（带横向微调）', icon: ICONS.dslit, zone: 'rail', defaultPos: 24, required: true, object: bc.group, labelY: 30,
+      desc: '双缝片插在架子中间的卡槽里。双缝架可横向微调、绕光轴转动。没插双缝片时架子的挡板把光挡住。',
       controls: () => [
-        { type: 'segment', label: '使用的双缝', get: () => this.plate, set: (v) => (this.plate = v), options: [{ label: `A（d=${this.dA.toFixed(3)} mm）`, value: 'A' }, { label: 'B（未知）', value: 'B' }] },
+        { type: 'readout', label: '卡槽里', get: () => (this.plate ? `双缝片 ${this.plate}` : '空：从器材柜拿双缝片插上') },
         { type: 'knob', label: '横向微调', get: () => this.lat, set: (v) => (this.lat = v), min: -3, max: 3, step: 0.01, bigStep: 0.1, perRev: 1, digits: 2, unit: 'mm', sub: '使干涉条纹位于视场中央' },
         { type: 'knob', label: '双缝转角（绕光轴）', get: () => this.gamma, set: (v) => (this.gamma = v), min: -10, max: 10, step: 0.02, bigStep: 0.5, perRev: 5, digits: 2, unit: '°' },
       ],
     }));
 
+    // 两块双缝片：A 为标定双缝，B 为待测双缝。插到双缝架的卡槽里（跟着滑座走）
+    const mkPlate = (d) => {
+      const g = new THREE.Group();
+      g.add(mesh(new THREE.BoxGeometry(0.15, 3.4, 3.4), MAT.glass(0xd9e6ee, 0.6)));
+      for (const z of [-d * 0.6, d * 0.6]) g.add(mesh(new THREE.BoxGeometry(0.05, 2.6, 0.08), MAT.emissive(0xfafaf0, 0.4), -0.1, 0, z));
+      return g;
+    };
+    const tmpV = new THREE.Vector3();
+    this.pm = new Mount(app, {
+      id: 'dsSeat', label: '双缝架的卡槽', pos: new THREE.Vector3(0, AXIS_Y, 0), r: 2, snap: 6,
+      follow: () => { this.bg.updateWorldMatrix(true, false); return this.bg.localToWorld(tmpV.set(-0.3, 0, this.lat * 0.3)); },
+      rest: (i) => new THREE.Vector3(20 + i * 6, 0.2, 24),
+      items: [
+        { key: 'plA', name: `双缝片 A（d = ${this.dA.toFixed(3)} mm）`, value: 'A', object: mkPlate(this.dA), labelY: 4, icon: ICONS.dslit,
+          desc: `标定双缝，间距 d = ${this.dA.toFixed(3)} mm（出厂标定），缝宽约 0.08 mm。插到双缝架卡槽里使用。` },
+        { key: 'plB', name: '双缝片 B（间距未知）', value: 'B', object: mkPlate(this.dB), labelY: 4, icon: ICONS.dslit,
+          desc: '待测双缝，缝宽约 0.07 mm，间距未知。换上它之前先把 A 从卡槽里取下来。' },
+      ],
+    });
     const ec = carriage(0x9aa3b2, AXIS_Y);
     const eg = new THREE.Group();
     eg.add(mesh(new THREE.CylinderGeometry(1.6, 1.6, 7, 28), MAT.black(), 2.2, 0, 0).rotateZ(Math.PI / 2));
@@ -168,8 +194,9 @@ export class YoungExperiment {
     this.readView = app.addView({ id: 'read', title: '固定刻度与鼓轮', w: 290, h: 100, res: 1.5 });
   }
 
-  canPlace(comp) {
+  canPlace(comp, o = {}) {
     if (comp.key === 'ds' && this.app.comp('slit').placed && this.app.comp('slit').pos > 100) return '双缝应放在单缝之后';
+    if (this.pm && this.pm.owns(comp) && o.slot === 'dsSeat' && !this.app.comp('ds').placed) return '导轨上还没有双缝架，双缝片没地方插';
     return null;
   }
 
@@ -198,9 +225,8 @@ export class YoungExperiment {
     const gap = Math.min(0.6, this.w * 2);
     this.slitBlades.children[0].position.z = -0.6 - gap; this.slitBlades.children[1].position.z = 0.6 + gap;
     this.slitBlades.rotation.x = ((this.beta * Math.PI) / 180) * 4;
-    this.plateG.rotation.x = ((this.gamma * Math.PI) / 180) * 4;
-    this.plateG.position.z = this.lat * 0.3 + (this.plate === 'A' ? 0 : 1.2);
-    this.slitMarks[0].position.z = -this.d * 0.6; this.slitMarks[1].position.z = this.d * 0.6;
+    this.pm.sync();
+    { const o = this.pm.zone.occupant; if (o && !(app.drag && app.drag.comp === o)) o.root.rotation.x = ((this.gamma * Math.PI) / 180) * 4; }
     this.eyeDrum.rotation.y = this.drive * Math.PI * 2;
     const V3 = (x) => app.coaxV(x, AXIS_Y); // 光束沿实际光路（未共轴时会偏离元件中心）
     const L = app.comp('lamp'), S = app.comp('slit'), B = app.comp('ds'), E = app.comp('eye');
@@ -246,6 +272,7 @@ export class YoungExperiment {
     let foot = '';
     if (!this.src) foot = this.lampOn ? '视场很暗：检查光源和单缝' : '视场黑暗：钠光灯未打开';
     else if (!this.app.comp('ds').placed) foot = '未放双缝：均匀照明';
+    else if (!this.plate) foot = '双缝架上没插双缝片：视场几乎全黑';
     else if (this.assist) foot = `双缝 ${this.plate} · 衬比度 ${(this.V * 100).toFixed(0)}% · 零级偏离视场中心 ${(this.xc - this.eyeOff).toFixed(2)} mm`;
     else foot = `双缝 ${this.plate}`;
     v.foot(foot);
@@ -284,7 +311,7 @@ export class YoungExperiment {
   readNow() { return Math.round((this.drive + gauss(0.0015)) * 1000) / 1000; }
   recRail(t, id) {
     if (!this.app.comp('ds').placed || !this.app.comp('eye').placed) return this.app.toast('双缝或测微目镜不在导轨上', 'warn');
-    if (this.plate !== id) this.app.toast(`当前使用的是 ${this.plate} 组双缝，本表记录 ${id} 组`, 'warn');
+    if (this.plate !== id) this.app.toast(this.plate ? `双缝架上插的是 ${this.plate} 片，本表记录 ${id} 片` : '双缝架上没插双缝片', 'warn');
     t.addRow({ xd: Math.round(this.app.comp('ds').pos * 100) / 100, xe: Math.round(this.app.comp('eye').pos * 100) / 100 });
   }
   recFringe(t, id) {
@@ -292,7 +319,7 @@ export class YoungExperiment {
     if (!r) return this.app.toast('请先读取导轨位置（新起一行）', 'warn');
     const key = r.x1 == null ? 'x1' : r.x2 == null ? 'x2' : null;
     if (!key) return this.app.toast('这一行已记录完整；改变 D 后读取导轨位置新起一行', 'warn');
-    if (this.plate !== id) this.app.toast(`当前使用的是 ${this.plate} 组双缝`, 'warn');
+    if (this.plate !== id) this.app.toast(this.plate ? `双缝架上插的是 ${this.plate} 片` : '双缝架上没插双缝片', 'warn');
     if (Math.abs(r.xd - this.app.comp('ds').pos) > 0.02 || Math.abs(r.xe - this.app.comp('eye').pos) > 0.02) this.app.toast('注意：导轨位置与本行记录的不一致', 'warn');
     if (!this.src || this.V < 0.3) return this.app.toast('看不到清晰的干涉条纹', 'warn');
     const Xp = this.eyeX() - this.xc, ph = (this.d * Xp) / (LAMBDA * this.D) - 0.5;
@@ -337,10 +364,10 @@ export class YoungExperiment {
     return [
       {
         title: '放置钠光灯、单缝、双缝和测微目镜',
-        html: '<p>按 <b>钠光灯 → 单缝 → 双缝 → 测微目镜</b> 放置。单缝紧靠钠灯；双缝距单缝 10 cm 左右；测微目镜距双缝 40 cm 以上。</p>',
-        check: () => ['lamp', 'slit', 'ds', 'eye'].every(on) && this.R > 50 && this.R < 300 && this.D > 400,
+        html: '<p>按 <b>钠光灯 → 单缝 → 双缝架 → 测微目镜</b> 放置，再把标定双缝片 <b>A</b> 插到双缝架的卡槽里。单缝紧靠钠灯；双缝距单缝 10 cm 左右；测微目镜距双缝 40 cm 以上。</p>',
+        check: () => ['lamp', 'slit', 'ds', 'eye'].every(on) && this.plate === 'A' && this.R > 50 && this.R < 300 && this.D > 400,
         status: () => (this.R ? `单缝–双缝 R = <b>${(this.R / 10).toFixed(1)} cm</b>${this.D ? `，双缝–目镜 D = <b>${(this.D / 10).toFixed(1)} cm</b>` : ''}` : ''),
-        auto: async () => { await app.view('全景'); for (const [k, x] of [['lamp', 4], ['slit', 12], ['ds', 24], ['eye', 70]]) await app.autoPlace(k, { pos: x }); },
+        auto: async () => { await app.view('全景'); for (const [k, x] of [['lamp', 4], ['slit', 12], ['ds', 24], ['eye', 70]]) await app.autoPlace(k, { pos: x }); await this.pm.set('A'); },
       },
       {
         title: '打开钠光灯，调节目镜看清叉丝',
@@ -394,11 +421,11 @@ export class YoungExperiment {
       },
       {
         title: '换成未知双缝 B，测条纹间距',
-        html: '<p>在双缝架上切换到 <b>B 组</b>双缝，重新对中、调清条纹，在一个 D 下测条纹间距。</p>',
+        html: '<p>把双缝片 A 从卡槽里取下来，换上 <b>B 片</b>，重新对中、调清条纹，在一个 D 下测条纹间距。</p>',
         check: () => app.table('B').completeRows().length >= 1,
         status: () => `已测 <b>${app.table('B').completeRows().length}</b> 组`,
         auto: async () => {
-          app.select(app.comp('ds')); this.plate = 'B'; app.changed(); await app.wait(500);
+          await this.pm.set('B'); await app.wait(300);
           // d_B 较小、条纹较宽：取较小的 D，使 6 条暗纹都在 8 mm 视场内
           await app.moveTo('eye', this.P('ds') / 10 + 45, 900);
           await app.tween(() => this.lat, (v) => (this.lat = v), (this.eyeOff * this.R) / (this.R + this.D), 600);

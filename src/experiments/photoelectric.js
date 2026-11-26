@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { meta, thumb, H, E, C, FILTERS, SPEC } from './photoelectric.meta.js';
 import { Component } from '../core/Component.js';
+import { Mount } from '../core/Mount.js';
 import { AXIS_Y, MAT, mesh, labTable, opticalRail, carriage, lampHousing, glowSprite, ICONS, Beam, meterBox, knobMesh } from '../core/Models.js';
 import { rgbCss, rgbHex } from '../physics/color.js';
 import { linFit, gauss, rand, relErr, pct, texU, sig } from '../core/Stats.js';
@@ -25,7 +26,7 @@ export class PhotoelectricExperiment {
     this.eta = 0.25; this.Uk = rand(6, 9);
     this.zero = rand(-3, 3); // 微电流计零点漂移（以 10⁻¹³ A 为单位）
     this.lampOn = false; this.warm = 0;
-    this.cover = true; this.filter = 0; this.ap = 1;
+    this.filter = 0; this.ap = 1; // 遮光盖是一个实物，盖没盖由拖放决定（cover）
     this.mode = 'stop'; // 'stop': −2~0 V；'iv': −1~50 V
     this.U = -1.5; this.range = 2;
     this.ampOn = false;
@@ -33,6 +34,19 @@ export class PhotoelectricExperiment {
 
   get L() { const l = this.app.comp('lamp'), p = this.app.comp('cell'); return l.placed && p.placed && p.pos > l.pos ? p.pos - l.pos : null; }
   get lambda() { return FILTERS[this.filter]; }
+  /** 遮光盖是否盖在入光口上 */
+  get cover() { return !!(this.cm && this.cm.value); }
+  onPlace(c) {
+    if (this.app.exp !== this) return;
+    // 暗盒从柜里拿出来时遮光盖是盖着的
+    if (c && c.key === 'cell' && !this._capOut && !this.app.comp('cap').placed) this.app.place(this.app.comp('cap'), { slot: 'capOn', silent: true });
+    if (c && c.key === 'cap') this._capOut = true;
+    this.app.renderInspector(); this.app.changed();
+  }
+  onSlotChange(c) { this.onPlace(c); }
+  onRemove(c) { this.onPlace(c); }
+  canPlace(comp, o = {}) { if (comp.key === 'cap' && o.slot === 'capOn' && !this.app.comp('cell').placed) return '导轨上还没有光电管暗盒'; return null; }
+  canRemove(comp) { if (comp.key === 'cell' && this.cover) this.app.moveSlot(this.app.comp('cap'), 'capOn_r0', { silent: true }); return null; }
   get nu() { return C / (this.lambda * 1e-9); }
   get U0() { return (H * this.nu) / E - this.W; }
   /** 阴极受照时的饱和光电流 A */
@@ -92,13 +106,23 @@ export class PhotoelectricExperiment {
     const tur = mesh(new THREE.CylinderGeometry(3.6, 3.6, 0.8, 36), MAT.dark()); tur.rotation.z = Math.PI / 2; this.turret.add(tur);
     this.filterGlass = mesh(new THREE.CircleGeometry(1.2, 24), new THREE.MeshStandardMaterial({ color: 0x8866ff, emissive: 0x000000, transparent: true, opacity: 0.8 }), -0.45, 0, 0); this.filterGlass.rotation.y = -Math.PI / 2; this.turret.add(this.filterGlass);
     this.turret.position.set(-4.9, 6, 0); pg.add(this.turret);
-    this.coverMesh = mesh(new THREE.CylinderGeometry(2, 2, 1, 24), MAT.black(), -5.8, 6, 0); this.coverMesh.rotation.z = Math.PI / 2; pg.add(this.coverMesh);
     pc.top.add(pg);
+    // 遮光盖：盖在入光口上（跟着暗盒走），取下来放在台面上
+    const capG = new THREE.Group(); const capM = mesh(new THREE.CylinderGeometry(2, 2, 1, 24), MAT.black()); capM.rotation.z = Math.PI / 2; capG.add(capM);
+    const cv = new THREE.Vector3();
+    this.cm = new Mount(app, {
+      id: 'capOn', label: '入光口', pos: new THREE.Vector3(40, AXIS_Y, 0), r: 2, snap: 6,
+      follow: () => { pg.updateWorldMatrix(true, false); return pg.localToWorld(cv.set(-5.8, 0, 0)); },
+      rest: () => new THREE.Vector3(36, 0.6, 18),
+      items: [{ key: 'cap', name: '遮光盖', value: 'on', object: capG, labelY: 3,
+        icon: '<svg viewBox="0 0 64 40"><ellipse cx="32" cy="20" rx="12" ry="12" fill="currentColor"/></svg>',
+        desc: '光电管暗盒入光口的遮光盖。调零时要盖上；测量时取下来放在台面上，测完再盖回去，避免光电管长时间受强光照射。' }],
+    });
     app.addComponent(new Component({
       key: 'cell', name: '光电管暗盒', icon: ICONS.photocell, zone: 'rail', defaultPos: 44, required: true, object: pc.group, labelY: 36,
-      desc: '光电管装在暗盒内，入光口前的转盘上有 5 块滤色片和 2、4、8 mm 三种光阑，入光口另有遮光盖。',
+      desc: '光电管装在暗盒内，入光口前的转盘上有 5 块滤色片和 2、4、8 mm 三种光阑，入光口上盖着遮光盖（拖下来放到台面上就打开了）。',
       controls: () => [
-        { type: 'toggle', label: '遮光盖', get: () => this.cover, set: (v) => (this.cover = v) },
+        { type: 'readout', label: '遮光盖', get: () => (this.cover ? '盖着' : '已取下') },
         { type: 'segment', label: '滤色片', get: () => this.filter, set: (v) => (this.filter = v), options: FILTERS.map((nm, i) => ({ label: `${nm.toFixed(0)}`, value: i })) },
         { type: 'segment', label: '光阑直径', get: () => this.ap, set: (v) => (this.ap = v), options: APS.map((d, i) => ({ label: `φ${d} mm`, value: i })) },
       ],
@@ -140,7 +164,7 @@ export class PhotoelectricExperiment {
     const on = this.lampOn && app.comp('lamp').placed;
     this.lampGlow.emissiveIntensity = on ? 2.5 * this.warm : 0;
     this.lampSprite.visible = on;
-    this.coverMesh.visible = this.cover;
+    this.cm.sync();
     this.turret.rotation.x = this.filter * 0.9 + this.ap * 0.3;
     this.filterGlass.material.color.set(rgbHex(this.lambda < 400 ? 400 : this.lambda));
     const V3 = (x) => this.app.coaxV(x, AXIS_Y); // 光束沿实际光路
@@ -267,6 +291,7 @@ export class PhotoelectricExperiment {
         check: () => this.zeroed || (this.zeroed = this.lampOn && this.warm > 0.95 && this.ampOn && this.cover && this.range === 5 && Math.abs(this.zero) < 0.05),
         status: () => (this.ampOn ? `电流显示 <b>${this.display().str}</b> × ${rngLabel(RANGES[this.range])}${this.cover ? '' : '（遮光盖未盖）'}` : '实验仪电源未开'),
         auto: async () => {
+          if (!this.cover) await this.cm.set('on');
           app.select(app.comp('lamp')); this.lampOn = true; app.changed();
           await app.view('实验仪'); app.select(app.comp('amp')); this.ampOn = true; this.mode = 'stop'; this.U = 0; this.range = 5; app.changed(); await app.wait(400);
           await app.tween(() => this.zero, (v) => (this.zero = v), gauss(0.008), 1200);
@@ -275,13 +300,13 @@ export class PhotoelectricExperiment {
       },
       {
         title: '零电流法测各谱线的截止电压',
-        html: '<p>取下遮光盖，选 <b>φ4 mm</b> 光阑。依次换用 365.0、404.7、435.8、546.1、577.0 nm 滤色片，在截止电压挡、10⁻¹³ A 量程下调节电压，使电流显示为 <b>0</b>，记录电压。</p>',
+        html: '<p>把遮光盖从入光口拿下来放在台面上，转盘选 <b>φ4 mm</b> 光阑。依次换用 365.0、404.7、435.8、546.1、577.0 nm 滤色片，在截止电压挡、10⁻¹³ A 量程下调节电压，使电流显示为 <b>0</b>，记录电压。</p>',
         hint: '电压从 −2 V 往 0 V 方向慢慢调：电流由负值（阳极反向电流）变为 0 再迅速增大。零点附近用细调旋钮。',
         check: () => app.table('ua').completeRows().length >= 5,
         status: () => `已测 <b>${app.table('ua').completeRows().length}</b> / 5`,
         auto: async () => {
           const t = app.table('ua'); app.showTable(app.tables.indexOf(t));
-          app.select(app.comp('cell')); this.cover = false; this.ap = 1; app.changed(); await app.wait(300);
+          await this.cm.set(null); app.select(app.comp('cell')); this.ap = 1; app.changed(); await app.wait(300);
           for (let i = 0; i < FILTERS.length; i++) {
             app.select(app.comp('cell')); this.filter = i; app.changed(); await app.wait(300);
             app.select(app.comp('amp'));

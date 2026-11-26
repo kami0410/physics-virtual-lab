@@ -29,17 +29,36 @@ export class FiberExperiment {
     this.NA = rand(0.2, 0.22); this.s0 = rand(2, 5); this.A = rand(6, 10); this.R0 = rand(1.8, 2.2);
     const sg = () => (Math.random() < 0.5 ? -1 : 1);
     this.x = Math.round(sg() * rand(12, 20) * 2) / 2; this.y = Math.round(sg() * rand(12, 20) * 2) / 2; this.z = Math.round(rand(400, 700) / 5) * 5;
-    this.probe = 'in'; this.out = 'meter'; this.cut = false; this.R = 0; this.s = 30;
+    this.cut = false; this.R = 0; this.s = 30;
     this._fk = ''; this._f = 0;
   }
   frac() { const k = `${this.x},${this.y},${this.z}`; if (k !== this._fk) { this._fk = k; this._f = coupleFraction(this.x, this.y, this.z, SPOT); } return this._f; }
-  /** 光纤输出端的功率（mW），不管探头在哪 */
+  /** 功率计探头在哪：in 物镜前，out 光纤出射端，off 不在光路上（由拖放决定） */
+  get probe() { const k = this.app.slotOf('probe'); return k === 'pIn' ? 'in' : k === 'pOut' ? 'out' : 'off'; }
+  /** 观察屏是否放在出射端的小导轨上 */
+  get scrOn() { return this.app.slotOf('oscr') === 'sOut'; }
+  /** 出射端：探头挡在前面时屏上没有光 */
+  get out() { return this.probe === 'out' ? 'meter' : this.scrOn ? 'screen' : 'none'; }
+  onPlace() { if (this.app.exp !== this) return; this.app.renderInspector(); this.app.changed(); }
+  onSlotChange() { this.onPlace(); }
+  onRemove() { this.onPlace(); }
+  /** 屏在小导轨上的挂点跟着屏位置 s 走 */
+  syncScr() {
+    const a = this.app, z = a.zones.find((q) => q.id === 'sOut'); if (!z) return;
+    z.pos.set(28 + (this.s - this.s0) * 0.4 + 2, 0, 0);
+    if (z.marker) z.marker.position.copy(z.pos).y += 0.15;
+    if (z.occupant && !(a.drag && a.drag.comp === z.occupant)) z.occupant.root.position.copy(z.pos);
+  }
+  async setProbe(v) { const a = this.app, id = v === 'in' ? 'pIn' : 'pOut'; if (a.slotOf('probe') !== id) { await a.autoPut('probe', id); await a.wait(100); } }
+  async setScreen() { const a = this.app; if (this.probe === 'out') a.moveSlot(a.comp('probe'), 'pRest', { silent: true }); if (!this.scrOn) await a.autoPut('oscr', 'sOut'); }
+  /** 光纤输出端的功率（mW）；探头放在物镜前时把激光挡住了，光纤里没有光 */
   Pout() {
+    if (this.probe === 'in') return 0;
     const L = this.cut ? 0.002 : this.Lt, tb = this.R ? 10 ** (-(NTURN * bendLoss(this.R, this.A, this.R0)) / 10) : 1;
     return this.P0 * TOBJ * this.Q * this.frac() * 10 ** (-(this.alpha * L) / 10) * tb;
   }
   /** 功率计读数（μW），null 表示探头没有接收光 */
-  meter() { if (this.probe === 'in') return this.P0 * 1000; return this.out === 'meter' ? this.Pout() * 1000 : null; }
+  meter() { const p = this.probe; return p === 'in' ? this.P0 * 1000 : p === 'out' ? this.Pout() * 1000 : null; }
   fmtP(p) { return p >= 100 ? p.toFixed(1) : p >= 10 ? p.toFixed(2) : p >= 1 ? p.toFixed(3) : p.toFixed(4); }
   readP() { const p = this.meter(); return p == null ? null : +this.fmtP(p); }
   D() { return spotDiameter(this.s - this.s0, this.NA, 0.05); }
@@ -99,19 +118,37 @@ export class FiberExperiment {
     this.outG = new THREE.Group(); this.outG.position.set(28, 0, 0); scene.add(this.outG);
     this.outG.add(mesh(new THREE.BoxGeometry(3, Y - 2, 3), MAT.paint(0x3a3f44), 0, (Y - 2) / 2, 0));
     this.outG.add(mesh(new THREE.BoxGeometry(60, 1, 5), MAT.alu(), 24, 0.5, 0));
-    this.probeM = mesh(new THREE.CylinderGeometry(2, 2, 3, 24), MAT.paint(0x1f2937), 6, Y, 0); this.probeM.rotation.z = Math.PI / 2; this.outG.add(this.probeM);
-    this.screen = new THREE.Group(); this.outG.add(this.screen);
-    this.screen.add(mesh(new THREE.BoxGeometry(0.4, 16, 16), MAT.white(), 0, Y, 0));
-    this.screen.add(mesh(new THREE.BoxGeometry(2, Y - 8, 3), MAT.paint(0x3a3f44), 0, 1, 0));
+    // 功率计探头：放在物镜前测入射光，或放在光纤出射端测输出；不用时放回台面
+    const pg = new THREE.Group(); const pc = mesh(new THREE.CylinderGeometry(2, 2, 3, 24), MAT.paint(0x1f2937)); pc.rotation.z = Math.PI / 2; pg.add(pc);
+    app.addSlot({ id: 'pIn', pos: new THREE.Vector3(-37, Y, 0), accepts: ['probe'], label: '物镜前', r: 2.5, snap: 8 });
+    app.addSlot({ id: 'pOut', pos: new THREE.Vector3(30, Y, 0), accepts: ['probe'], label: '光纤出射端', r: 2.5, snap: 8 });
+    app.addSlot({ id: 'pRest', pos: new THREE.Vector3(34, 2, -18), accepts: ['probe'], label: '台面', r: 3, snap: 8 });
+    app.addComponent(new Component({
+      key: 'probe', name: '光功率计探头', zone: 'slot', defaultSlot: 'pIn', object: pg, labelY: 4,
+      icon: '<svg viewBox="0 0 64 40"><rect x="14" y="12" width="22" height="16" rx="3" fill="currentColor"/><path d="M36 20h20" stroke="currentColor" stroke-width="2"/></svg>',
+      desc: '光功率计的探头，用线连着功率计。放在物镜前测入射激光功率 P₀（这时光被探头挡住，进不了光纤）；放在光纤出射端测输出功率。',
+    }));
+    // 观察屏：放在出射端的小导轨上，屏位置由导轨读数 s 决定
+    const sg = new THREE.Group();
+    sg.add(mesh(new THREE.BoxGeometry(0.4, 16, 16), MAT.white(), 0, Y, 0));
+    sg.add(mesh(new THREE.BoxGeometry(2, Y - 8, 3), MAT.paint(0x3a3f44), 0, 1, 0));
+    app.addSlot({ id: 'sOut', pos: new THREE.Vector3(40, 0, 0), accepts: ['oscr'], label: '出射端小导轨', r: 3, snap: 10 });
+    app.addSlot({ id: 'sRest', pos: new THREE.Vector3(60, 0, 18), accepts: ['oscr'], label: '台面', r: 3, snap: 8 });
+    app.addComponent(new Component({
+      key: 'oscr', name: '带毫米坐标的观察屏', zone: 'slot', defaultSlot: 'sOut', object: sg, labelY: 20,
+      icon: '<svg viewBox="0 0 64 40"><rect x="24" y="4" width="16" height="32" fill="none" stroke="currentColor" stroke-width="2"/><path d="M32 8v24M26 20h12" stroke="currentColor"/></svg>',
+      desc: '放在光纤出射端的小导轨上看远场光斑、量光斑直径。功率计探头还挡在出射端时屏上没有光。',
+      controls: () => [
+        { type: 'knob', label: '观察屏位置', get: () => this.s, set: (v) => { this.s = Math.round(clamp(v, 15, 90) * 2) / 2; app.changed(); }, min: 15, max: 90, step: 0.5, bigStep: 5, perRev: 20, digits: 1, unit: 'mm' },
+      ],
+    }));
     this.cone = mesh(new THREE.ConeGeometry(1, 1, 32, 1, true), new THREE.MeshBasicMaterial({ color: 0xff3030, transparent: true, opacity: 0.12, side: THREE.DoubleSide, depthWrite: false }), 0, Y, 0); this.cone.rotation.z = Math.PI / 2; this.outG.add(this.cone);
     const pm = (this.pBox = meterBox(18, 9, 10, '光功率计')); pm.group.position.set(44, 0, -18); scene.add(pm.group);
     app.addComponent(new Component({
-      key: 'meter', name: '光功率计与观察屏', zone: 'none', fixed: true, object: pm.group, labelY: 12,
-      desc: '光功率计（632.8 nm 定标，自动量程，4 位有效数字）。探头可以放在物镜前测入射光功率，也可以放在光纤出射端。出射端也可以换成带毫米坐标的观察屏，观察屏在小导轨上移动，读数为屏在导轨上的位置。',
+      key: 'meter', name: '光功率计', zone: 'none', fixed: true, object: pm.group, labelY: 12,
+      desc: '光功率计（632.8 nm 定标，自动量程，4 位有效数字）。探头从器材柜拿出来，放在物镜前测入射光功率，或放在光纤出射端测输出功率。',
       controls: () => [
-        { type: 'segment', label: '功率计探头', options: [{ value: 'in', label: '物镜前（测入射光）' }, { value: 'out', label: '光纤出射端' }], get: () => this.probe, set: (v) => { this.probe = v; app.changed(); } },
-        { type: 'segment', label: '出射端放', options: [{ value: 'meter', label: '功率计探头' }, { value: 'screen', label: '观察屏' }], get: () => this.out, set: (v) => { this.out = v; app.changed(); } },
-        { type: 'knob', label: '观察屏位置', get: () => this.s, set: (v) => { this.s = Math.round(clamp(v, 15, 90) * 2) / 2; app.changed(); }, min: 15, max: 90, step: 0.5, bigStep: 5, perRev: 20, digits: 1, unit: 'mm' },
+        { type: 'readout', label: '探头在', get: () => ({ in: '物镜前', out: '光纤出射端', off: '不在光路上' })[this.probe] },
         { type: 'readout', label: '功率计', get: () => { const p = this.readP(); return p == null ? '探头没有接收到光' : `${this.fmtP(p)} μW`; } },
       ],
     }));
@@ -126,7 +163,7 @@ export class FiberExperiment {
     this.glowIn.material.emissiveIntensity = 2.5 * this.frac();
     this.stage.position.set(-25 + this.z / 2000, 0, this.x / 50);
     const scr = this.out === 'screen';
-    this.probeM.position.set(this.probe === 'out' && !scr ? 2 : -1000, 10, 0); this.screen.visible = scr; this.screen.position.x = scr ? (this.s - this.s0) * 0.4 + 2 : 0;
+    this.syncScr();
     const r = this.D() / 2;
     this.cone.visible = scr && this.Pout() > 1e-5; this.cone.scale.set(r * 0.4 * 2, (this.s - this.s0) * 0.4, r * 0.4 * 2); this.cone.position.x = ((this.s - this.s0) * 0.4) / 2 + 0.2; this.cone.rotation.z = Math.PI / 2;
     this.draw();
@@ -148,7 +185,7 @@ export class FiberExperiment {
     for (let m = -SCR; m <= SCR; m++) { const t = m % 5 === 0 ? 5 : 2.5; g.beginPath(); g.moveTo(cx + m * k, cy - t); g.lineTo(cx + m * k, cy + t); g.moveTo(cx - t, cy + m * k); g.lineTo(cx + t, cy + m * k); g.stroke(); }
     g.fillStyle = '#3a4550'; g.font = `${H * 0.045}px Consolas, monospace`; g.textAlign = 'center';
     for (let m = -20; m <= 20; m += 10) if (m) g.fillText(String(m), cx + m * k, cy + H * 0.06);
-    v.foot(this.out === 'screen' ? `屏在导轨 ${this.s.toFixed(1)} mm 处` : '出射端放的是功率计探头，屏上没有光');
+    v.foot(this.out === 'screen' ? `屏在导轨 ${this.s.toFixed(1)} mm 处` : this.scrOn ? '功率计探头挡在出射端，屏上没有光' : '出射端的小导轨上没有放观察屏');
   }
 
   // ======================= 数据表 =======================
@@ -178,7 +215,7 @@ export class FiberExperiment {
   }
   recP(t) {
     const a = this.app, p = this.readP();
-    if (p == null) return a.toast('功率计探头没有接收到光（出射端放的是观察屏）', 'warn');
+    if (p == null) return a.toast('功率计探头不在光路上：放到物镜前或光纤出射端', 'warn');
     let i; const fl = [];
     if (this.R && this.probe !== 'in') fl.push('光纤还绕在棒上，有弯曲损耗');
     if (this.probe === 'in') i = 0;
@@ -194,7 +231,7 @@ export class FiberExperiment {
   }
   recNA(t) {
     const a = this.app;
-    if (this.out !== 'screen') return a.toast('出射端放的不是观察屏', 'warn');
+    if (this.out !== 'screen') return a.toast(this.scrOn ? '功率计探头挡在出射端，屏上没有光' : '出射端没有放观察屏', 'warn');
     if (this.Pout() < 1e-5) return a.toast('屏上几乎看不到光斑，先把耦合调好', 'warn');
     if (this.D() > 2 * SCR) return a.toast('光斑超出了屏的坐标范围，把屏移近一些', 'warn');
     if (t.rows.some((r) => Math.abs(r.s - this.s) < 0.25)) a.toast('这个位置已经测过了', 'warn');
@@ -220,7 +257,7 @@ export class FiberExperiment {
         title: '测入射光功率',
         html: '<p>把光功率计探头放在物镜前，测入射激光的功率 $P_0$。</p>',
         check: () => has(0),
-        auto: async () => { app.showTable(0); await app.view('全景'); await this.seg('meter', 'probe', 'in'); await app.record('pw', 0); },
+        auto: async () => { app.showTable(0); await app.view('全景'); await this.setProbe('in'); await app.record('pw', 0); },
       },
       {
         title: '调节耦合',
@@ -230,7 +267,7 @@ export class FiberExperiment {
         check: () => has(1),
         auto: async () => {
           app.showTable(0); await app.view('耦合');
-          await this.seg('meter', 'probe', 'out'); await this.seg('meter', 'out', 'meter'); if (this.R) await this.seg('reel', 'R', 0);
+          await this.setProbe('out'); if (this.R) await this.seg('reel', 'R', 0);
           await this.adj('couple', 'z', 0, 500); await this.adj('couple', 'x', 0, 400); await this.adj('couple', 'y', 0, 400);
           if (!this.cut) await app.record('pw', 0);
         },
@@ -244,21 +281,21 @@ export class FiberExperiment {
         auto: async () => {
           app.showTable(0); await app.view('全景');
           if (!this.cut) { app.select(app.comp('reel')); this.cut = true; app.renderInspector(); app.changed(); await app.wait(300); }
-          await this.seg('meter', 'probe', 'out'); await this.seg('meter', 'out', 'meter'); if (this.R) await this.seg('reel', 'R', 0);
+          await this.setProbe('out'); if (this.R) await this.seg('reel', 'R', 0);
           if (this._key && this._key !== this._fk) { const [x, y, z] = this._key.split(',').map(Number); await this.adj('couple', 'x', x); await this.adj('couple', 'y', y); await this.adj('couple', 'z', z); }
           await app.record('pw', 0);
         },
       },
       {
         title: '远场法测数值孔径',
-        html: '<p>出射端换上观察屏。屏在导轨上依次放在 30、40 … 80 mm 处，读出光斑直径 $D$。</p>',
+        html: '<p>把功率计探头从出射端拿开，在出射端的小导轨上放观察屏。屏在导轨上依次放在 30、40 … 80 mm 处，读出光斑直径 $D$。</p>',
         status: () => `已测 ${rows('na').length} 个位置`,
         check: () => rows('na').length >= 4,
         auto: async () => {
           app.showTable(1); await app.view('输出端');
-          await this.seg('meter', 'out', 'screen');
-          for (let s = 30; s <= 80; s += 10) { if (rows('na').some((r) => Math.abs(r.s - s) < 0.25)) continue; await this.adj('meter', 's', s, 250); await app.record('na', 0); }
-          await this.seg('meter', 'out', 'meter');
+          await this.setScreen();
+          for (let s = 30; s <= 80; s += 10) { if (rows('na').some((r) => Math.abs(r.s - s) < 0.25)) continue; await this.adj('oscr', 's', s, 250); await app.record('na', 0); }
+          app.moveSlot(app.comp('oscr'), 'sRest', { silent: true }); await this.setProbe('out');
         },
       },
       {
@@ -271,7 +308,7 @@ export class FiberExperiment {
         auto: async () => {
           app.showTable(2); await app.view('全景');
           if (!this.cut) { app.select(app.comp('reel')); this.cut = true; app.renderInspector(); app.changed(); }
-          await this.seg('meter', 'probe', 'out'); await this.seg('meter', 'out', 'meter');
+          await this.setProbe('out');
           const k0 = rows('bend')[0]?._key; if (k0 && k0 !== this._fk) { const [x, y, z] = k0.split(',').map(Number); await this.adj('couple', 'x', x); await this.adj('couple', 'y', y); await this.adj('couple', 'z', z); }
           for (const R of [0, 10, 8, 6, 5, 4, 3]) { const lab = R ? R.toFixed(1) : '不绕'; if (rows('bend').some((r) => r.R === lab)) continue; await this.seg('reel', 'R', R); await app.record('bend', 0); }
           await this.seg('reel', 'R', 0);

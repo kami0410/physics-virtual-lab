@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { meta, thumb, objectPattern } from './lens.meta.js';
 import { Component } from '../core/Component.js';
+import { Mount } from '../core/Mount.js';
 import { I } from '../core/App.js';
 import { AXIS_Y, MAT, mesh, labTable, opticalRail, carriage, lensMesh, whiteScreen, lampHousing, ICONS, canvasTexture } from '../core/Models.js';
 import { ThickLens, lensImaging, autocollimation, imagePosition } from '../physics/matrixOptics.js';
@@ -29,7 +30,6 @@ export class LensExperiment {
     this.lampOn = false;
     this.lensOff = { y: rand(0.6, 1.1) * (Math.random() < 0.5 ? -1 : 1), z: rand(0.5, 1.0) * (Math.random() < 0.5 ? -1 : 1) };
     this.mirrorTilt = 0.07;
-    this.stopD = D_LENS; // 透镜前可变光阑的通光口径 cm（不加光阑时即透镜口径）
     this.spotCache = new Map();
     this.showRays = false;
     this.obj = objectPattern();
@@ -87,13 +87,24 @@ export class LensExperiment {
     const lensC = carriage(0x9aa3b2, AXIS_Y);
     const lm = lensMesh(D_LENS, 0.62); lensC.top.add(lm);
     this.lensMeshObj = lm;
+    // 光阑片：套在透镜前面（物那一侧），跟着透镜走
+    const stopG = (d) => { const g = new THREE.Group(); const r = new THREE.Mesh(new THREE.RingGeometry(d / 2, D_LENS / 2 + 0.6, 40), MAT.black()); r.material.side = THREE.DoubleSide; r.rotation.y = Math.PI / 2; g.add(r); return g; };
+    const sv = new THREE.Vector3();
+    this.sm = new Mount(app, {
+      id: 'stopSeat', label: '透镜前', pos: new THREE.Vector3(44, AXIS_Y, 0), r: 2, snap: 6,
+      follow: () => { lm.updateWorldMatrix(true, false); return lm.localToWorld(sv.set(-0.7, 0, 0)); },
+      rest: (i) => new THREE.Vector3(40 + i * 7, 0.2, 18),
+      items: [2.5, 1.5].map((d) => ({ key: 'stop' + String(d).replace('.', ''), name: `光阑片 Φ${d} cm`, value: d, object: stopG(d), labelY: 4,
+        icon: '<svg viewBox="0 0 64 40"><circle cx="32" cy="20" r="14" fill="currentColor"/><circle cx="32" cy="20" r="' + (d * 3) + '" fill="#fff"/></svg>',
+        desc: `中间开 Φ${d} cm 圆孔的黑色光阑片，套在透镜前面挡住边缘光线：球差变小、像更清晰，但像也变暗。` })),
+    });
     app.addComponent(new Component({
       key: 'lens', name: '凸透镜 L', icon: ICONS.lens, zone: 'rail', defaultPos: 45, required: true,
       desc: `待测凸透镜，口径 ${D_LENS} cm。透镜架可上下升降、左右平移，用于共轴调节。`, object: lensC.group, labelY: 30,
       controls: () => [
         { type: 'knob', label: '透镜高度（升降）', get: () => this.lensOff.y, set: (v) => (this.lensOff.y = v), min: -2, max: 2, step: 0.02, bigStep: 0.2, perRev: 0.5, digits: 2, unit: 'cm' },
         { type: 'knob', label: '透镜横向位置', get: () => this.lensOff.z, set: (v) => (this.lensOff.z = v), min: -2, max: 2, step: 0.02, bigStep: 0.2, perRev: 0.5, digits: 2, unit: 'cm' },
-        { type: 'select', label: '透镜前的光阑', get: () => String(this.stopD), set: (v) => { this.stopD = +v; this.spotCache.clear(); }, options: [{ value: String(D_LENS), label: `不加光阑（通光 ${D_LENS} cm）` }, { value: '2.5', label: '光阑 Φ2.5 cm' }, { value: '1.5', label: '光阑 Φ1.5 cm' }], sub: '口径越小，球差越小、像越清晰，但像也越暗。' },
+        { type: 'readout', label: '透镜前的光阑', get: () => (this.stopD < D_LENS ? `Φ${this.stopD} cm（口径越小球差越小，像也越暗）` : `没加（通光 ${D_LENS} cm）`) },
         { type: 'note', html: '共轴细调：把像屏放在 L&gt;4f 处，移动透镜得到大像和小像，调节透镜高度/横向位置使大像中心与小像中心重合。' },
       ],
     }));
@@ -233,6 +244,7 @@ export class LensExperiment {
 
   update() {
     const app = this.app;
+    this.sm.sync();
     const lit = this.lampOn && this.app.comp('lamp').placed;
     this.lampParts.glow.emissiveIntensity = lit ? 3 : 0;
     this.lampParts.light.intensity = lit ? 400 : 0;
@@ -407,10 +419,16 @@ export class LensExperiment {
     for (const xf of [xL - f, xL + f]) add([[xf, ly - 0.6], [xf, ly + 0.6]], new THREE.LineBasicMaterial({ color: 0xf472b6 }));
   }
 
-  canPlace(comp) {
-    if (comp.key === 'mirror' && this.app.comp('screen').placed) return null;
+  canPlace(comp, o = {}) {
+    if (this.sm && this.sm.owns(comp) && o.slot === 'stopSeat' && !this.app.comp('lens').placed) return '导轨上还没有透镜';
     return null;
   }
+  /** 透镜前光阑的通光口径 cm（没加光阑即透镜口径） */
+  get stopD() { return (this.sm && this.sm.value) || D_LENS; }
+  onPlace() { if (!this.sm) return; this.spotCache && this.spotCache.clear(); this.app.renderInspector(); this.app.changed(); }
+  onSlotChange() { this.onPlace(); }
+  onRemove() { this.onPlace(); }
+  canRemove(comp) { if (comp.key === 'lens' && this.sm.item) this.app.moveSlot(this.app.comp(this.sm.item.key), `stopSeat_r${this.sm.items.indexOf(this.sm.item)}`, { silent: true }); return null; }
 
   // ---------- 记录 ----------
   readPos(key) { return Math.round((this.pos(key) + gauss(0.015)) * 100) / 100; }

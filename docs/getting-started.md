@@ -91,7 +91,7 @@ npm install            # 第一次需要
 npm run build:single
 ```
 
-生成的 `dist-single/index.html` 就是完整的实验室：一个约 5 MB 的文件，三维模型、公式字体、全部 64 个实验都在里面。双击用浏览器打开即可，**完全不需要联网，也不需要 Node.js**。
+生成的 `dist-single/index.html` 就是完整的实验室：一个约 5 MB 的文件，三维模型、公式字体、全部 65 个实验都在里面。双击用浏览器打开即可，**完全不需要联网，也不需要 Node.js**。
 
 关于 AI 助教：单文件版里，Claude、DeepSeek、通义、Kimi、OpenAI、Gemini 等大部分服务可以直接连；智谱 GLM 不允许网页直接访问，需要在本机另外运行中转，见 [AI 助教使用说明](ai-tutor.md#中转是什么什么时候需要)。
 

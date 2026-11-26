@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { meta, thumb, HG } from './spectrometer.meta.js';
 import { Component } from '../core/Component.js';
+import { Mount } from '../core/Mount.js';
 import { MAT, mesh, labTable, lampHousing, ICONS, canvasTexture, knobMesh, Beam, glowSprite } from '../core/Models.js';
 import { rgbCss, rgbHex } from '../physics/color.js';
 import { gratingEnvelope } from '../physics/diffraction.js';
@@ -44,7 +45,7 @@ export class SpectrometerExperiment {
     this.cErr = rand(1.5, 3) * (Math.random() < 0.5 ? -1 : 1); // 狭缝离焦 (mm)
     this.dioptZero = rand(-1.2, 1.2); this.diopt = 0;
     this.slitW = 1.2; // mm
-    this.illum = false; this.lampOn = false; this.gas = 'Hg';
+    this.illum = false; this.lampOn = false; // 灯座里装的灯管（gas）由拖放决定
     this.dial0 = rand(0, 360); this.ecc = 2.2 / 60; this.eccPh = rand(0, 360);
     this.assist = !this.app.readSelf; // 自己读数时默认不显示读数辅助
   }
@@ -98,7 +99,7 @@ export class SpectrometerExperiment {
   spectrum() {
     const out = [];
     const k = this.onPlat;
-    if (!this.lampOn || !this.app.comp('lamp').placed) return out;
+    if (!this.lampOn || !this.app.comp('lamp').placed || !this.gas) return out;
     if (!k) { out.push({ nm: 0, k: 0, az: 0, I: 1 }); return out; }
     if (k === 'mirror') return out;
     const psi = this.plat + this.mountG;
@@ -116,6 +117,28 @@ export class SpectrometerExperiment {
   }
   telBlur() { return Math.abs(this.fErr) * 2.2; }
 
+  /** 灯座里的灯管（Hg / H，没装为 null） */
+  get gas() { return this.tm ? this.tm.value : 'Hg'; }
+  onPlace(c) {
+    if (this.app.exp !== this || !this.tm) return;
+    if (c && c.key === 'lamp' && !this._tubeOut && !this.tm.value && !this.app.comp('tHg').placed) this.app.place(this.app.comp('tHg'), { slot: 'tube', silent: true });
+    if (c && this.tm.owns(c)) this._tubeOut = true;
+    this.app.renderInspector(); this.app.changed();
+  }
+  onSlotChange(c) { this.onPlace(c); }
+  onRemove(c) { this.onPlace(c); }
+  canRemove(comp) {
+    if (this.tm.owns(comp) && this.app.slotOf(comp.key) === 'tube' && this.lampOn) return '灯管亮着，又烫又带高压：先关掉光谱灯电源再拔';
+    if (comp.key === 'lamp' && this.tm.item) this.app.moveSlot(this.app.comp(this.tm.item.key), `tube_r${this.tm.items.indexOf(this.tm.item)}`, { silent: true });
+    return null;
+  }
+  /** 自动操作：关灯 → 换管 → 开灯 */
+  async swapTube(v) {
+    const a = this.app, was = this.lampOn;
+    a.select(a.comp('lamp')); this.lampOn = false; a.renderInspector(); a.changed(); await a.wait(200);
+    await this.tm.set(v);
+    this.lampOn = was; a.select(a.comp('lamp')); a.renderInspector(); a.changed(); await a.wait(200);
+  }
   cameras() {
     return [
       { name: '全景', pos: [12, 78, 92], target: [0, 18, 0] },
@@ -224,13 +247,27 @@ export class SpectrometerExperiment {
     lg.add(mesh(new THREE.BoxGeometry(4, YA - 8, 4), MAT.dark(), 0, (YA - 8) / 2, 0));
     lg.add(mesh(new THREE.BoxGeometry(14, 1.2, 12), MAT.dark(), 0, 0.6, 0));
     this.lampGlow = lh.glowMat;
+    // 灯管：插在灯座里（汞灯管 / 氢放电管）。灯座从柜里拿出来时装的是汞灯管
+    const tubeG = (col) => { const g = new THREE.Group(); g.add(mesh(new THREE.CylinderGeometry(0.7, 0.7, 20, 16), MAT.glass(col, 0.55), 0, 10, 0)); g.add(mesh(new THREE.CylinderGeometry(1, 1, 2.4, 16), MAT.dark(), 0, 1.2, 0)); return g; };
+    const tv = new THREE.Vector3();
+    this.tm = new Mount(app, {
+      id: 'tube', label: '灯座', pos: new THREE.Vector3(-47, YA - 10, 0), r: 2, snap: 8,
+      follow: () => { lg.updateWorldMatrix(true, false); return lg.localToWorld(tv.set(0, YA - 10, 0)); },
+      rest: (i) => new THREE.Vector3(-58 + i * 6, 0, 22),
+      items: [
+        { key: 'tHg', name: '低压汞灯管', value: 'Hg', object: tubeG(0xc7c9ff), labelY: 23, icon: ICONS.mercury,
+          desc: '低压汞灯管，可见光区有 404.7、435.8、546.1、577.0、579.1 nm 等谱线。插在光谱灯座里使用；亮着时很烫，关电源后再拔。' },
+        { key: 'tH', name: '氢放电管', value: 'H', object: tubeG(0xffb3d1), labelY: 23, icon: ICONS.mercury,
+          desc: '氢放电管，发出巴尔末线系 Hα 656.3、Hβ 486.1、Hγ 434.0、Hδ 410.2 nm。换管前先关掉光谱灯电源。' },
+      ],
+    });
     this.lampSprite = glowSprite(0xb9b5ff, 10); this.lampSprite.position.set(8, YA, 0); this.lampSprite.visible = false; lg.add(this.lampSprite);
     app.addComponent(new Component({
       key: 'lamp', name: '光谱灯', icon: ICONS.mercury, zone: 'slot', defaultSlot: 'lamp', object: lg, labelY: YA + 12,
-      desc: '灯座上可以换装低压汞灯或氢灯（氢放电管）。汞灯在可见光区有 404.7、435.8、546.1、577.0、579.1 nm 等谱线；氢灯发出巴尔末线系 Hα 656.3、Hβ 486.1、Hγ 434.0、Hδ 410.2 nm。放在狭缝正前方。',
+      desc: '光谱灯座和电源。灯座里插汞灯管或氢放电管（从器材柜拿，换管前先关电源）。放在狭缝正前方。',
       controls: () => [
         { type: 'toggle', label: '电源开关', get: () => this.lampOn, set: (v) => (this.lampOn = v) },
-        { type: 'segment', label: '灯管', get: () => this.gas, set: (v) => { this.gas = v; this.app.changed(); }, options: [{ label: '汞灯', value: 'Hg' }, { label: '氢灯', value: 'H' }] },
+        { type: 'readout', label: '灯座里', get: () => (this.gas === 'H' ? '氢放电管' : this.gas === 'Hg' ? '汞灯管' : '没有灯管') },
       ],
     }));
 
@@ -270,7 +307,8 @@ export class SpectrometerExperiment {
     this.platG.rotation.y = this.plat * D2R;
     this.dial.rotation.y = this.tel * D2R;
     this.abbeLamp.material.emissiveIntensity = this.illum ? 2.5 : 0;
-    const lampOn = this.lampOn && app.comp('lamp').placed;
+    this.tm.sync();
+    const lampOn = this.lampOn && app.comp('lamp').placed && !!this.gas;
     this.lampGlow.emissiveIntensity = lampOn ? 2.5 : 0;
     if (this.lampGlow.emissive && this._gas !== this.gas) { this._gas = this.gas; this.lampGlow.emissive.setHex(this.gas === 'H' ? 0xff9ec4 : 0xc7c9ff); if (this.lampSprite.material.color) this.lampSprite.material.color.setHex(this.gas === 'H' ? 0xffb3d1 : 0xb9b5ff); }
     this.lampSprite.visible = lampOn;
@@ -518,7 +556,7 @@ export class SpectrometerExperiment {
       {
         title: '调节平行光管：出射平行光',
         html: '<p>取下平面镜，把<b>汞灯</b>放在狭缝前并打开。转动望远镜对准平行光管，看到狭缝像。调节<b>狭缝套筒</b>使狭缝像最清晰（狭缝位于平行光管焦平面），再把<b>狭缝宽度</b>调到约 0.1–0.3 mm。</p>',
-        check: () => this.lampOn && app.comp('lamp').placed && !this.onPlat && Math.abs(this.cErr) < 0.08 && this.slitW > 0.06 && this.slitW < 0.35 && Math.abs(this.tel) < 1.2,
+        check: () => this.lampOn && app.comp('lamp').placed && this.gas && !this.onPlat && Math.abs(this.cErr) < 0.08 && this.slitW > 0.06 && this.slitW < 0.35 && Math.abs(this.tel) < 1.2,
         status: () => `狭缝宽度 <b>${this.slitW.toFixed(2)} mm</b>，望远镜方位 <b>${this.tel.toFixed(1)}°</b>`,
         auto: async () => {
           app.remove(app.comp('mirror'));
@@ -558,7 +596,7 @@ export class SpectrometerExperiment {
         status: () => { const t = app.table('s'); const n = t.rows.reduce((s, r) => s + ['Ap', 'Am'].filter((k) => r[k] != null).length, 0); return `已测 <b>${n}</b> / 8 条谱线位置`; },
         auto: async () => {
           await app.view('全景');
-          if (this.gas !== 'Hg') { app.select(app.comp('lamp')); this.gas = 'Hg'; app.renderInspector(); }
+          if (this.gas !== 'Hg') await this.swapTube('Hg');
           app.select(app.comp('tel'));
           for (const sign of [1, -1]) {
             this.telLock = false; app.changed();
@@ -577,13 +615,13 @@ export class SpectrometerExperiment {
       },
       {
         title: '（选做）换氢灯，测巴尔末线系', optional: true,
-        html: '<p>光栅保持不动，把汞灯换成<b>氢灯</b>。测出 Hα（红）、Hβ（青）、Hγ（蓝紫）等谱线的 ±1 级衍射角，用前面测得的光栅常数求波长，再由巴尔末公式求里德伯常量。</p>',
+        html: '<p>光栅保持不动，关掉光谱灯，把汞灯管换成<b>氢放电管</b>，再开灯。测出 Hα（红）、Hβ（青）、Hγ（蓝紫）等谱线的 ±1 级衍射角，用前面测得的光栅常数求波长，再由巴尔末公式求里德伯常量。</p>',
         hint: 'Hδ（410 nm）很暗，在紫端，看不清可以只测前三条。',
         check: () => app.table('h').rows.filter((r) => isFinite(thetaOf(r))).length >= 3,
         status: () => `已测 ${app.table('h').rows.filter((r) => isFinite(thetaOf(r))).length} 条氢谱线${this.gas === 'H' ? '' : '（还没换氢灯）'}`,
-        diagnose: () => (this.gas !== 'H' ? [{ msg: '现在装的还是汞灯。选中光谱灯，把“灯管”换成氢灯。', fix: { label: '换成氢灯', run: async () => { this.gas = 'H'; } } }] : []),
+        diagnose: () => (this.gas !== 'H' ? [{ msg: '现在装的还是汞灯。关掉光谱灯电源，把汞灯管拔下来，换上氢放电管。', fix: { label: '换成氢灯', run: async () => { await this.swapTube('H'); } } }] : []),
         auto: async () => {
-          app.showTable(1); app.select(app.comp('lamp')); this.gas = 'H'; app.renderInspector(); app.changed();
+          app.showTable(1); await this.swapTube('H');
           app.select(app.comp('tel'));
           for (const sign of [1, -1]) {
             this.telLock = false; app.changed();
