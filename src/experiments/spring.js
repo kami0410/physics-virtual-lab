@@ -26,11 +26,21 @@ export class SpringExperiment {
     this.k = rand(12, 18); this.ms = rand(12, 20) / 1000;
     this.mh = (MH + gauss(0.02)) / 1000; this.mw = Array.from({ length: 4 }, () => (MW + gauss(0.02)) / 1000);
     this.r0 = rand(18, 22); // 只挂弹簧时指针在米尺上的读数（cm），读数向下增大
-    this.nW = 0; this.A = 0; this.tRel = 0; this.clock = 0; this.timeScale = 1;
+    this.A = 0; this.tRel = 0; this.clock = 0; this.timeScale = 1;
     this.n = 20; this.timer = null;
+    // 光电门装在立柱上，高度要自己调：一开始离空载时的平衡位置差一点；加了槽码平衡位置下移，不跟着调就偏了
+    this.gateY = this.eqY() + (Math.random() < 0.5 ? -1 : 1) * rand(0.6, 1.4);
   }
+  /** 挡光杆在平衡位置时，光电门应在的高度（cm） */
+  eqY() { return TOP - L0 - this.ext() - 4; }
+  /** 光电门相对平衡位置的偏离（cm，向上为正） */
+  gateOff() { return this.gateY - this.eqY(); }
+  ampAt(t) { return this.A * Math.exp(-GAMMA * (t - this.tRel)); }
   /** 振子质量（kg，真实值）与标称值（g） */
-  M() { return this.mh + this.mw.slice(0, this.nW).reduce((s, v) => s + v, 0); }
+  M() { return this.mh + this.onHanger().reduce((s, i) => s + this.mw[i], 0); }
+  /** 砝码托上的槽码（编号 0–3，从下往上） */
+  onHanger() { const a = this.app; return a.stackOf ? a.stackOf('hanger').map((c) => +c.key.slice(1) - 1) : []; }
+  get nW() { return this.onHanger().length; }
   mNom() { return MH + MW * this.nW; }
   omega() { return springOmega(this.k, this.ms, this.M()); }
   Td() { const w = this.omega(); return (2 * Math.PI) / Math.sqrt(w * w - GAMMA * GAMMA); }
@@ -81,8 +91,6 @@ export class SpringExperiment {
     this.bob.add(mesh(new THREE.BoxGeometry(4.2, 0.12, 0.3), MAT.paint(0xb91c1c), 2.1, -0.6, 0.3));
     this.bob.add(mesh(new THREE.CylinderGeometry(0.25, 0.25, 6, 8), MAT.chrome(), 0, -4, 0));
     this.bob.add(mesh(new THREE.CylinderGeometry(2.2, 2.2, 0.6, 24), MAT.brass(), 0, -7, 0));
-    this.discs = [];
-    for (let i = 0; i < 4; i++) { const d = mesh(new THREE.CylinderGeometry(2.6, 2.6, 0.8, 24), MAT.paint(0x56606c), 0, -6.3 + i * 0.85, 0); d.visible = false; this.bob.add(d); this.discs.push(d); }
     // 光电门
     this.gate = new THREE.Group(); this.gate.position.set(0, 0, 0); scene.add(this.gate);
     this.gate.add(mesh(new THREE.BoxGeometry(1.4, 4, 1.2), MAT.paint(0x1f2937), -4.2, 0, 0));
@@ -94,35 +102,73 @@ export class SpringExperiment {
     app.addComponent(new Component({
       key: 'spring', name: '弹簧与砝码', zone: 'none', fixed: true, required: true, object: this.bob, labelY: 4,
       icon: '<svg viewBox="0 0 64 40"><path d="M32 2v4l-6 3 12 3-12 3 12 3-12 3 12 3-6 3v3" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="24" y="31" width="16" height="7" fill="currentColor"/></svg>',
-      desc: `螺旋弹簧（天平称得质量 m<sub>s</sub> = ${(this.ms * 1000).toFixed(2)} g）下端挂砝码托（${MH} g），托上可加 50 g 槽码，最多 4 个。弹簧下端的红色指针对着带反射镜的米尺（读数时眼睛、指针和它的像三点一线，估读到 0.1 mm）。本地 g = ${G} m/s²。`,
+      desc: `螺旋弹簧（天平称得质量 m<sub>s</sub> = ${(this.ms * 1000).toFixed(2)} g）下端挂砝码托（${MH} g）。从器材柜把 50 g 槽码拖到砝码托上，最多 4 个；拖回器材柜就是取下。弹簧下端的红色指针对着带反射镜的米尺（读数时眼睛、指针和它的像三点一线，估读到 0.1 mm）。本地 g = ${G} m/s²。`,
       controls: () => [
-        { type: 'segment', label: '槽码个数', options: [0, 1, 2, 3, 4].map((v) => ({ value: v, label: String(v) })), get: () => this.nW, set: (v) => { this.nW = v; this.A = 0; this.timer = null; app.changed(); } },
+        { type: 'readout', label: '砝码托上的槽码', get: () => `${this.nW} 个` },
         { type: 'button', label: '向下拉 2 cm 后释放', onClick: () => { this.release(2); app.changed(); } },
         { type: 'button', label: '用手让振子停下', onClick: () => { this.A = 0; app.changed(); } },
         { type: 'readout', label: '振子质量（标称）', get: () => `${this.mNom()} g` },
       ],
     }));
     app.addComponent(new Component({
-      key: 'timer', name: '光电计时器', zone: 'none', fixed: true, object: tm.group, labelY: 12,
+      key: 'timer', name: '光电计时器', zone: 'none', object: tm.group, labelY: 12,
+      icon: '<svg viewBox="0 0 64 40"><rect x="8" y="8" width="48" height="26" rx="3" fill="currentColor"/><rect x="14" y="13" width="30" height="10" fill="#fff"/></svg>',
       desc: '光电门放在振子的平衡位置，挡光杆每经过一次光电门计一次数。“周期”模式下，按“开始”后从第一次挡光起计时，测满设定的周期数（每周期挡光两次）后停止，分辨 1 ms。',
       controls: () => [
         { type: 'segment', label: '周期数 n', options: NS.map((v) => ({ value: v, label: String(v) })), get: () => this.n, set: (v) => { this.n = v; this.timer = null; app.changed(); } },
         { type: 'button', label: '开始计时', onClick: () => { this.arm(); app.changed(); } },
         { type: 'readout', label: '计时', get: () => this.timerText() },
+        { type: 'knob', label: '光电门高度（松开立柱上的夹子上下移）', get: () => this.gateY, set: (v) => { this.gateY = clamp(v, 10, 50); app.changed(); }, step: 0.02, bigStep: 0.5, perRev: 2, digits: 2, unit: 'cm' },
+        { type: 'readout', label: '静止时挡光杆与光电门', get: () => { const u = this.gateOff(); return Math.abs(u) < 0.1 ? '挡光杆刚好在光束上' : `挡光杆在光束${u > 0 ? '下方' : '上方'}约 ${Math.abs(u).toFixed(1)} cm`; } },
       ],
     }));
+    // 槽码：从器材柜拖到砝码托上，一个摞一个
+    for (let i = 0; i < 4; i++) app.addSlot({ id: `hk${i}`, pos: new THREE.Vector3(0, 0, 0), accepts: ['w1', 'w2', 'w3', 'w4'], label: '砝码托', r: 3, snap: 7, stack: 'hanger', level: i });
+    const wm = MAT.paint(0x56606c);
+    for (let i = 0; i < 4; i++) {
+      const g = new THREE.Group(); g.add(mesh(new THREE.CylinderGeometry(2.6, 2.6, 0.8, 24), wm.clone(), 0, 0.4, 0));
+      const slot = mesh(new THREE.BoxGeometry(0.7, 0.82, 2.7), MAT.black(), 0, 0.4, 1.4); g.add(slot);
+      app.addComponent(new Component({
+        key: `w${i + 1}`, name: `槽码 ${i + 1}`, group: '50 g 槽码', zone: 'slot', defaultSlot: 'hk0', object: g, labelY: 3, showLabel: false,
+        icon: `<svg viewBox="0 0 64 40"><rect x="14" y="14" width="36" height="12" rx="2" fill="currentColor"/><rect x="30" y="14" width="4" height="7" fill="#fff"/><text x="32" y="38" font-size="9" text-anchor="middle" fill="currentColor">50 g</text></svg>`,
+        desc: '50 g 槽码（标称值，实际质量有约 ±0.02 g 的偏差）。拖到砝码托上；加或取槽码后振子要重新静止。',
+      }));
+    }
+    this.syncSlots();
     this.view = app.addView({ id: 'ruler', title: '米尺读数（放大）', w: 220, h: 200, res: 1.6 });
   }
+  /** 砝码托随振子上下移动：挂点和托上的槽码跟着走 */
+  syncSlots() {
+    const a = this.app, y0 = this.bob.position.y - 6.7;
+    for (const z of a.zones) {
+      if (z.stack !== 'hanger') continue;
+      z.pos.set(0, y0 + z.level * 0.85, 0); if (z.marker) z.marker.position.set(0, y0 + z.level * 0.85 + 0.15, 0);
+      if (z.occupant && !(a.drag && a.drag.comp === z.occupant)) z.occupant.root.position.copy(z.pos);
+    }
+  }
+  /** 加、取槽码：手扶住振子，振动停下，计时作废 */
+  onPlace(c) { if (c && c.key[0] === 'w') { this.A = 0; this.timer = null; } }
+  onSlotChange(c) { this.onPlace(c); }
+  onRemove(c) { this.onPlace(c); }
   release(A) { this.A = A; this.tRel = this.clock; this.timer = null; }
-  arm() { this.timer = { t0: this.clock, n: this.n, m: this.nW, Td: this.Td() }; }
+  arm() {
+    // 挡光时刻的抖动 ≈ 挡光边沿的不确定（约 0.2 mm）÷ 挡光杆经过光电门时的速度：偏离平衡位置越远，速度越小，抖动越大
+    const u = this.gateOff(), A = Math.max(this.A, 1e-6), w = (2 * Math.PI) / this.Td();
+    const v = A * w * Math.sqrt(Math.max(1e-4, 1 - (u / A) ** 2));
+    this.timer = { t0: this.clock, n: this.n, m: this.nW, Td: this.Td(), u, err: gauss(Math.SQRT2 * 0.02 / v) };
+  }
   timerState() {
     const tm = this.timer; if (!tm) return { s: 'idle' };
     if (!this.A || tm.m !== this.nW) return { s: 'wait' };
     const w = (2 * Math.PI) / tm.Td, s0 = tm.t0 - this.tRel;
     const j = Math.max(0, Math.ceil((w * s0 - Math.PI / 2) / Math.PI - 1e-12)), tf = this.tRel + (Math.PI / 2 + j * Math.PI) / w, te = tf + tm.n * tm.Td;
-    if (this.clock < tf) return { s: 'wait' };
+    const u = Math.abs(this.gateOff());
+    // 振幅（在衰减）小于光电门的偏离时，挡光杆够不着光电门，计时器等不到挡光，停在最后一次挡光时的读数
+    const tStop = u > 0 && this.A > u ? this.tRel + Math.log(this.A / u) / GAMMA : u > 0 ? -Infinity : Infinity;
+    if (this.clock < tf || tStop <= tf) return { s: 'wait' };
+    if (tStop < te) return { s: 'run', v: Math.min(this.clock, tStop) - tf, stuck: this.clock > tStop };
     if (this.clock < te) return { s: 'run', v: this.clock - tf };
-    return { s: 'done', v: Math.round(tm.n * tm.Td * 1000) / 1000 };
+    return { s: 'done', v: Math.round((tm.n * tm.Td + tm.err) * 1000) / 1000 };
   }
   timerText() { const s = this.timerState(); return s.s === 'idle' ? '未开始' : s.s === 'wait' ? '等待挡光' : s.s === 'run' ? `${s.v.toFixed(3)} s（计时中）` : `${s.v.toFixed(3)} s（${this.timer.n} 个周期）`; }
   showTimer() {
@@ -133,8 +179,8 @@ export class SpringExperiment {
   pose() {
     const L = L0 + this.ext() + this.x();
     this.spring.scale.y = L; this.bob.position.set(0, TOP - L, 0);
-    this.gate.position.set(0, TOP - L0 - this.ext() - 4, 0);
-    this.discs.forEach((d, i) => (d.visible = i < this.nW));
+    this.gate.position.set(0, this.gateY, 0);
+    this.syncSlots();
     this.drawRuler();
   }
   update() { this.pose(); this.showTimer(); }
@@ -164,7 +210,7 @@ export class SpringExperiment {
         id: 'static', title: '静态法：指针读数', maxRows: 5,
         columns: [{ key: 'm', label: '振子质量 m/g', digits: 0, auto: true }, { key: 'x', label: '指针读数 x/cm', digits: 2, readTol: 0.03 }],
         buttons: [{ label: '记录指针读数', onClick: (t) => this.recS(t) }],
-        note: '依次加 0–4 个槽码，振子静止后读指针在米尺上的位置。',
+        note: '依次往砝码托上加 0–4 个槽码，振子静止后读指针在米尺上的位置。',
       },
       {
         id: 'dyn', title: '动态法：周期', maxRows: 8,
@@ -185,17 +231,26 @@ export class SpringExperiment {
     if (s.s !== 'done') a.toast(s.s === 'run' ? '还在计时，等计时器停下' : '计时器没有测完：先让振子振动，再按“开始计时”', 'warn');
     if (t.rows.some((r) => r.m === this.mNom() && r.n === this.timer.n)) a.toast('这个质量已经测过了', 'warn');
     if (!this.timer || !(s.v > 0)) return; // 计时器上还没有任何读数
+    if (s.stuck) a.toast('计时器停在中途：振幅衰减后挡光杆够不着光电门了，这不是完整的周期数', 'warn');
+    else if (Math.abs(this.timer.u) > 0.3) a.toast(`光电门不在平衡位置（偏 ${Math.abs(this.timer.u).toFixed(1)} cm）：挡光时速度小，计时抖动大`, 'warn');
     t.addRow({ m: this.mNom(), n: this.timer.n, t: s.v });
   }
 
   // ======================= 自动操作 =======================
-  async seg(comp, key, v) { const a = this.app; a.select(a.comp(comp)); this[key] = v; if (key === 'nW') { this.A = 0; this.timer = null; } if (key === 'n') this.timer = null; a.renderInspector(); a.changed(); await a.wait(200); }
+  async seg(comp, key, v) { const a = this.app; a.select(a.comp(comp)); this[key] = v; if (key === 'n') this.timer = null; a.renderInspector(); a.changed(); await a.wait(200); }
+  /** 自动操作：砝码托上放 k 个槽码 */
+  async setWeights(k) {
+    const a = this.app;
+    while (this.nW > k) { const top = a.stackOf('hanger').pop(); a.remove(top); await a.wait(200); }
+    for (let i = 1; i <= 4 && this.nW < k; i++) { const c = a.comp(`w${i}`); if (!c.placed) await a.autoPut(c.key, 'hk0'); }
+    a.select(a.comp('spring')); a.changed();
+  }
   steps() {
     const app = this.app, rows = (id) => app.table(id).completeRows();
     return [
       {
         title: '静态法测劲度系数',
-        html: '<p>只挂砝码托时，待振子静止后读指针在米尺上的位置。然后逐个加上 50 g 槽码，每次读一次，共 5 个读数。</p>',
+        html: '<p>只挂砝码托时，待振子静止后读指针在米尺上的位置。然后从器材柜把 50 g 槽码<b>一个个拖到砝码托上</b>，每加一个读一次，共 5 个读数。</p>',
         hint: '读数时视线要使指针与它在镜中的像重合，消除视差。',
         status: () => `已记录 ${rows('static').length} 个读数`,
         check: () => rows('static').length >= 5,
@@ -203,24 +258,27 @@ export class SpringExperiment {
           app.showTable(0); await app.view('米尺');
           for (let k = 0; k <= 4; k++) {
             if (rows('static').some((r) => r.m === MH + MW * k)) continue;
-            await this.seg('spring', 'nW', k); await app.wait(300); await app.record('static', 0);
+            await this.setWeights(k); await app.wait(300); await app.record('static', 0);
           }
         },
       },
       {
         title: '动态法测周期',
         html: '<p>对每个振子质量（0–4 个槽码），把振子向下拉约 2 cm 后释放，等振动平稳后按计时器的“开始计时”，测 20 个周期的总时间。</p>',
-        hint: '光电门要放在平衡位置：那里速度最大，挡光时刻最准。',
+        hint: '光电门要放在平衡位置：那里速度最大，挡光时刻最准。每加一个槽码平衡位置都会下移，光电门要跟着调。',
         status: () => `已测 ${rows('dyn').length} 个质量`,
         check: () => new Set(rows('dyn').map((r) => r.m)).size >= 5,
         auto: async () => {
           app.showTable(1); await app.view('全景');
+          await app.autoPlace('timer');
           if (this.n !== 20) await this.seg('timer', 'n', 20);
           for (let k = 0; k <= 4; k++) {
             if (rows('dyn').some((r) => r.m === MH + MW * k)) continue;
-            await this.seg('spring', 'nW', k);
+            await this.setWeights(k);
             app.select(app.comp('spring')); this.release(2); app.changed(); await app.wait(300);
-            app.select(app.comp('timer')); this.arm(); app.changed();
+            app.select(app.comp('timer'));
+            if (Math.abs(this.gateOff()) > 0.05) { const y = this.eqY(); await app.tween(() => this.gateY, (v) => (this.gateY = v), y, 400); this.gateY = y; }
+            this.arm(); app.changed();
             await app.until(() => this.timerState().s === 'done', 60000);
             await app.record('dyn', 0);
           }

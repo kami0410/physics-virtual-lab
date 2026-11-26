@@ -30,30 +30,74 @@ export class StokesExperiment {
     this.eta = castorEta(this.T, this.k); this.rho0 = castorRho(this.T);
     this.rho = RHO_LABEL * 1000 * (1 + rand(-0.003, 0.003));
     this.Din = rand(38, 42) / 1000; this.Hl = rand(38, 41) / 100;
-    this.balls = BALLS.map(([id, dn]) => ({ id, d: (dn + rand(-0.012, 0.012)) / 1000, used: false }));
+    this.balls = BALLS.map(([id, dn]) => ({ id, d: (dn + rand(-0.012, 0.012)) / 1000, used: false, wet: false }));
     this.y1 = this.Hl * 100 - rand(1.5, 3.5); this.y2 = rand(1.5, 3); // 上、下标线离筒底高度 cm（学生可移动）
     this.mic = new Micrometer({ zero: Math.round(rand(-10, 12)) / 1000 || -0.003 });
     this.cal = new Caliper(); this.tape = new Tape({ label: '' });
-    this.tool = 'd'; this.cur = 0; this.wet = false; this.onAxis = true;
+    this.tool = 'd'; this.cur = 0; // tool：读数窗显示哪件量具（单击量具切换）；cur：最近拿的那颗小球
     this.mic.setObject(null); this.mic.gap = 2;
     this.sw = new Stopwatch(); this.ball = null; this.auto = null;
     this.timeScale = 1; this.assist = false;
+    // 量筒要用底座螺丝调竖直（看铅垂线与筒壁是否平行）；没调时筒轴偏离竖直 1～2.5°
+    this.tilt = (Math.random() < 0.5 ? -1 : 1) * rand(1, 2.5);
   }
+  /** 小球在深度 s 处离筒轴的相对距离：筒倾斜时小球竖直下落，越落越偏向筒壁 */
+  eccAt(bl, y) { const s = (this.Hl * 100 - y) / 100; return Math.min(0.9, Math.hypot(bl.ecc, (s * Math.tan((bl.tilt * Math.PI) / 180)) / (this.Din / 2))); }
+
+  // ======================= 拖放 =======================
+  get falling() { return !!(this.ball && this.ball.y > (this.ball.b.d * 100) / 2 + 0.01); }
+  /** 千分尺测砧间夹着的小球序号（没有为 -1） */
+  get inMic() { const z = this.app.zones && this.app.zones.find((q) => q.id === 'micJaw'); return z && z.occupant ? +z.occupant.key.slice(4) : -1; }
+  canPlace(comp, o = {}) {
+    const sl = o.slot ?? comp.defaultSlot;
+    if (comp.key.startsWith('ball')) {
+      const b = this.balls[+comp.key.slice(4)];
+      if (sl === 'micJaw') {
+        if (!this.app.comp('mic').placed) return '台上还没有千分尺';
+        if (this.mic.gap < b.d * 1000) return `测砧间只有 ${this.mic.gap.toFixed(2)} mm，比小球小，放不进去：先退开微分筒`;
+      }
+      if ((sl === 'dropC' || sl === 'dropW') && this.falling) return '上一颗小球还在下落，等它落到筒底再放';
+    }
+    if (comp.key === 'tape' && (sl === 'tapeL' || sl === 'tapeH') && this.falling) return '小球正在下落，别把尺子伸进去';
+    return null;
+  }
+  canRemove(comp) {
+    if (this._sink) return null;
+    if (comp.key.startsWith('ball') && this.balls[+comp.key.slice(4)].used) return '小球已经沉在蓖麻油里，取不回来了';
+    return null;
+  }
+  onPlace(c) {
+    if (!c) return;
+    const a = this.app, sl = a.slotOf(c.key);
+    if (c.key.startsWith('ball')) {
+      const i = +c.key.slice(4), b = this.balls[i];
+      this.cur = i;
+      if (sl === 'dip') { b.wet = true; a.toast(`小球 ${b.id} 在油里浸润过了`, 'ok'); }
+      if (sl === 'dropC' || sl === 'dropW') { this.drop(i, sl === 'dropC'); this._sink = true; a.moveSlot(c, 'sunk' + i, { silent: true }); this._sink = false; }
+    }
+    this.syncMic();
+    if (c.key === 'mic') this.tool = 'd';
+    if (c.key === 'cal') { this.tool = 'D'; this.cal.setObject(sl === 'calD' ? this.Din * 1000 : null); }
+    if (c.key === 'tape') { if (sl === 'tapeL') { this.tool = 'L'; this.tape.measure(this.y1 - this.y2, { sigma: 0.03 }); } else if (sl === 'tapeH') { this.tool = 'H'; this.tape.measure(this.Hl * 100, { sigma: 0.04 }); } }
+    a.renderInspector(); a.changed();
+  }
+  onSlotChange(c) { this.onPlace(c); }
+  onRemove(c) { if (c && c.key === 'cal') this.cal.setObject(null); this.syncMic(); this.app.renderInspector(); }
+  onSelect(c) { if (c.key === 'mic') this.tool = 'd'; else if (c.key === 'cal') this.tool = 'D'; else if (c.key === 'tape') { const sl = this.app.slotOf('tape'); if (sl === 'tapeH') this.tool = 'H'; else this.tool = 'L'; } }
+  syncMic() { const i = this.inMic; if ((i < 0 ? null : this.balls[i].d * 1000) !== this.mic.obj) this.mic.setObject(i < 0 ? null : this.balls[i].d * 1000); }
 
   // ======================= 下落 =======================
-  drop() {
-    const a = this.app, b = this.balls[this.cur];
-    if (b.used) return a.toast(`小球 ${b.id} 已经投放过了，换一颗`, 'warn');
-    if (this.ball && this.ball.y > 0.3) return a.toast('上一颗小球还在下落', 'warn');
+  drop(i = this.cur, onAxis = true) {
+    const a = this.app, b = this.balls[i];
     b.used = true;
-    const ecc = this.onAxis ? rand(0, 0.12) : rand(0.5, 0.7);
-    const bubble = this.wet ? 0 : rand(0.012, 0.03);
-    this.ball = { b, y: this.Hl * 100, ecc, bubble, ang: rand(0, 6.28), t1: null, t2: null };
+    const ecc = onAxis ? rand(0, 0.12) : rand(0.5, 0.7);
+    const bubble = b.wet ? 0 : rand(0.012, 0.03);
+    this.ball = { b, y: this.Hl * 100, ecc, bubble, ang: rand(0, 6.28), t1: null, t2: null, tilt: this.tilt };
     a.renderInspector(); a.changed();
   }
   vAt(y) {
     const bl = this.ball, b = bl.b;
-    const v = terminalV({ d: b.d, rho: this.rho * (1 - bl.bubble), rho0: this.rho0, eta: this.eta, D: this.Din, h: y / 100, ecc: bl.ecc, g: G });
+    const v = terminalV({ d: b.d, rho: this.rho * (1 - bl.bubble), rho0: this.rho0, eta: this.eta, D: this.Din, h: y / 100, ecc: this.eccAt(bl, y), g: G });
     const s = this.Hl * 100 - y; // 入液深度 cm
     return v * (1 + 0.25 * Math.exp(-s / 1.5));
   }
@@ -110,10 +154,57 @@ export class StokesExperiment {
     // 温度计
     g.add(mesh(new THREE.CylinderGeometry(0.22, 0.22, 30, 10), MAT.glass(0xffffff, 0.6), R * 0.62, this.Hl * 100 + 2.2 - 9, -R * 0.3));
     g.add(mesh(new THREE.BoxGeometry(3.2, 5, 1.6), MAT.paint(0x1f2937), R * 0.62, this.Hl * 100 + 2.2 + 8, -R * 0.3));
-    this.ballM = mesh(new THREE.SphereGeometry(1, 16, 12), new THREE.MeshStandardMaterial({ color: 0x8a939e, metalness: 0.9, roughness: 0.2 }), 0, 0, 0); this.ballM.visible = false; g.add(this.ballM);
-    // 小球盒
+    // 小球盒与浸润用的油皿
     g.add(mesh(new THREE.CylinderGeometry(3.4, 3.4, 0.8, 32), MAT.paint(0xe5e7eb), 18, 0.4, 8));
-    this.trayBalls = this.balls.map((b, i) => { const m = mesh(new THREE.SphereGeometry(b.d * 100 * 0.9, 10, 8), MAT.metal(), 16.2 + (i % 3) * 1.8, 1.0, 7 + Math.floor(i / 3) * 2); g.add(m); return m; });
+    g.add(mesh(new THREE.CylinderGeometry(2.4, 2.2, 0.8, 28), MAT.glass(0xdbeafe, 0.35), 26, 0.4, 2));
+    g.add(mesh(new THREE.CylinderGeometry(2.1, 2.1, 0.4, 28), new THREE.MeshStandardMaterial({ color: 0xd49a2a, transparent: true, opacity: 0.6 }), 26, 0.5, 2));
+    const surf = this.Hl * 100 + 2.2;
+    app.addSlot({ id: 'dip', pos: new THREE.Vector3(26, 0.6, 2), accepts: this.balls.map((_, i) => 'ball' + i), label: '油皿（浸润小球）', r: 1.6, snap: 4 });
+    app.addSlot({ id: 'dropC', pos: new THREE.Vector3(0, surf + 0.4, 0), accepts: this.balls.map((_, i) => 'ball' + i), label: '液面中心（沿中心轴放手）', r: 0.8, snap: 3 });
+    app.addSlot({ id: 'dropW', pos: new THREE.Vector3(R * 0.72, surf + 0.4, 0), accepts: this.balls.map((_, i) => 'ball' + i), label: '液面靠近筒壁处', r: 0.8, snap: 3 });
+    this.balls.forEach((b, i) => {
+      const k = 'ball' + i, home = new THREE.Vector3(16.2 + (i % 3) * 1.8, 1.0, 7 + Math.floor(i / 3) * 2);
+      app.addSlot({ id: 'box' + i, pos: home, accepts: [k], label: '小球盒', r: 0.8, snap: 3 });
+      app.addSlot({ id: 'sunk' + i, pos: new THREE.Vector3(0, -50, 0), accepts: [k], label: '油里', r: 0.01, snap: 0.01 });
+      const bg = new THREE.Group(); bg.add(mesh(new THREE.SphereGeometry(Math.max(0.12, b.d * 50), 14, 10), new THREE.MeshStandardMaterial({ color: 0x8a939e, metalness: 0.9, roughness: 0.2 })));
+      app.addComponent(new Component({
+        key: k, name: `小球 ${b.id}`, group: `钢球（标称 ${BALLS[i][1]} mm）`, zone: 'slot', defaultSlot: 'box' + i, object: bg, labelY: 1, showLabel: false, noShelf: true, home: '小球盒',
+        icon: SVG('<circle cx="32" cy="20" r="7" fill="currentColor"/>'),
+        desc: `钢球 ${b.id}（标称直径 ${BALLS[i][1]} mm）。用镊子夹起：拖到千分尺测砧间量直径，拖到油皿里浸润，再拖到量筒液面中心放手。`,
+      }));
+      app.place(app.comp(k), { slot: 'box' + i, silent: true });
+    });
+    // 千分尺、游标卡尺、钢尺：从器材柜拿出来
+    const mg = new THREE.Group();
+    mg.add(mesh(new THREE.BoxGeometry(1, 2.6, 0.6), MAT.paint(0x2b3440), -1.6, 1.3, 0), mesh(new THREE.BoxGeometry(4, 0.6, 0.6), MAT.paint(0x2b3440), 0, 0.3, 0));
+    const sp = mesh(new THREE.CylinderGeometry(0.3, 0.3, 5, 12), MAT.chrome(), 2.6, 1.6, 0); sp.rotation.z = Math.PI / 2; mg.add(sp);
+    app.addSlot({ id: 'micRest', pos: new THREE.Vector3(34, 0, 12), accepts: ['mic'], label: '台面', r: 4, snap: 10 });
+    app.addSlot({ id: 'micJaw', pos: new THREE.Vector3(33, 1.6, 12), accepts: this.balls.map((_, i) => 'ball' + i), label: '千分尺测砧间', r: 0.8, snap: 3 });
+    app.addComponent(new Component({
+      key: 'mic', name: '螺旋测微器', zone: 'slot', defaultSlot: 'micRest', object: mg, labelY: 4,
+      icon: SVG('<path d="M10 30V12h8M18 30H10" fill="none" stroke="currentColor" stroke-width="2"/><rect x="24" y="14" width="30" height="8" fill="none" stroke="currentColor" stroke-width="1.5"/>'),
+      desc: '分度值 0.01 mm（估读到 0.001 mm）。合拢读零点；退开微分筒后把小球拖到测砧间，转测力装置夹住读数。',
+      controls: () => [{ type: 'readout', label: '测砧间', get: () => (this.inMic < 0 ? '空（可读零点）' : `小球 ${this.balls[this.inMic].id}`) }, ...this.mic.controls(() => app.changed())],
+    }));
+    const cg = new THREE.Group();
+    cg.add(mesh(new THREE.BoxGeometry(20, 0.25, 1.6), MAT.chrome(), 4, 0, 0), mesh(new THREE.BoxGeometry(0.8, 0.25, 3.6), MAT.chrome(), -1.4, 0, -1.6), mesh(new THREE.BoxGeometry(3, 0.4, 2), MAT.alu(), 2.6, 0.05, 0));
+    app.addSlot({ id: 'calRest', pos: new THREE.Vector3(30, 0.15, 26), accepts: ['cal'], label: '台面', r: 4, snap: 10 });
+    app.addSlot({ id: 'calD', pos: new THREE.Vector3(0, HT + 1.9, 0), accepts: ['cal'], label: '量筒口（内量爪撑住内壁）', r: 2, snap: 6 });
+    app.addComponent(new Component({
+      key: 'cal', name: '游标卡尺', zone: 'slot', defaultSlot: 'calRest', object: cg, labelY: 3,
+      icon: SVG('<path d="M4 14h56v6H4z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 14V4h4v10M22 20v10h4V20" fill="none" stroke="currentColor" stroke-width="1.5"/>'),
+      desc: '分度值 0.02 mm。拖到量筒口，用内量爪撑住内壁量内径 D。',
+      controls: () => this.cal.controls(() => app.changed()),
+    }));
+    const tg = new THREE.Group(); tg.add(mesh(new THREE.BoxGeometry(1.6, 40, 0.1), MAT.paint(0xe9dfb8), 0, -20, 0));
+    app.addSlot({ id: 'tapeRest', pos: new THREE.Vector3(-34, 0.1, 22), accepts: ['tape'], label: '台面', r: 4, snap: 10 });
+    app.addSlot({ id: 'tapeL', pos: new THREE.Vector3(R + 1.4, this.y1 + 2.2, 0), accepts: ['tape'], label: '贴着筒壁、零点对准上标线', r: 1.5, snap: 5 });
+    app.addSlot({ id: 'tapeH', pos: new THREE.Vector3(-R - 1.4, surf, 0), accepts: ['tape'], label: '贴着筒壁、零点对准液面', r: 1.5, snap: 5 });
+    app.addComponent(new Component({
+      key: 'tape', name: '钢尺', zone: 'slot', defaultSlot: 'tapeL', object: tg, labelY: 2,
+      icon: SVG('<rect x="6" y="15" width="52" height="10" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 15v4M20 15v6M28 15v4M36 15v6M44 15v4M52 15v6" stroke="currentColor"/>'),
+      desc: '分度值 1 mm。贴着筒壁竖直放：零点对准上标线量两标线间距 L，零点对准液面量油柱高度 H。',
+    }));
     app.addComponent(new Component({
       key: 'tube', name: '落球法黏度计', zone: 'none', fixed: true, required: true, object: g, labelY: HT + 6,
       icon: SVG('<rect x="24" y="2" width="16" height="36" fill="none" stroke="currentColor" stroke-width="2"/>'),
@@ -131,10 +222,10 @@ export class StokesExperiment {
   update() {
     const R = (this.Din * 100) / 2;
     this.marks[0].position.y = this.y1 + 2.2; this.marks[1].position.y = this.y2 + 2.2;
-    const bl = this.ball;
-    this.ballM.visible = !!bl;
-    if (bl) { const s = Math.max(0.12, bl.b.d * 100 * 0.5); this.ballM.scale.setScalar(s); this.ballM.position.set(R * bl.ecc * Math.cos(bl.ang), bl.y + 2.2, R * bl.ecc * Math.sin(bl.ang)); }
-    this.balls.forEach((b, i) => (this.trayBalls[i].visible = !b.used));
+    const a = this.app, bl = this.ball, zs = (id) => a.zones.find((q) => q.id === id);
+    if (bl) { const i = this.balls.indexOf(bl.b), z = zs('sunk' + i), e = this.eccAt(bl, bl.y); if (z) { z.pos.set(R * e * Math.cos(bl.ang), bl.y + 2.2, R * e * Math.sin(bl.ang)); if (z.occupant) z.occupant.root.position.copy(z.pos); } }
+    const tl = zs('tapeL'); if (tl) { tl.pos.y = this.y1 + 2.2; if (tl.marker) tl.marker.position.y = tl.pos.y + 0.15; if (tl.occupant && !(a.drag && a.drag.comp === tl.occupant)) tl.occupant.root.position.copy(tl.pos); }
+    const tc = a.comp('tape'); if (tc && tc.placed) tc.root.rotation.z = a.slotOf('tape') === 'tapeRest' ? Math.PI / 2 : 0;
     this.drawFall(); this.drawTool();
   }
 
@@ -148,33 +239,43 @@ export class StokesExperiment {
     g.strokeStyle = '#9fb3c8'; g.lineWidth = 2; g.strokeRect(x0, top, x1 - x0, bot - top);
     g.fillStyle = '#111'; for (const y of [this.y1, this.y2]) g.fillRect(x0 - 4, Y(y) - 2, x1 - x0 + 8, 4);
     const bl = this.ball;
-    if (bl) { g.fillStyle = '#cfd6dd'; g.beginPath(); g.arc((x0 + x1) / 2 + ((x1 - x0) / 2) * bl.ecc * Math.cos(bl.ang), Y(bl.y), Math.max(2.5, bl.b.d * 100 * sc * 0.5 * 1.6), 0, 7); g.fill(); }
+    if (bl) { g.fillStyle = '#cfd6dd'; g.beginPath(); g.arc((x0 + x1) / 2 + ((x1 - x0) / 2) * this.eccAt(bl, bl.y) * Math.cos(bl.ang), Y(bl.y), Math.max(2.5, bl.b.d * 100 * sc * 0.5 * 1.6), 0, 7); g.fill(); }
     g.fillStyle = '#c9ced3'; g.font = `${H * 0.034}px "Microsoft YaHei"`; g.textAlign = 'left';
     g.fillText('上标线', x1 + 8, Y(this.y1) + 4); g.fillText('下标线', x1 + 8, Y(this.y2) + 4);
     this.sw.draw(g, W * 0.08, H * 0.83, W * 0.84, H * 0.13);
-    const b = this.balls[this.cur];
     let foot;
     if (bl && bl.y > (bl.b.d * 100) / 2 + 0.01) foot = `小球 ${bl.b.id} 正在下落：经过上标线时开表，经过下标线时停表`;
     else if (this.Hl * 100 - this.y1 < 5) foot = '上标线离液面太近：小球刚入液时还在受扰动';
     else if (this.y2 < 4) foot = '下标线离筒底太近：筒底使小球减速';
-    else foot = `下一颗：小球 ${b.id}${b.used ? '（已投放）' : ''}`;
+    else foot = `${this.balls.filter((q) => q.used).length} 颗已投放；把下一颗小球拖到液面中心放手`;
     v.foot(foot);
   }
 
   gauge() { return this.tool === 'd' ? this.mic : this.tool === 'D' ? this.cal : this.tape; }
+  /** 自动操作：把量具放到量 t 的位置（'d' 千分尺放到台上） */
   setTool(t) {
+    const a = this.app, put = (k, sl) => { const c = a.comp(k); if (c.placed) a.moveSlot(c, sl, { silent: true }); else a.place(c, { slot: sl, silent: true }); };
+    if (t === 'd') put('mic', 'micRest');
+    if (t === 'L') put('tape', 'tapeL');
+    if (t === 'H') put('tape', 'tapeH');
+    if (t === 'D') { if (this.cal.open < this.Din * 1000) this.cal.open = this.Din * 1000 + 6; put('cal', 'calD'); }
     this.tool = t;
     if (t === 'L') this.tape.measure(this.y1 - this.y2, { sigma: 0.03 });
     if (t === 'H') this.tape.measure(this.Hl * 100, { sigma: 0.04 });
-    if (t === 'D') this.cal.setObject(this.Din * 1000);
+  }
+  /** 当前读数窗对应的量具有没有放到位 */
+  toolReady() {
+    const a = this.app, t = this.tool;
+    return t === 'd' ? a.comp('mic').placed : t === 'D' ? a.slotOf('cal') === 'calD' : a.slotOf('tape') === (t === 'L' ? 'tapeL' : 'tapeH');
   }
   drawTool() {
     const v = this.gv, g = v.ctx, W = v.W, H = v.H, o = { assist: this.assist };
+    if (!this.toolReady()) { g.fillStyle = '#20262b'; g.fillRect(0, 0, W, H); v.foot({ d: '台上还没有千分尺：从器材柜拿出来', D: '游标卡尺还没卡在量筒口', L: '钢尺还没有对准上标线贴在筒壁上', H: '钢尺还没有对准液面贴在筒壁上' }[this.tool]); return; }
     if (this.tool === 'L' && Math.abs(this.tape.value - (this.y1 - this.y2)) > 1e-6) this.tape.measure(this.y1 - this.y2, { sigma: 0.03 });
     if (this.tool === 'd') this.mic.draw(g, W, H, o);
     else if (this.tool === 'D') this.cal.draw(g, W, H, o);
     else this.tape.draw(g, W, H, { ...o, mark: this.tool === 'L' ? '下标线' : '液面' });
-    const nm = { d: `螺旋测微器：${this.mic.obj == null ? '零点' : `小球 ${this.balls[this.cur].id} 的直径`}`, L: '钢尺：两标线间距（零点对准上标线）', D: '游标卡尺（内量爪）：量筒内径', H: '钢尺：筒底到液面的高度' }[this.tool];
+    const nm = { d: `螺旋测微器：${this.inMic < 0 ? '零点' : `小球 ${this.balls[this.inMic].id} 的直径`}`, L: '钢尺：两标线间距（零点对准上标线）', D: '游标卡尺（内量爪）：量筒内径', H: '钢尺：筒底到液面的高度' }[this.tool];
     const p = this.tool === 'd' ? this.mic.problem() : this.tool === 'D' ? this.cal.problem() : null;
     v.foot(p ? `${nm} —— ${p}` : nm);
   }
@@ -182,19 +283,12 @@ export class StokesExperiment {
   globalControls() {
     const a = this.app, rer = () => { a.renderInspector(); a.changed(); };
     const out = [
-      { type: 'select', label: '取哪颗小球', get: () => this.cur, set: (v) => { this.cur = +v; if (this.tool === 'd' && this.mic.obj != null) this.mic.setObject(this.balls[this.cur].d * 1000); rer(); }, options: this.balls.map((b, i) => ({ value: i, label: `小球 ${b.id}（标称 ${BALLS[i][1]} mm）${b.used ? ' 已投放' : ''}` })) },
-      { type: 'toggle', label: '投放前先在油中浸润小球', get: () => this.wet, set: (v) => (this.wet = v) },
-      { type: 'segment', label: '投放位置', get: () => this.onAxis, set: (v) => (this.onAxis = v), options: [{ label: '沿中心轴', value: true }, { label: '靠近筒壁', value: false }] },
-      { type: 'button', label: '用镊子把小球放进液面', onClick: () => this.drop() },
+      { type: 'knob', label: '底座调节螺丝（使量筒竖直）', get: () => this.tilt, set: (v) => { this.tilt = clamp(v, -4, 4); a.changed(); }, min: -4, max: 4, step: 0.02, bigStep: 0.5, perRev: 2, fmt: () => (Math.abs(this.tilt) < 0.2 ? '铅垂线与筒壁平行' : `铅垂线与筒壁夹角约 ${Math.abs(this.tilt).toFixed(1)}°`) },
       { type: 'button', label: this.sw.run ? '秒表：停止' : '秒表：开始', onClick: () => { if (this.sw.run) this.sw.stop(gauss(0.04) * this.timeScale); else { this.sw.reset(); this.sw.start(0); } rer(); } },
       { type: 'button', label: '秒表：清零', onClick: () => { this.sw.reset(); a.changed(); } },
-      { type: 'segment', label: '量具', get: () => this.tool, set: (v) => { this.setTool(v); rer(); }, options: [{ label: '千分尺', value: 'd' }, { label: '钢尺 L', value: 'L' }, { label: '卡尺 D', value: 'D' }, { label: '钢尺 H', value: 'H' }] },
+      { type: 'readout', label: '读数窗', get: () => `${{ d: '螺旋测微器', D: '游标卡尺', L: '钢尺（L）', H: '钢尺（H）' }[this.tool]}（单击量具切换）` },
     ];
-    if (this.tool === 'd') {
-      out.push({ type: 'segment', label: '测砧间', get: () => this.mic.obj != null, set: (v) => { this.mic.setObject(v ? this.balls[this.cur].d * 1000 : null); a.changed(); }, options: [{ label: '空（读零点）', value: false }, { label: '夹小球', value: true }] });
-      out.push(...this.mic.controls(() => a.changed()));
-    } else if (this.tool === 'D') out.push(...this.cal.controls(() => a.changed()));
-    else out.push({ type: 'button', label: '重新量一次', onClick: () => { this.setTool(this.tool); a.changed(); } });
+    if ((this.tool === 'L' || this.tool === 'H') && this.toolReady()) out.push({ type: 'button', label: '钢尺重新对一次零点再读', onClick: () => { this.setTool(this.tool); a.changed(); } });
     out.push(
       { type: 'segment', label: '时间流速', get: () => this.timeScale, set: (v) => (this.timeScale = v), options: [{ label: '×1', value: 1 }, { label: '×2', value: 2 }, { label: '×4', value: 4 }] },
       { type: 'toggle', label: '读数辅助（显示数值）', get: () => this.assist, set: (v) => (this.assist = v) },
@@ -228,12 +322,12 @@ export class StokesExperiment {
   }
   recD(t) {
     const a = this.app;
-    if (this.tool !== 'd') return a.toast('先在“量具”中选千分尺', 'warn');
+    if (!a.comp('mic').placed) return a.toast('台上还没有千分尺', 'warn');
+    this.tool = 'd';
     const p = this.mic.problem();
     if (p) { a.toast(p, 'warn'); if (this.mic.squeeze <= 0.0015) return; }
-    const k = this.mic.obj == null ? 'z' : this.balls[this.cur].id;
+    const k = this.inMic < 0 ? 'z' : this.balls[this.inMic].id;
     const i = t.rows.findIndex((r) => r.k === k);
-    if (k !== 'z' && this.balls[this.cur].used) a.toast('这颗小球已经投放到油里了，量的是它投放前的直径吗？', 'warn');
     t.set(i, 'r', Math.round((this.mic.reading + (k === 'z' ? 0 : gauss(0.0008))) * 1000) / 1000);
   }
   recT(t) {
@@ -244,11 +338,13 @@ export class StokesExperiment {
     const i = t.rows.findIndex((r) => r.k === bl.b.id);
     if (bl.bubble > 0) a.toast('这颗小球没有先在油中浸润，表面带着小气泡，下落偏慢', 'warn');
     if (bl.ecc > 0.4) a.toast('这颗小球是靠近筒壁落下的，筒壁阻力比修正公式估计的大', 'warn');
+    else if (Math.abs(bl.tilt) > 0.3) a.toast(`量筒没有调竖直（偏约 ${Math.abs(bl.tilt).toFixed(1)}°）：小球越落越靠近筒壁，下落变慢`, 'warn');
     t.set(i, 't', this.sw.value);
   }
   recM(t) {
     const a = this.app, k = this.tool;
     if (k === 'd') return a.toast('千分尺的读数记在小球表里', 'warn');
+    if (!this.toolReady()) return a.toast({ D: '游标卡尺还没卡在量筒口', L: '钢尺还没有对准上标线', H: '钢尺还没有对准液面' }[k], 'warn');
     if (k === 'D') { const p = this.cal.problem(); if (p) a.toast(p, 'warn'); }
     const i = t.rows.findIndex((r) => r.k === k);
     t.set(i, 'v', Math.round((k === 'D' ? this.cal.reading : this.tape.reading) * 100) / 100);
@@ -258,17 +354,22 @@ export class StokesExperiment {
   async knob(get, set, to, ms = 400) { await this.app.tween(get, set, to, ms); set(to); this.app.changed(); }
   async measureBall(i) {
     const a = this.app;
-    this.cur = i; this.mic.setObject(this.balls[i].d * 1000); a.renderInspector();
     const s = this.balls[i].d * 1000;
+    if (this.mic.gap < s + 0.2) await this.knob(() => this.mic.gap, (v) => this.mic.turnRatchet(v), s + 0.4, 200);
+    await a.autoPut('ball' + i, 'micJaw');
     await this.knob(() => this.mic.gap, (v) => this.mic.turnRatchet(v), s + 0.1, 250);
     await this.knob(() => this.mic.gap, (v) => this.mic.turnRatchet(v), s - 0.02, 250);
     await a.record('ball', 0);
+    await this.knob(() => this.mic.gap, (v) => this.mic.turnRatchet(v), s + 0.4, 150);
+    await a.autoPut('ball' + i, 'box' + i);
   }
   async fallOnce(i) {
     const a = this.app;
-    this.cur = i; this.wet = true; this.onAxis = true; a.renderInspector();
+    if (Math.abs(this.tilt) > 0.1) { await a.tween(() => this.tilt, (v) => (this.tilt = v), 0, 500); this.tilt = 0; a.changed(); }
+    if (a.slotOf('tape') === 'tapeL' || a.slotOf('tape') === 'tapeH') a.moveSlot(a.comp('tape'), 'tapeRest', { silent: true });
+    if (!this.balls[i].wet) { await a.autoPut('ball' + i, 'dip'); await a.wait(300); }
     this.sw.reset(); this.auto = { phase: 'arm' };
-    this.drop();
+    await a.autoPut('ball' + i, 'dropC');
     if (!(await a.until(() => !this.auto))) { this.auto = null; return; }
     await a.record('ball', 1);
     while (this.ball && this.ball.y > (this.ball.b.d * 100) / 2 + 0.02) await a.wait(120);
@@ -289,10 +390,10 @@ export class StokesExperiment {
       },
       {
         title: '用千分尺测小球直径',
-        html: '<p>先合拢千分尺读零点。然后用镊子夹起小球放在测砧间，旋转测力装置夹住，读数。每颗小球都要测（编号对应，投放后就找不回来了）。</p>',
+        html: '<p>从器材柜拿出千分尺，先合拢读零点。然后退开微分筒，<b>把小球拖到测砧间</b>，旋转测力装置夹住，读数。每颗小球都要测（编号对应，投放后就找不回来了）。</p>',
         check: () => rows().every((r) => has(r, 'r')),
         auto: async () => {
-          app.showTable(0); this.setTool('d'); this.mic.setObject(null); app.renderInspector();
+          app.showTable(0); this.setTool('d'); app.renderInspector();
           await this.knob(() => this.mic.gap, (v) => this.mic.turnRatchet(v), 0.3, 250);
           await this.knob(() => this.mic.gap, (v) => this.mic.turnRatchet(v), -0.02, 250);
           await app.record('ball', 0);
@@ -301,7 +402,7 @@ export class StokesExperiment {
       },
       {
         title: '投放小球，测下落时间',
-        html: '<p>小球先在油中浸润（去掉表面的气泡），用镊子在液面中心处放手，使它沿筒的中心轴下落。眼睛平视标线，小球经过上标线时开表，经过下标线时停表。6 颗小球各测一次。</p>',
+        html: '<p>小球先<b>拖到油皿里浸润</b>（去掉表面的气泡），再<b>拖到液面中心</b>放手，使它沿筒的中心轴下落。眼睛平视标线，小球经过上标线时开表，经过下标线时停表。6 颗小球各测一次。</p>',
         hint: '大球下落快，时间短，计时的相对误差大；小球下落慢，但直径测量的相对误差大。',
         check: () => rows().filter((r) => r.k !== 'z' && has(r, 't')).length >= 6,
         auto: async () => {
@@ -311,7 +412,7 @@ export class StokesExperiment {
       },
       {
         title: '测 L、D、H 和油温',
-        html: '<p>用钢尺测两标线间距 L 和油柱高度 H，用游标卡尺的内量爪测量筒内径 D，读油温。</p>',
+        html: '<p>把钢尺拖到筒壁边，零点对准上标线量两标线间距 L、对准液面量油柱高度 H；把游标卡尺拖到量筒口，用内量爪量内径 D；读油温。</p>',
         check: () => app.table('misc').rows.every((r) => has(r, 'v')),
         auto: async () => {
           app.showTable(1);

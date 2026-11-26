@@ -26,33 +26,63 @@ export class ExpansionExperiment {
 
   constructor(app) {
     this.app = app;
-    this.mat = 'cu'; this.rodIn = true;
-    this.T0 = rand(17, 24); this.Ta = this.T0; this.Tr = this.T0; this.Tr2 = this.T0; // 管内空气、棒（两段近似：棒体与两端）
+    this.T0 = rand(17, 24); this.Ta = this.T0; // 管内空气温度
+    // 每根棒各自的温度（两段近似：棒体与两端）；在管外时向室温冷却
+    this.rT = Object.fromEntries(Object.keys(RODS).map((k) => [k, { Tr: this.T0, Tr2: this.T0 }]));
+    this.noRod = { Tr: this.T0, Tr2: this.T0 };
     this.Lmeas = L0 + rand(-0.4, 0.4); // 棒的实际长度 mm
     this.heat = false; this.set = this.T0; this.zero = rand(0.12, 0.85); // 千分表初读数（mm）
     this.zeroAdj = 0; this.timeScale = 1; this.t = 0;
+    // 千分表装在支架上要自己往前推，使测杆顶住棒端并压进一段（预压）；一开始测杆和棒端之间有缝
+    this.pre = -rand(0.05, 0.3);
     this.tauA = rand(55, 70); this.tauR = rand(95, 130);
   }
-  get rod() { return RODS[this.mat]; }
+  /** 加热管里的棒：'cu' | 'al' | 'fe' | null（由拖放决定） */
+  get mat() { const z = this.app.zones && this.app.zones.find((q) => q.id === 'tube'); return z && z.occupant ? z.occupant.key.slice(4) : null; }
+  get rod() { return RODS[this.mat] || { name: '（管里没有棒）', a: 0, da: 0, color: 0x888888 }; }
+  get rs() { return this.rT[this.mat] || this.noRod; }
+  get Tr() { return this.rs.Tr; } set Tr(v) { this.rs.Tr = v; }
+  get Tr2() { return this.rs.Tr2; } set Tr2(v) { this.rs.Tr2 = v; }
+  canPlace(comp, o = {}) {
+    const sl = o.slot ?? comp.defaultSlot;
+    if (sl === 'tube' && this.pre > 0) return '千分表测杆伸在管口，棒插不进去：先把千分表往后退';
+    return null;
+  }
+  onPlace() { this.app.renderInspector(); this.app.changed(); }
+  onSlotChange() { this.onPlace(); }
+  onRemove() { this.onPlace(); }
+  /** 自动操作：把 k 棒放进加热管（原来的放回台面） */
+  async putRod(k) {
+    const a = this.app;
+    if (this.mat === k) return;
+    if (this.pre > 0) { await a.tween(() => this.pre, (v) => (this.pre = v), -0.1, 300); this.pre = -0.1; }
+    if (this.mat) a.moveSlot(a.comp('rod_' + this.mat), 'rest_' + this.mat, { silent: true });
+    await a.autoPut('rod_' + k, 'tube');
+  }
   /** 棒的伸长量（mm）：∫α(T)dT·L0；两端与支架接触处温度偏低，按 3% 的长度取端部温度 */
   get dL() {
+    if (!this.mat) return 0;
     const r = this.rod, ext = (T) => r.a * (T - this.T0) + (r.da / 2) * ((T - 60) ** 2 - (this.T0 - 60) ** 2);
     return this.Lmeas * (0.97 * ext(this.Tr) + 0.03 * ext(this.Tr2));
   }
-  get gauge() { return this.zero + this.zeroAdj + this.dL; } // 千分表读数 mm
+  /** 千分表读数 mm：测杆没碰到棒端时，棒要先伸长把缝填上，表才开始走；压进去的量也计入读数；超过量程（1 mm）指针顶死 */
+  get gauge() { const gap = Math.max(0, -this.pre), push = Math.max(0, this.pre) + Math.max(0, this.dL - gap); return this.zero + this.zeroAdj + Math.min(1, push); }
+  get contactText() { if (!this.mat) return '加热管里没有棒'; const g = -this.pre - this.dL; return g > 0.002 ? `测杆没有碰到棒端（缝约 ${g.toFixed(2)} mm），棒伸长时表不动` : this.pre + this.dL > 0.98 ? '测杆压得太深，已经到量程尽头，指针顶死' : `测杆顶住棒端，压进约 ${(this.pre + this.dL).toFixed(2)} mm`; }
   get Tshow() { return Math.round((this.Ta + 0.15 * (this.Ta - this.Tr)) * 10) / 10; } // 温度传感器在管内，靠近棒但更快
   tick(dt) {
     const a = this.app, sdt = Math.min(30, dt * (a.running ? a.speed * 25 : this.timeScale));
     if (!(sdt > 0)) return;
-    const n = Math.max(1, Math.ceil(sdt / 0.5)), h = sdt / n;
+    const n = Math.max(1, Math.ceil(sdt / 0.5)), h = sdt / n, m = this.mat;
     for (let i = 0; i < n; i++) {
       const target = this.heat ? this.set : this.T0;
       // 温控：加热功率有限（升温最快约 0.25 K/s），接近设定值时按一阶系统逼近；不加热时自然冷却
       let dTa = (target - this.Ta) / this.tauA;
       if (this.heat) dTa = clamp(dTa * 1.6, -0.02, 0.25);
       this.Ta += dTa * h;
-      this.Tr += ((this.Ta - this.Tr) / this.tauR) * h;
-      this.Tr2 += ((0.7 * this.Ta + 0.3 * this.T0 - this.Tr2) / (this.tauR * 1.4)) * h;
+      for (const [k, r] of Object.entries(this.rT)) {
+        if (k === m) { r.Tr += ((this.Ta - r.Tr) / this.tauR) * h; r.Tr2 += ((0.7 * this.Ta + 0.3 * this.T0 - r.Tr2) / (this.tauR * 1.4)) * h; }
+        else { r.Tr += ((this.T0 - r.Tr) / (this.tauR * 3)) * h; r.Tr2 = r.Tr; } // 在台面上自然冷却
+      }
       this.t += h;
     }
     a.changed();
@@ -70,7 +100,17 @@ export class ExpansionExperiment {
     const tube = mesh(new THREE.CylinderGeometry(4.5, 4.5, 56, 32), MAT.paint(0x8e3b2f), 0, 12, 0); tube.rotation.z = Math.PI / 2; g.add(tube);
     for (const x of [-28.5, 28.5]) { const c = mesh(new THREE.CylinderGeometry(4.8, 4.8, 1, 32), MAT.alu(), x, 12, 0); c.rotation.z = Math.PI / 2; g.add(c); }
     for (const x of [-26, 26]) g.add(mesh(new THREE.BoxGeometry(3, 8, 8), frame, x, 6, 0));
-    this.rodM = mesh(new THREE.CylinderGeometry(0.4, 0.4, L0 / 10, 16), MAT.metal(), 0, 12, 0); this.rodM.rotation.z = Math.PI / 2; g.add(this.rodM);
+    // 三根待测棒：从器材柜拿出来，拖进加热管（插到固定端）；不用的放在台面上
+    app.addSlot({ id: 'tube', pos: new THREE.Vector3(0, 12, 0), accepts: Object.keys(RODS).map((k) => 'rod_' + k), label: '加热管里（一端顶住固定端）', r: 4, snap: 12 });
+    Object.entries(RODS).forEach(([k, r], i) => {
+      app.addSlot({ id: 'rest_' + k, pos: new THREE.Vector3(0, 0.4, 16 + i * 3), accepts: ['rod_' + k], label: '台面', r: 3, snap: 8 });
+      const rg = new THREE.Group(), rm = mesh(new THREE.CylinderGeometry(0.4, 0.4, L0 / 10, 16), new THREE.MeshStandardMaterial({ color: r.color, metalness: 0.85, roughness: 0.3 })); rm.rotation.z = Math.PI / 2; rg.add(rm);
+      app.addComponent(new Component({
+        key: 'rod_' + k, name: r.name, zone: 'slot', defaultSlot: 'tube', object: rg, labelY: 2,
+        icon: SVG(`<rect x="4" y="17" width="56" height="6" rx="2" fill="currentColor"/>`),
+        desc: `待测${r.name}，长约 ${L0} mm。在台面上用米尺量长度，再拖进加热管：插之前千分表要退开，插好后再把千分表推上去顶住棒端。`,
+      }));
+    });
     g.add(mesh(new THREE.BoxGeometry(2, 10, 6), frame, -31, 7, 0)); // 固定端
     // 千分表
     const dial = new THREE.Group();
@@ -86,7 +126,9 @@ export class ExpansionExperiment {
       icon: SVG('<rect x="8" y="16" width="44" height="8" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="56" cy="20" r="5" fill="none" stroke="currentColor"/>'),
       desc: `待测金属棒（长约 ${L0} mm）放在电加热管中，一端顶在固定端上，另一端推动千分表的测杆。千分表分度值 0.001 mm（指针转一圈 0.2 mm，小表盘记圈数）。加热管内的温度传感器接到温控仪。`,
       controls: () => [
-        { type: 'segment', label: '待测金属棒', get: () => this.mat, set: (v) => { if (this.Ta > this.T0 + 1) return app.toast('管子还热：等冷却到室温再换棒', 'warn'); this.mat = v; app.changed(); }, options: Object.entries(RODS).map(([k, r]) => ({ label: r.name, value: k })) },
+        { type: 'readout', label: '加热管里', get: () => (this.mat ? this.rod.name : '没有棒：从器材柜拖一根进来') },
+        { type: 'knob', label: '千分表前后位置（推向棒端）', get: () => this.pre, set: (v) => { this.pre = clamp(Math.round(v * 1000) / 1000, -0.5, 1.2); app.changed(); }, min: -0.5, max: 1.2, step: 0.005, bigStep: 0.05, perRev: 0.5, digits: 3, unit: 'mm' },
+        { type: 'readout', label: '测杆与棒端', get: () => this.contactText },
         { type: 'knob', label: '千分表调零（转表圈）', get: () => this.zeroAdj, set: (v) => { this.zeroAdj = clamp(Math.round(v * 1000) / 1000, -1, 1); app.changed(); }, min: -1, max: 1, step: 0.001, bigStep: 0.05, perRev: 0.2, digits: 3, unit: 'mm' },
       ],
     }));
@@ -102,8 +144,6 @@ export class ExpansionExperiment {
     this.gv = app.addView({ id: 'gauge', title: '千分表与温控仪读数', w: 300, h: 250, res: 1.6 });
   }
   update() {
-    const r = this.rod;
-    this.rodM.material.color.setHex(r.color);
     const s = `${this.Tshow.toFixed(1)}`;
     if (s !== this._ts || this.heat !== this._th) { this._ts = s; this._th = this.heat; this.tcBox.setText(s, '°C', `设定 ${this.set.toFixed(1)} °C ${this.heat ? '加热中' : '停止'}`); }
     this.drawDial(this.dialCv.getContext('2d'), 256, 256, false); this.dialTex.needsUpdate = true;
@@ -142,7 +182,11 @@ export class ExpansionExperiment {
   // ======================= 数据表 =======================
   tables() {
     return [
-      { id: 'len', title: '金属棒的长度', fixedRows: true, initRows: () => [{ what: '常温下棒长' }], columns: [{ key: 'what', label: '', type: 'text', readonly: true }, { key: 'L', label: 'L₀/mm', digits: 1, readTol: 0.6 }], buttons: [{ label: '用米尺量棒长', onClick: (t) => t.set(0, 'L', Math.round((this.Lmeas + gauss(0.2)) * 2) / 2) }], note: '放进加热管之前用米尺量（分度值 1 mm，估读到 0.5 mm）。' },
+      { id: 'len', title: '金属棒的长度', fixedRows: true, initRows: () => [{ what: '常温下棒长' }], columns: [{ key: 'what', label: '', type: 'text', readonly: true }, { key: 'L', label: 'L₀/mm', digits: 1, readTol: 0.6 }], buttons: [{ label: '用米尺量棒长', onClick: (t) => {
+        const a = this.app, onBench = Object.keys(RODS).filter((k) => a.slotOf('rod_' + k) === 'rest_' + k);
+        if (!onBench.length) return a.toast(this.mat ? '棒已经插在加热管里，米尺量不到：先拿出来放在台面上' : '台面上没有棒：从器材柜拿一根出来', 'warn');
+        t.set(0, 'L', Math.round((this.Lmeas + gauss(0.2)) * 2) / 2);
+      } }], note: '放进加热管之前用米尺量（分度值 1 mm，估读到 0.5 mm）。' },
       {
         id: 'dl', title: '温度与千分表读数', maxRows: 10,
         columns: [{ key: 'mat', label: '棒', type: 'text', readonly: true }, { key: 'T', label: 't/°C', digits: 1, readTol: 0.06 }, { key: 'x', label: '千分表读数/mm', digits: 3, readTol: 0.0011 }, { key: 'dx', label: 'ΔL/mm', digits: 3, calc: (r, i, rows) => { const f = rows.find((q) => q.mat === r.mat); return f ? r.x - f.x : NaN; } }],
@@ -153,8 +197,12 @@ export class ExpansionExperiment {
   }
   rec(t) {
     const a = this.app;
+    if (!this.mat) return a.toast('加热管里没有棒', 'warn');
     if (Math.abs(this.Tr - this.Ta) > 0.05) a.toast(`千分表指针还在走：棒的温度比管内温度${this.Tr < this.Ta ? '低' : '高'} ${Math.abs(this.Ta - this.Tr).toFixed(2)} °C，要等它稳定`, 'warn');
     if (t.rows.some((r) => r.mat === this.rod.name && Math.abs(r.T - this.Tshow) < 1)) a.toast('这个温度已经记过了', 'warn');
+    if (-this.pre - this.dL > 0.002) a.toast('千分表测杆没有顶住棒端：表不随棒伸长而走', 'warn');
+    else if (this.pre < 0.05 && !t.rows.some((r) => r.mat === this.rod.name)) a.toast('测杆几乎没有预压，接触不稳，读数容易跳', 'warn');
+    if (this.pre + this.dL > 0.98) a.toast('千分表指针已经顶到量程尽头', 'warn');
     t.addRow({ mat: this.rod.name, T: this.Tshow, x: Math.round(this.gauge * 1000) / 1000 });
   }
 
@@ -170,10 +218,18 @@ export class ExpansionExperiment {
     return [
       {
         title: '量棒长，记千分表初读数',
-        html: '<p>选一根金属棒，用米尺量出常温下的长度 $L_0$。放进加热管，使千分表测杆与棒端接触并有一定压缩量。在常温下记下温度和千分表的初读数。</p>',
+        html: '<p>从器材柜拿一根金属棒放在台面上，用米尺量出常温下的长度 $L_0$。千分表先退开，<b>把棒拖进加热管</b>，使千分表测杆与棒端接触并有一定压缩量。在常温下记下温度和千分表的初读数。</p>',
         check: () => isFinite(app.table('len').rows[0].L) && rows().length >= 1,
         diagnose: () => (this.heat ? [{ msg: '初读数要在常温下记录，先别加热。' }] : []),
-        auto: async () => { app.showTable(0); await app.record('len', 0); app.showTable(1); app.select(app.comp('rig')); await app.wait(300); await app.record('dl', 0); },
+        auto: async () => {
+          app.showTable(0);
+          if (!this.mat && !app.comp('rod_cu').placed) await app.autoPut('rod_cu', 'rest_cu');
+          if (!isFinite(app.table('len').rows[0].L)) { if (this.mat) app.moveSlot(app.comp('rod_' + this.mat), 'rest_' + this.mat, { silent: true }); await app.record('len', 0); }
+          if (!this.mat) await this.putRod('cu');
+          app.showTable(1); app.select(app.comp('rig'));
+          if (this.pre < 0.08 || this.pre > 0.2) { await app.tween(() => this.pre, (v) => (this.pre = v), 0.12, 500); this.pre = 0.12; app.changed(); }
+          await app.wait(300); await app.record('dl', 0);
+        },
       },
       {
         title: '逐步升温，每 10 °C 记录一次',

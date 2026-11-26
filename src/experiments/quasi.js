@@ -28,6 +28,7 @@ export class QuasiSteadyExperiment {
     this.rHeat = RHEAT_L * (1 + gauss(0.003)); this.F = FL * (1 + gauss(0.002));
     this.nz = () => gauss(0.0004);
     this.V = 0; this.heat = false; this.timeScale = 1;
+    // 组装：两支热电偶的测温端要自己夹到加热面和中心面上，保温箱的盖子要自己盖
     this.reset();
   }
   reset() {
@@ -35,8 +36,32 @@ export class QuasiSteadyExperiment {
     this.t = 0; this.held = { m: 0, Vt: this.readVt(), Vc: this.readVc() }; this.heat = false;
   }
   get qc() { return (this.V * this.V) / (2 * this.F * this.rHeat); }
-  readVt() { return Math.round((emfT(this.slab.Ts) - emfT(this.slab.Tc) + this.nz()) * 1000) / 1000; }
-  readVc() { return Math.round((emfT(this.slab.Tc) - emfT(this.T0) + this.nz()) * 1000) / 1000; }
+  /** 加热面那支热电偶测温端实际感受到的温度 */
+  /** 测温端 k（'tA' 温差热电偶工作端，'tB' 温升热电偶工作端）在哪：'H' 加热面，'C' 中心面，'air' 悬在空气里 */
+  where(k) { const sl = this.app.slotOf ? this.app.slotOf(k) : null; return sl && sl.startsWith('fH') ? 'H' : sl && sl.startsWith('fC') ? 'C' : 'air'; }
+  /** 测温端感受到的温度：夹在哪个面就是哪个面的温度，悬在空气里就是室温 */
+  Tat(k) { const w = this.where(k); return w === 'H' ? this.slab.Ts : w === 'C' ? this.slab.Tc : this.T0; }
+  get lid() { return !!(this.app.slotOf && this.app.slotOf('lid') === 'lidOn'); }
+  /** 'ok' 接法正确；'same' 两支都在中心面；其他为 'loose' */
+  get tc() { const a = this.where('tA'), b = this.where('tB'); return a === 'H' && b === 'C' ? 'ok' : a === 'C' && b === 'C' ? 'same' : 'loose'; }
+  get Thot() { return this.Tat('tA'); }
+  // 温差热电偶的参考端固定在中心面；温升热电偶的冷端在室温
+  readVt() { return Math.round((emfT(this.Thot) - emfT(this.slab.Tc) + this.nz()) * 1000) / 1000; }
+  readVc() { return Math.round((emfT(this.Tat('tB')) - emfT(this.T0) + this.nz()) * 1000) / 1000; }
+  tcIssue() {
+    const N = { H: '加热面', C: '中心面', air: '悬在空气里' }, a = this.where('tA'), b = this.where('tB'), out = [];
+    if (a !== 'H') out.push(`温差热电偶的工作端${a === 'air' ? '悬在空气里（测的是室温）' : `夹在${N[a]}`}，应夹在加热面`);
+    if (b !== 'C') out.push(`温升热电偶的工作端${b === 'air' ? '悬在空气里（测的是室温）' : `夹在${N[b]}`}，应夹在中心面`);
+    return out;
+  }
+  canPlace(comp) {
+    if ((comp.key === 'tA' || comp.key === 'tB') && this.lid) return '保温箱盖着，伸不进手去夹测温端：先把盖子拿开';
+    return null;
+  }
+  canRemove(comp) { if ((comp.key === 'tA' || comp.key === 'tB') && this.lid) return '保温箱盖着，伸不进手去：先把盖子拿开'; return null; }
+  onPlace() { this.app.changed(); }
+  onSlotChange() { this.app.changed(); }
+  onRemove() { this.app.changed(); }
   /** 推进 T 秒，整分钟处采样保持 */
   advance(T) {
     while (T > 1e-9) {
@@ -44,6 +69,7 @@ export class QuasiSteadyExperiment {
       if (this.holdAt != null && this.t >= this.holdAt * 60 - 1e-6) return; // 自动记录时在整分钟处等一等
       const h = Math.min(T, next - this.t);
       this.slab.q = this.heat ? this.qc : 0;
+      this.slab.h = this.lid ? this.mat.h : 8; // 不盖保温箱：样品外表面散热大得多，不再是“绝热”边界
       this.slab.advance(h); this.t += h; T -= h;
       if (Math.abs(this.t - next) < 1e-6) { this.t = next; this.held = { m: Math.round(next / 60), Vt: this.readVt(), Vc: this.readVc() }; }
     }
@@ -67,13 +93,42 @@ export class QuasiSteadyExperiment {
     const pmma = MAT.glass(0xd8e6ea, 0.55), film = MAT.paint(0xb5651d);
     for (let i = 0; i < 4; i++) g.add(mesh(new THREE.BoxGeometry(9, 1, 9), pmma, 0, 3 + i * 1.04, 0));
     for (const y of [3.52, 5.6]) g.add(mesh(new THREE.BoxGeometry(9.6, 0.06, 9.6), film, 0, y, 0));
-    this.tcWire = MAT.paint(0x1f4e79);
-    for (const [y, z] of [[3.52, 2], [4.56, -2]]) g.add(mesh(new THREE.BoxGeometry(14, 0.12, 0.12), this.tcWire, 7, y, z));
+    // 两支热电偶的测温端：拖到加热面或中心面的缝里夹好；不夹就悬在箱外空气中
+    const X = -14 + 4.6;
+    app.addSlot({ id: 'fH1', pos: new THREE.Vector3(X, 3.52, 4), accepts: ['tA', 'tB'], label: '加热面（第 1、2 块之间）', r: 1.2, snap: 4 });
+    app.addSlot({ id: 'fH2', pos: new THREE.Vector3(X, 3.52, 0), accepts: ['tA', 'tB'], label: '加热面（第 1、2 块之间）', r: 1.2, snap: 4 });
+    app.addSlot({ id: 'fC1', pos: new THREE.Vector3(X, 4.56, 2), accepts: ['tA', 'tB'], label: '中心面（第 2、3 块之间）', r: 1.2, snap: 4 });
+    app.addSlot({ id: 'fC2', pos: new THREE.Vector3(X, 4.56, -2), accepts: ['tA', 'tB'], label: '中心面（第 2、3 块之间）', r: 1.2, snap: 4 });
+    app.addSlot({ id: 'airA', pos: new THREE.Vector3(0, 6, 10), accepts: ['tA'], label: '箱外（悬在空气里）', r: 2, snap: 6 });
+    app.addSlot({ id: 'airB', pos: new THREE.Vector3(3, 6, 6), accepts: ['tB'], label: '箱外（悬在空气里）', r: 2, snap: 6 });
+    for (const [k, nm, col, home] of [['tA', '温差热电偶工作端', 0x1f4e79, 'airA'], ['tB', '温升热电偶工作端', 0x7a2e1f, 'airB']]) {
+      const tg = new THREE.Group(), wm = MAT.paint(col);
+      tg.add(mesh(new THREE.SphereGeometry(0.28, 10, 8), MAT.chrome(), 0, 0, 0));
+      const w = mesh(new THREE.CylinderGeometry(0.1, 0.1, 9, 6), wm, 4.5, 0, 0); w.rotation.z = Math.PI / 2; tg.add(w);
+      app.addComponent(new Component({
+        key: k, name: nm, zone: 'slot', defaultSlot: home, object: tg, labelY: 1.5, noShelf: true, home: '箱外',
+        icon: SVG('<circle cx="14" cy="20" r="4" fill="currentColor"/><path d="M18 20h40" stroke="currentColor" stroke-width="2"/>'),
+        desc: k === 'tA' ? '差分热电偶的工作端（参考端已固定在中心面）。拖到加热面的缝里夹好，测加热面相对中心面的温差电势 V_t。悬在空气里时测到的是室温相对中心面。' : '测中心面温升的热电偶工作端（冷端在室温）。拖到中心面的缝里夹好，测温升电势 V_c。',
+      }));
+      app.place(app.comp(k), { slot: home, silent: true });
+    }
+    // 保温箱盖：从器材柜拿出来盖上
+    const lg = new THREE.Group(); lg.add(mesh(new THREE.BoxGeometry(20.6, 1, 20.6), MAT.paint(0xe6e0d2), 0, 0.5, 0));
+    app.addSlot({ id: 'lidOn', pos: new THREE.Vector3(-14, 10, 2), accepts: ['lid'], label: '盖在保温箱上', r: 4, snap: 12 });
+    app.addSlot({ id: 'lidRest', pos: new THREE.Vector3(-40, 0, 20), accepts: ['lid'], label: '台面', r: 5, snap: 12 });
+    app.addComponent(new Component({
+      key: 'lid', name: '保温箱盖', zone: 'slot', defaultSlot: 'lidOn', object: lg, labelY: 2,
+      icon: SVG('<rect x="10" y="14" width="44" height="6" fill="currentColor"/>'),
+      desc: '泡沫保温箱的盖子。测温端夹好后拖到保温箱上盖好：不盖时样品外表面向空气散热，不再满足“外表面绝热”的条件。',
+    }));
     app.addComponent(new Component({
       key: 'stack', name: '样品堆与保温箱', zone: 'none', fixed: true, required: true, object: g, labelY: 14,
       icon: SVG('<rect x="14" y="6" width="36" height="28" fill="none" stroke="currentColor" stroke-dasharray="3 2"/>' + [0, 1, 2, 3].map((i) => `<rect x="20" y="${10 + i * 5.5}" width="24" height="4.5" fill="none" stroke="currentColor"/>`).join('') + '<path d="M18 15 H46 M18 26 H46" stroke="#b5651d" stroke-width="1.5"/>'),
       desc: `有机玻璃样品四块，每块 ${(RL * 1000).toFixed(1)} mm 厚、90.0 mm × 90.0 mm，密度 ${RHO_L} kg/m³。两片加热膜（电阻各 ${RHEAT_L.toFixed(1)} Ω，并联接电源）夹在第 1、2 块和第 3、4 块之间。热电偶：一对差分接在加热面和中心面之间；另一支测中心面，冷端在室温。实验前样品应在室温下放置足够久，内部温度均匀。`,
       controls: () => [
+        { type: 'readout', label: '温差热电偶工作端', get: () => ({ H: '加热面', C: '中心面', air: '悬在空气里' })[this.where('tA')] },
+        { type: 'readout', label: '温升热电偶工作端', get: () => ({ H: '加热面', C: '中心面', air: '悬在空气里' })[this.where('tB')] },
+        { type: 'readout', label: '保温箱', get: () => (this.lid ? '盖着' : '敞着') },
         { type: 'button', label: '换一组已放凉的样品（重新开始）', onClick: () => { this.reset(); app.toast('换上了一组在室温下放置过的样品', 'ok'); app.changed(); } },
       ],
     }));
@@ -133,6 +188,8 @@ export class QuasiSteadyExperiment {
     if (!this.heat && this.t === 0) return a.toast('还没有开始加热', 'warn');
     if (h.m < 1) return a.toast('还没到第 1 分钟', 'warn');
     if (t.rows.some((r) => r.t === h.m)) a.toast(`第 ${h.m} 分钟已经记过了，等下一分钟`, 'warn');
+    const iss = this.tcIssue(); if (iss.length) a.toast(iss.join('；'), 'warn');
+    if (!this.lid) a.toast('保温箱没盖：样品外表面散热，温升速率偏小、不再是准稳态', 'warn');
     t.addRow({ t: h.m, Vt: h.Vt, Vc: h.Vc, _V: this.V });
   }
 
@@ -142,13 +199,18 @@ export class QuasiSteadyExperiment {
     return [
       {
         title: '检查样品，设定加热电压',
-        html: '<p>确认样品内温度均匀（两路热电势都接近 0）。加热电压调到 18.00 V。</p>',
+        html: '<p>把温差热电偶的工作端<b>拖到加热面</b>、温升热电偶的工作端<b>拖到中心面</b>夹好，再从器材柜拿出保温箱盖盖上。确认样品内温度均匀（两路热电势都接近 0）。加热电压调到 18.00 V。</p>',
         hint: '电压太低温差太小、读数相对误差大；太高则温升太快，测量时间内样品升温过多，物性参数随温度的变化和散热都变得明显。',
         check: () => this.V >= 15 && this.V <= 20,
         status: () => `加热电压 ${this.V.toFixed(2)} V`,
         diagnose: () => (this.t > 0 && !this.heat ? [{ msg: '这组样品已经加热过。', fix: { label: '换一组放凉的样品', run: async () => this.reset() } }] : []),
         auto: async () => {
           if (this.t > 0 && rows().length === 0) this.reset();
+          if (this.tc !== 'ok') {
+            if (this.lid) { app.moveSlot(app.comp('lid'), 'lidRest', { silent: true }); await app.wait(200); }
+            for (const [k, w] of [['tA', 'H'], ['tB', 'C']]) if (this.where(k) !== w) { const free = app.zones.find((z) => z.id.startsWith('f' + w) && !z.occupant); if (free) await app.autoPut(k, free.id); }
+          }
+          if (!this.lid) await app.autoPut('lid', 'lidOn');
           app.select(app.comp('inst')); await app.tween(() => this.V, (v) => (this.V = v), 18, 500); this.V = 18; app.changed();
         },
       },

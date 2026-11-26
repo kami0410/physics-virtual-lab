@@ -51,7 +51,7 @@ export class YModulusExperiment {
     this.tapeL = new Tape({ label: '钢丝长度 L（上夹头下沿 → 下夹头上沿）' });
     this.tapeD = new Tape({ label: '镜尺距离 D（平面镜 → 标尺）' });
     // ---- 仪器状态 ----
-    this.nMass = 0; this.Fmax = HANGER * G; this.creep = 0; this.pos = this.target(); this.creep = 0;
+    this._n = 0; this.Fmax = HANGER * G; this.creep = 0; this.pos = this.target(); this.creep = 0;
     this.swing = 0; this.swPh = 0; this.lastDir = 0;
     this.phi0 = rand(-1.2, 1.2); // 镜面俯仰（°），学生调
     this.D = rand(125, 150); // 镜尺距离 cm（移动望远镜尺组改变）
@@ -69,21 +69,48 @@ export class YModulusExperiment {
 
   // ======================= 物理模型 =======================
   /** 砝码托上的总拉力 N */
-  force(n = this.nMass) { let m = HANGER; for (let i = 0; i < n; i++) m += this.masses[i]; return m * G; }
+  force() { let m = HANGER; for (const i of this.onHook()) m += this.masses[i]; return m * G; }
+  /** 挂在砝码托上的砝码（编号，从下往上） */
+  onHook() { const a = this.app; return a.stackOf ? a.stackOf('hook').map((c) => +c.key.slice(1) - 1) : []; }
+  get nMass() { return this.onHook().length; }
   elastic(F = this.force()) { return (F * this.L) / (this.E * this.Seff); }
   kink() { return this.kinkA * (1 - Math.exp(-this.Fmax / this.F0)); }
   target() { return this.elastic() + this.kink() + this.creep; }
   get tiltMag() { return Math.hypot(this.tilt[0], this.tilt[1]); }
   get yM() { return YTOP - this.L * 100 + 5; } // 镜面中心高度 cm（平台上方 5 cm）
 
-  setMass(n) {
-    n = clamp(Math.round(n), 0, NM);
-    if (n === this.nMass) return;
-    this.lastDir = Math.sign(n - this.nMass);
-    this.nMass = n;
+  /** 砝码托上的砝码变了：砝码托晃动，记下是加载还是减载 */
+  loadChanged() {
+    const n = this.nMass; if (n === this._n) return;
+    this.lastDir = Math.sign(n - this._n); this._n = n;
     this.Fmax = Math.max(this.Fmax, this.force());
     this.swing = Math.min(0.35, this.swing + 0.16); this.swPh = 0;
     this.app.changed();
+  }
+  onPlace() { this.loadChanged(); }
+  onSlotChange() { this.loadChanged(); }
+  onRemove() { this.loadChanged(); }
+  /** 自动操作：砝码托上挂 n 块（从砝码架上拿、放回砝码架） */
+  async setMass(n) {
+    const a = this.app; n = clamp(Math.round(n), 0, NM);
+    while (this.nMass > n) { const top = a.stackOf('hook').pop(); await a.autoPut(top.key, 'rk0'); }
+    while (this.nMass < n) {
+      const c = a.stackOf('rack').pop() || [...a.comps.values()].find((q) => /^m\d+$/.test(q.key) && !q.placed);
+      if (!c) break;
+      await a.autoPut(c.key, 'hk0');
+    }
+    a.select(a.comp('frame'));
+  }
+  /** 砝码托随钢丝伸长上下移动：挂点和托上的砝码跟着走 */
+  syncHook() {
+    const a = this.app; if (!this.lower) return;
+    this.lower.updateWorldMatrix(true, false);
+    for (const z of a.zones) {
+      if (z.stack !== 'hook') continue;
+      this.lower.localToWorld(z.pos.set(0, 17.3 + z.level * 1.12, 0));
+      if (z.marker) z.marker.position.copy(z.pos).y += 0.15;
+      if (z.occupant && !(a.drag && a.drag.comp === z.occupant)) { z.occupant.root.position.copy(z.pos); }
+    }
   }
 
   /** 自动操作：等砝码托静止（按仿真时间，而不是墙钟时间） */
@@ -158,15 +185,25 @@ export class YModulusExperiment {
     this.lower.add(mesh(new THREE.CylinderGeometry(1.1, 1.1, 5, 18), MAT.brass(), 0, yP - 2.4, 0));
     this.lower.add(mesh(new THREE.CylinderGeometry(0.25, 0.25, yP - 22, 8), steel, 0, (yP - 4.9 + 17) / 2, 0));
     this.lower.add(mesh(new THREE.CylinderGeometry(3.4, 3.4, 0.6, 24), steel, 0, 17, 0)); // 砝码托底盘
-    this.disks = [];
     const diskM = new THREE.MeshStandardMaterial({ color: 0x8a6a2a, metalness: 0.75, roughness: 0.35 });
-    for (let i = 0; i < NM; i++) {
-      const d = mesh(new THREE.CylinderGeometry(3.6, 3.6, 1.05, 28), diskM, 0, 17.85 + i * 1.12, 0); d.visible = false; this.lower.add(d); this.disks.push(d);
-    }
-    // 旁边的砝码架（未挂上的砝码）
-    this.rack = [];
-    for (let i = 0; i < NM; i++) { const d = mesh(new THREE.CylinderGeometry(3.6, 3.6, 1.05, 28), diskM, 30, 0.55 + i * 1.12, 22); fr.add(d); this.rack.push(d); }
+    // 旁边的砝码架：10 块 1 kg 砝码摞在立杆上，要一块块拖到砝码托上
     fr.add(mesh(new THREE.CylinderGeometry(0.3, 0.3, 14, 8), steel, 30, 7, 22));
+    for (let i = 0; i < NM; i++) {
+      app.addSlot({ id: `hk${i}`, pos: new THREE.Vector3(X0, 17.3 + i * 1.12, 0), accepts: null, label: '砝码托', r: 4, snap: 9, stack: 'hook', level: i });
+      app.addSlot({ id: `rk${i}`, pos: new THREE.Vector3(X0 + 30, i * 1.12, 22), accepts: null, label: '砝码架', r: 4, snap: 9, stack: 'rack', level: i });
+    }
+    for (const z of app.zones) if (z.stack === 'hook' || z.stack === 'rack') z.accepts = Array.from({ length: NM }, (_, i) => `m${i + 1}`);
+    for (let i = 0; i < NM; i++) {
+      const g = new THREE.Group();
+      g.add(mesh(new THREE.CylinderGeometry(3.6, 3.6, 1.05, 28), diskM.clone(), 0, 0.525, 0)); // 各用一份材质：悬停高亮只亮这一块
+      g.add(mesh(new THREE.BoxGeometry(0.8, 1.07, 3.7), MAT.black(), 0, 0.525, 1.85));
+      const c = app.addComponent(new Component({
+        key: `m${i + 1}`, name: `砝码 ${i + 1}`, zone: 'slot', defaultSlot: 'hk0', object: g, labelY: 3, showLabel: false, noShelf: true, home: '砝码架',
+        icon: '<svg viewBox="0 0 64 40"><rect x="10" y="14" width="44" height="12" rx="2" fill="currentColor"/><rect x="30" y="14" width="4" height="7" fill="#fff"/><text x="32" y="38" font-size="9" text-anchor="middle" fill="currentColor">1 kg</text></svg>',
+        desc: '1 kg 砝码（标称 1.000 kg，实际有约 ±3 g 的偏差）。拖到砝码托上加载，拖回砝码架减载。加、取都要轻，等砝码托静止后再读数。',
+      }));
+      app.place(c, { slot: `rk${i}`, silent: true });
+    }
     // 水准泡
     const bub = canvasTexture(128, 128, (c, W) => { c.fillStyle = '#d9e7c5'; c.beginPath(); c.arc(W / 2, W / 2, W / 2 - 2, 0, 7); c.fill(); c.strokeStyle = '#333'; c.lineWidth = 3; c.beginPath(); c.arc(W / 2, W / 2, W * 0.16, 0, 7); c.stroke(); });
     const lv = new THREE.Mesh(new THREE.CircleGeometry(2.2, 28), new THREE.MeshStandardMaterial({ map: bub, roughness: 0.3 })); lv.rotation.x = -Math.PI / 2; lv.position.set(-9, 5.05, 9); lv.userData.noHL = true; tiltG.add(lv);
@@ -179,8 +216,6 @@ export class YModulusExperiment {
         { type: 'knob', label: '底脚螺丝 A（前后）', get: () => this.tilt[0], set: (v) => (this.tilt[0] = clamp(v, -3, 3)), step: 0.01, bigStep: 0.1, perRev: 0.5, fmt: () => '旋转螺丝' },
         { type: 'knob', label: '底脚螺丝 B（左右）', get: () => this.tilt[1], set: (v) => (this.tilt[1] = clamp(v, -3, 3)), step: 0.01, bigStep: 0.1, perRev: 0.5, fmt: () => '旋转螺丝' },
         { type: 'readout', label: '水准泡', get: () => this.levelText() },
-        { type: 'button', label: '加一块砝码（1 kg）', onClick: () => (this.nMass < NM ? this.setMass(this.nMass + 1) : app.toast('砝码已经全部挂上', 'warn')) },
-        { type: 'button', label: '取下一块砝码', onClick: () => (this.nMass > 0 ? this.setMass(this.nMass - 1) : app.toast('砝码托上已经没有砝码', 'warn')) },
         { type: 'readout', label: '砝码托上', get: () => `${this.nMass} 块（标称 ${this.nMass}.000 kg）` },
       ],
     }));
@@ -269,7 +304,7 @@ export class YModulusExperiment {
     const k = Math.PI / 180 * 2.5; // 倾斜放大显示
     this.tiltG.rotation.set(this.tilt[0] * k, 0, -this.tilt[1] * k);
     this.lower.position.y = -this.pos * 100 - this.swing * 0.15 * Math.sin(this.swPh);
-    for (let i = 0; i < NM; i++) { this.disks[i].visible = i < this.nMass; this.rack[i].visible = i < NM - this.nMass; }
+    this.syncHook();
     this.bubble.position.set(-9 - this.tilt[1] * 1.4, 5.3, 9 - this.tilt[0] * 1.4);
     this.mirrorG.rotation.z = -((this.phi0 * Math.PI) / 180 + this.pos / this.b) * 3;
     this.scopeInner.position.x = this.D - 130 + (this.b * 100);
@@ -454,7 +489,7 @@ export class YModulusExperiment {
           await app.view('砝码'); app.select(app.comp('frame'));
           await this.knob(() => this.tilt[0], (v) => (this.tilt[0] = v), rand(-0.03, 0.03));
           await this.knob(() => this.tilt[1], (v) => (this.tilt[1] = v), rand(-0.03, 0.03));
-          for (let k = this.nMass; k < 2; k++) { this.setMass(k + 1); await app.wait(400); }
+          if (this.nMass < 2) { await this.setMass(2); await app.wait(400); }
         },
       },
       {
@@ -492,7 +527,7 @@ export class YModulusExperiment {
         auto: async () => {
           app.showTable(0); app.select(app.comp('frame'));
           for (let i = 0; i < 8; i++) {
-            if (i > 0) this.setMass(this.nMass + 1);
+            if (i > 0) await this.setMass(this.nMass + 1);
             await this.settle(); await app.record('load', 0);
           }
         },
@@ -505,9 +540,9 @@ export class YModulusExperiment {
           app.showTable(0);
           // 学生中途可能加减过砝码：按 n₀ 时的载荷逐级回到 +7 kg … +0 kg，每级都记
           const k0 = this.k0 ?? Math.max(0, this.nMass - 7);
-          if (this.nMass !== k0 + 7) { this.setMass(k0 + 7); this.lastDir = -1; await this.settle(); }
+          if (this.nMass !== k0 + 7) { await this.setMass(k0 + 7); this.lastDir = -1; await this.settle(); }
           await app.wait(1500); await app.record('load', 1);
-          for (let i = 6; i >= 0; i--) { this.setMass(k0 + i); await this.settle(); await app.record('load', 1); }
+          for (let i = 6; i >= 0; i--) { await this.setMass(k0 + i); await this.settle(); await app.record('load', 1); }
         },
       },
       {

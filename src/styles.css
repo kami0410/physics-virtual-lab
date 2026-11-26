@@ -206,6 +206,7 @@ body:has(.modal-mask) .toasts { top: auto; bottom: 6px; }
 .shelf-item .ic { height: 38px; display: grid; place-items: center; }
 .shelf-item .ic svg { height: 34px; width: auto; }
 .shelf-item .nm { font-size: 12.5px; text-align: center; line-height: 1.35; }
+.shelf-item .nm .cnt { display: block; font-size: 11px; color: var(--ink-3); font-family: var(--mono); }
 .shelf-item.placed { background: var(--paper-2); color: var(--ink-3); cursor: pointer; }
 .shelf-item.placed .ic { opacity: .45; }
 .shelf-item.placed::after { content: "已上台"; position: absolute; right: 5px; top: 4px; font-size: 10px; color: var(--ok); }

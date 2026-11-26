@@ -23,32 +23,57 @@ export class SpecHeatExperiment {
 
   constructor(app) {
     this.app = app;
-    this.T0 = rand(18, 25); this.Tf = this.T0; this.heat = false; this.over = false; this.timeScale = 1; this.t = 0;
+    this.T0 = rand(18, 25); this.Tf = this.T0; this.heat = false; this.timeScale = 1; this.t = 0;
     this.s = Object.fromEntries(KEYS.map((k, i) => {
       const d = 0.005 * rand(0.995, 1.005), L = 0.03 * rand(0.995, 1.005), V = (Math.PI * d * d * L) / 4 * 1e6;
       return [k, { d, L, eps: [0.1, 0.12, 0.09][i] * rand(0.85, 1.15), m: METALS[k].rho * V * rand(0.998, 1.002), T: this.T0 }];
     }));
-    this.cur = 'Cu'; this.sw = new Stopwatch(); this.arm = null; this.cross = {}; this.hist = []; this.nz = 0;
+    this.air = { T: this.T0, m: 0 }; // 样品架上没有样品时：热电偶热端露在空气里
+    this.sw = new Stopwatch(); this.arm = null; this.cross = {}; this.hist = []; this.nz = 0;
   }
-  get S() { return this.s[this.cur]; }
+  /** 样品架上（插着热电偶）的样品：'Cu' | 'Fe' | 'Al' | null */
+  get cur() { const sl = this.app.zones && this.app.zones.find((z) => z.id === 'holder'); return sl && sl.occupant ? sl.occupant.key.slice(1) : null; }
+  get curName() { return this.cur ? METALS[this.cur].name : '（架上没有样品）'; }
+  get S() { return this.s[this.cur] || this.air; }
+  /** 加热炉是否套在样品架上 */
+  get over() { return !!(this.app.slotOf && this.app.slotOf('furn') === 'fDown'); }
+  /** 天平秤盘上的样品 */
+  get onPan() { const z = this.app.zones && this.app.zones.find((q) => q.id === 'pan'); return z && z.occupant ? z.occupant.key.slice(1) : null; }
+  canPlace(comp, o = {}) {
+    const sl = o.slot ?? comp.defaultSlot;
+    if (comp.key[0] === 's' && sl === 'holder' && this.over) return '加热炉套在样品架上，样品放不进去：先把炉子提起来';
+    return null;
+  }
+  canRemove(comp) {
+    if (comp.key[0] === 's' && this.app.slotOf(comp.key) === 'holder' && this.over) return '加热炉还套着样品，拿不出来：先把炉子提起来';
+    return null;
+  }
+  onPlace(c) { if (c && c.key[0] === 's') this.holderChanged(); this.app.renderInspector(); this.app.changed(); }
+  onSlotChange(c) { this.onPlace(c); }
+  onRemove(c) { this.onPlace(c); }
+  holderChanged() {
+    if (this._cur === this.cur) return;
+    this._cur = this.cur; this.arm = null; this.cross = {}; this._pT = this.S.T; this.hist = [];
+  }
   get E() { return Math.round((emfT(this.S.T) + this.nz) * 1000) / 1000; }
 
   tick(dt) {
     const a = this.app, sdt = Math.min(20, dt * (a.running ? a.speed * 25 : this.timeScale));
     if (!(sdt > 0)) return;
     const h = this.arm ? 0.01 : 0.05, n = Math.max(1, Math.ceil(sdt / h)), hh = sdt / n;
+    const cur = this.cur, over = this.over, S = this.S; // 循环里不再反复查挂点
     for (let i = 0; i < n; i++) {
       this.Tf += ((this.heat ? 260 : this.T0) - this.Tf) / (this.heat ? 90 : 400) * hh;
       for (const k of KEYS) {
         const s = this.s[k];
-        if (k === this.cur && this.over) s.T += ((this.Tf - s.T) / 25) * hh;
+        if (k === cur && over) s.T += ((this.Tf - s.T) / 25) * hh;
         else s.T -= (lossPower(s.T, this.T0, s) / (s.m * METALS[k].c(s.T))) * hh;
       }
-      const T = this.S.T;
+      const T = S.T;
       // 记录热电势经过 E1、E2 的时刻（只在加热炉移开、自然冷却时）
-      if (!this.over) {
-        if (this._pT > T1 && T <= T1) this.cross = { k: this.cur, t1: this.t };
-        if (this._pT > T2 && T <= T2 && this.cross.k === this.cur && this.cross.t1 != null) this.cross.t2 = this.t;
+      if (!over) {
+        if (this._pT > T1 && T <= T1) this.cross = { k: cur, t1: this.t };
+        if (this._pT > T2 && T <= T2 && this.cross.k === cur && this.cross.t1 != null) this.cross.t2 = this.t;
         if (this.arm) {
           if (this.arm.st === 'w1' && this._pT > T1 && T <= T1) { this.sw.reset(); this.sw.start(); this.sw.t = Math.max(0, gauss(0.04)); this.arm.st = 'w2'; }
           else if (this.arm.st === 'w2' && this._pT > T2 && T <= T2) { this.sw.stop(gauss(0.04)); this.arm = null; }
@@ -77,23 +102,45 @@ export class SpecHeatExperiment {
     cup.add(mesh(new THREE.CylinderGeometry(4.2, 4.2, 9, 32, 1, true), new THREE.MeshStandardMaterial({ color: 0xb87333, metalness: 0.8, roughness: 0.35, side: THREE.DoubleSide }), 0, 4.5, 0));
     cup.add(mesh(new THREE.CylinderGeometry(4.2, 4.2, 0.4, 32), MAT.paint(0x8a5a2b), 0, 0.2, 0));
     rig.add(cup);
-    this.sampleMat = new THREE.MeshStandardMaterial({ color: 0xb87333, metalness: 0.85, roughness: 0.3, emissive: 0xff4400, emissiveIntensity: 0 });
     rig.add(mesh(new THREE.CylinderGeometry(0.25, 0.25, 12, 8), MAT.paint(0x5a5a5a), 0, 10, 0));
-    this.sample = mesh(new THREE.CylinderGeometry(1, 1, 5, 20), this.sampleMat, 0, 17, 0); rig.add(this.sample);
-    // 加热炉：可以沿立柱上下滑动
-    this.furnace = new THREE.Group();
+    // 三个样品：从器材柜拿出来，套到样品架的热电偶上；称质量时放到天平秤盘上
+    app.addSlot({ id: 'holder', pos: new THREE.Vector3(X, 14.5, 0), accepts: ['sCu', 'sFe', 'sAl'], label: '样品架（热电偶插进样品中心孔）', r: 2, snap: 8 });
+    app.addSlot({ id: 'pan', pos: new THREE.Vector3(46, 6.1, -12), accepts: ['sCu', 'sFe', 'sAl'], label: '天平秤盘', r: 2.5, snap: 8 });
+    this.sMat = {};
+    KEYS.forEach((k, i) => {
+      app.addSlot({ id: 'r' + k, pos: new THREE.Vector3(10 + i * 5, 0, 22), accepts: ['s' + k], label: '台面', r: 2, snap: 6 });
+      const m = (this.sMat[k] = new THREE.MeshStandardMaterial({ color: { Cu: 0xb87333, Fe: 0x6e737a, Al: 0xc9ced6 }[k], metalness: 0.85, roughness: 0.3, emissive: 0xff4400, emissiveIntensity: 0 }));
+      const sg = new THREE.Group(); sg.add(mesh(new THREE.CylinderGeometry(1, 1, 5, 20), m, 0, 2.5, 0));
+      app.addComponent(new Component({
+        key: 's' + k, name: `${METALS[k].name}样品`, zone: 'slot', defaultSlot: 'holder', object: sg, labelY: 6,
+        icon: SVG('<rect x="26" y="6" width="12" height="28" rx="2" fill="currentColor"/>'),
+        desc: `${METALS[k].name}圆柱样品（直径 5 mm、长 30 mm，表面抛光），中心有插热电偶的小孔。拖到样品架上就是套到热电偶上；拖到天平秤盘上称质量（热的时候称，热空气上升会使示数偏小）。`,
+      }));
+    });
+    // 加热炉：可以沿立柱上下滑动，拖下来就是套到样品上
+    const fg = new THREE.Group();
     this.furnaceMat = new THREE.MeshStandardMaterial({ color: 0x6b2a1a, metalness: 0.3, roughness: 0.5, emissive: 0xff3300, emissiveIntensity: 0 });
-    this.furnace.add(mesh(new THREE.CylinderGeometry(4.6, 4.6, 12, 32), this.furnaceMat), mesh(new THREE.BoxGeometry(8, 1.2, 1.2), MAT.chrome(), -4, 4, -2));
-    rig.add(this.furnace);
+    fg.add(mesh(new THREE.CylinderGeometry(4.6, 4.6, 12, 32), this.furnaceMat), mesh(new THREE.BoxGeometry(8, 1.2, 1.2), MAT.chrome(), -4, 4, -2));
+    app.addSlot({ id: 'fUp', pos: new THREE.Vector3(X, 34, 0), accepts: ['furn'], label: '提起（离开样品）', r: 3, snap: 10 });
+    app.addSlot({ id: 'fDown', pos: new THREE.Vector3(X, 17, 0), accepts: ['furn'], label: '套在样品上', r: 3, snap: 10 });
+    app.addComponent(new Component({
+      key: 'furn', name: '加热炉', zone: 'slot', defaultSlot: 'fUp', object: fg, labelY: 8, noShelf: true, home: '立柱上',
+      icon: SVG('<rect x="22" y="6" width="20" height="26" rx="2" fill="currentColor"/>'),
+      desc: '套在立柱上，可以上下滑动：拖下来套住样品通电加热，加热够了拖上去，让样品在防风筒中自然冷却。',
+      controls: () => [
+        { type: 'toggle', label: '加热电源', get: () => this.heat, set: (v) => { this.heat = v; app.changed(); } },
+        { type: 'readout', label: '位置', get: () => (this.over ? '套在样品上' : '提起') },
+      ],
+    }));
+    app.place(app.comp('furn'), { slot: 'fUp', silent: true });
     app.addComponent(new Component({
       key: 'rig', name: '加热炉与样品架', zone: 'none', fixed: true, object: rig, labelY: 46,
       icon: SVG('<rect x="22" y="4" width="20" height="16" rx="2"/><path d="M32 20v10"/><rect x="24" y="26" width="16" height="10"/>'),
-      desc: '加热炉套到样品上通电加热；把炉子提起移开后，样品在防风筒中自然冷却。三个样品尺寸相同（直径 5 mm、长 30 mm），表面都经过抛光。换样品要在炉子移开时进行。',
+      desc: '样品架上的热电偶插进样品中心孔。加热炉套到样品上通电加热；把炉子提起移开后，样品在防风筒中自然冷却。换样品要在炉子提起时进行。',
       controls: () => [
-        { type: 'segment', label: '样品', get: () => this.cur, set: (v) => this.pick(v), options: KEYS.map((k) => ({ label: METALS[k].name, value: k })) },
-        { type: 'segment', label: '加热炉', get: () => (this.over ? 'on' : 'off'), set: (v) => this.setOver(v === 'on'), options: [{ label: '套在样品上', value: 'on' }, { label: '提起移开', value: 'off' }] },
+        { type: 'readout', label: '样品架上', get: () => this.curName },
         { type: 'toggle', label: '加热电源', get: () => this.heat, set: (v) => { this.heat = v; app.changed(); } },
-        { type: 'readout', label: '样品温度（参考）', get: () => `约 ${Math.round(this.S.T)} °C` },
+        { type: 'readout', label: '样品温度（参考）', get: () => (this.cur ? `约 ${Math.round(this.S.T)} °C` : '—') },
       ],
     }));
     // 冰水瓶（冷端）与数字毫伏表
@@ -120,31 +167,34 @@ export class SpecHeatExperiment {
     app.addComponent(new Component({
       key: 'bal', name: '分析天平', zone: 'none', fixed: true, object: bal.group, labelY: 9,
       icon: SVG('<rect x="8" y="22" width="48" height="12" rx="2"/><path d="M14 18h36"/>'),
-      desc: '分度值 0.001 g，已置零。称哪个样品就在样品架上先选哪个（冷却后再称）。',
-      controls: () => [{ type: 'readout', label: `${METALS[this.cur].name}样品`, get: () => `${this.mShow.toFixed(3)} g` }],
+      desc: '分度值 0.001 g，已置零。把样品拖到秤盘上称（要等样品冷到室温再称）。',
+      controls: () => [{ type: 'readout', label: '秤盘上', get: () => (this.onPan ? `${METALS[this.onPan].name}样品 ${this.mShow.toFixed(3)} g` : '空') }],
     }));
     this.view = app.addView({ id: 'panel', title: '毫伏表、秒表与冷却曲线', w: 340, h: 200, res: 1.5 });
   }
-  get mShow() { return Math.round(this.S.m * 1000) / 1000; }
+  /** 天平示数：热样品周围的热空气上升，托起秤盘，示数偏小（约 0.04 mg/K） */
+  get mShow() { const k = this.onPan; if (!k) return 0; const s = this.s[k]; return Math.round((s.m - 4e-5 * Math.max(0, s.T - this.T0)) * 1000) / 1000; }
+  /** 自动操作：把 k 样品放到样品架上（原来的放回台面） */
   pick(k) {
     const a = this.app;
-    if (this.over) { a.toast('加热炉还套在样品上：先把炉子提起移开再换样品', 'warn'); a.renderInspector(); return; }
-    this.cur = k; this.arm = null; this.cross = {}; this._pT = this.S.T; this.hist = [];
-    this.sampleMat.color.set({ Cu: 0xb87333, Fe: 0x6e737a, Al: 0xc9ced6 }[k]);
-    a.changed(); a.renderInspector();
+    if (this.cur === k) return;
+    if (this.over) this.setOver(false);
+    if (this.cur) a.moveSlot(a.comp('s' + this.cur), 'r' + this.cur, { silent: true });
+    const c = a.comp('s' + k);
+    if (c.placed) a.moveSlot(c, 'holder', { silent: true }); else a.place(c, { slot: 'holder', silent: true });
+    this.holderChanged(); a.changed(); a.renderInspector();
   }
-  setOver(v) { this.over = v; if (v) this.arm = null; this.app.changed(); this.app.renderInspector(); }
+  setOver(v) { const a = this.app; a.moveSlot(a.comp('furn'), v ? 'fDown' : 'fUp', { silent: true }); if (v) this.arm = null; a.changed(); a.renderInspector(); }
 
   update() {
-    this.furnace.position.set(0, this.over ? 17 : 34, 0);
     this.furnaceMat.emissiveIntensity = clamp((this.Tf - 80) / 300, 0, 0.6);
-    this.sampleMat.emissiveIntensity = clamp((this.S.T - 300) / 400, 0, 0.5);
+    for (const k of KEYS) this.sMat[k].emissiveIntensity = clamp((this.s[k].T - 300) / 400, 0, 0.5);
     const e = this.E.toFixed(3);
     if (e !== this._e) { this._e = e; this.mvBox.setText(e, 'mV', `T 型热电偶  冷端 0 °C`); }
     const sws = this.sw.shown;
     if (sws !== this._sw) { this._sw = sws; this.swBox.setText(sws, '', this.sw.run ? '计时中' : ''); }
     const m = this.mShow.toFixed(3);
-    if (m + this.cur !== this._m) { this._m = m + this.cur; this.balBox.setText(m, 'g', `${METALS[this.cur].name}样品`); }
+    if (m + this.onPan !== this._m) { this._m = m + this.onPan; this.balBox.setText(m, 'g', this.onPan ? `${METALS[this.onPan].name}样品` : '秤盘空'); }
 
     const v = this.view, g = v.ctx, W = v.W, H = v.H;
     g.fillStyle = '#20262b'; g.fillRect(0, 0, W, H);
@@ -154,7 +204,7 @@ export class SpecHeatExperiment {
       g.fillStyle = '#8fe3a5'; g.font = `600 ${H * 0.115}px "IBM Plex Mono", monospace`; g.textAlign = 'right'; g.fillText(val, x + wd - H * 0.13, y + H * 0.155);
       g.fillStyle = '#7d8a90'; g.font = `${H * 0.055}px "IBM Plex Mono", monospace`; g.textAlign = 'left'; g.fillText(unit, x + wd - H * 0.11, y + H * 0.155);
     };
-    lcd(W * 0.03, H * 0.07, W * 0.4, `热电势（${METALS[this.cur].name}）`, this.E.toFixed(3), 'mV');
+    lcd(W * 0.03, H * 0.07, W * 0.4, `热电势（${this.curName}）`, this.E.toFixed(3), 'mV');
     lcd(W * 0.03, H * 0.35, W * 0.4, '秒表', this.sw.shown, '');
     g.fillStyle = '#9aa5ab'; g.font = `${H * 0.055}px "Microsoft YaHei"`; g.textAlign = 'left';
     g.fillText(`E₁ = ${E1.toFixed(3)} mV（102 °C）`, W * 0.03, H * 0.66); g.fillText(`E₂ = ${E2.toFixed(3)} mV（98 °C）`, W * 0.03, H * 0.75);
@@ -167,7 +217,7 @@ export class SpecHeatExperiment {
     g.setLineDash([]); g.strokeStyle = '#8fe3a5'; g.lineWidth = 1.5; g.beginPath();
     let first = true; for (const [t, E] of this.hist) { if (tN - t > span) continue; first ? g.moveTo(X(t), Y(E)) : g.lineTo(X(t), Y(E)); first = false; } g.stroke();
     g.fillStyle = '#7d8a90'; g.font = `${H * 0.05}px "IBM Plex Mono", monospace`; g.textAlign = 'left'; g.fillText('E–t，最近 3 min', x0 + 3, y1 + H * 0.06);
-    v.foot(this.over ? (this.heat ? '加热中……热电势升到 5 mV 以上（约 120 °C）就可以停止加热、移开炉子' : '炉子套在样品上但没有加热') : this.S.T > T1 ? '样品在防风筒中冷却：示数降到 E₁ 时开始计时' : this.sw.run ? '计时中：降到 E₂ 时停止' : '样品温度低于 102 °C：要再测一次需重新加热');
+    v.foot(!this.cur ? '样品架上没有样品：热电偶热端露在空气里' : this.over ? (this.heat ? '加热中……热电势升到 5 mV 以上（约 120 °C）就可以停止加热、移开炉子' : '炉子套在样品上但没有加热') : this.S.T > T1 ? '样品在防风筒中冷却：示数降到 E₁ 时开始计时' : this.sw.run ? '计时中：降到 E₂ 时停止' : '样品温度低于 102 °C：要再测一次需重新加热');
   }
   globalControls() { return [{ type: 'segment', label: '时间流速', get: () => this.timeScale, set: (v) => (this.timeScale = v), options: [{ label: '×1', value: 1 }, { label: '×5', value: 5 }, { label: '×20', value: 20 }] }]; }
 
@@ -178,7 +228,11 @@ export class SpecHeatExperiment {
         id: 'mass', title: '样品质量', fixedRows: true,
         initRows: () => KEYS.map((k) => ({ k, what: `${METALS[k].name}样品 / g` })),
         columns: [{ key: 'what', label: '样品', type: 'text', readonly: true }, { key: 'm', label: '质量 m', digits: 3, readTol: 0.0006 }],
-        buttons: [{ label: '记录天平示数', onClick: (t) => { const i = KEYS.indexOf(this.cur); t.set(i, 'm', this.mShow); } }],
+        buttons: [{ label: '记录天平示数', onClick: (t) => {
+          const k = this.onPan; if (!k) return this.app.toast('天平秤盘上没有样品', 'warn');
+          if (this.s[k].T > this.T0 + 3) this.app.toast(`${METALS[k].name}样品还热（约 ${Math.round(this.s[k].T)} °C），热空气上升托起秤盘，示数偏小`, 'warn');
+          t.set(KEYS.indexOf(k), 'm', this.mShow);
+        } }],
         note: '在样品架上选中样品，天平显示它的质量。',
       },
       {
@@ -193,6 +247,7 @@ export class SpecHeatExperiment {
   nextRow(k) { const i = this.app.table('time').rows.findIndex((r) => !(r[k] != null && r[k] !== '' && isFinite(r[k]))); return i; }
   recTime(t) {
     const a = this.app, k = this.cur;
+    if (!k) return a.toast('样品架上没有样品', 'warn');
     if (this.sw.run) a.toast('秒表还在走：先停表再记录', 'warn');
     if (!(this.sw.value > 0)) return a.toast('秒表读数为 0：还没有计时', 'warn');
     const i = this.nextRow(k);
@@ -227,7 +282,7 @@ export class SpecHeatExperiment {
       check: () => cnt() >= N,
       diagnose: () => {
         const out = [];
-        if (this.cur !== k) out.push({ msg: `现在样品架上是${METALS[this.cur].name}样品。`, fix: { label: `换成${METALS[k].name}`, run: () => { this.setOver(false); this.pick(k); } } });
+        if (this.cur !== k) out.push({ msg: this.cur ? `现在样品架上是${METALS[this.cur].name}样品。` : `样品架上还没有样品：把${METALS[k].name}样品拖上去。`, fix: { label: `换成${METALS[k].name}`, run: () => this.pick(k) } });
         if (this.over && !this.heat && this.S.T < 110) out.push({ msg: '炉子套在样品上但没有通电。', fix: { label: '接通加热', run: () => { this.heat = true; app.renderInspector(); } } });
         if (this.over && this.S.T > 120) out.push({ msg: '温度已经够了：断电并把炉子移开，让样品冷却。', fix: { label: '断电、移开炉子', run: () => { this.heat = false; this.setOver(false); } } });
         if (!this.over && this.S.T < T1 && !this.sw.run) out.push({ msg: '样品温度已低于 102 °C，要测下一次需重新加热。', fix: { label: '套上炉子加热', run: () => { this.setOver(true); this.heat = true; app.renderInspector(); } } });
@@ -235,7 +290,7 @@ export class SpecHeatExperiment {
       },
       auto: async () => {
         app.showTable(1); app.select(app.comp('rig'));
-        if (this.cur !== k) { this.setOver(false); this.pick(k); }
+        if (this.cur !== k) this.pick(k);
         while (cnt() < N) await this.runOnce();
       },
     };
@@ -245,11 +300,16 @@ export class SpecHeatExperiment {
     return [
       {
         title: '称三个样品的质量',
-        html: '<p>在样品架上依次选铜、铁、铝样品，用分析天平称出质量 $m$。</p>',
+        html: '<p>从器材柜拿出铜、铁、铝样品，依次<b>拖到分析天平秤盘上</b>称出质量 $m$（要在加热之前、或冷到室温后称）。</p>',
         check: () => app.table('mass').rows.every((r) => r.m > 0),
         auto: async () => {
           app.showTable(0);
-          for (const k of KEYS) { this.setOver(false); this.pick(k); app.select(app.comp('bal')); await app.wait(300); await app.record('mass'); }
+          for (const k of KEYS) {
+            if (this.cur === k) { if (this.over) this.setOver(false); app.moveSlot(app.comp('s' + k), 'r' + k, { silent: true }); }
+            if (this.onPan) app.moveSlot(app.comp('s' + this.onPan), 'r' + this.onPan, { silent: true });
+            await app.autoPut('s' + k, 'pan'); app.select(app.comp('bal')); await app.wait(300); await app.record('mass');
+          }
+          app.moveSlot(app.comp('sAl'), 'rAl', { silent: true });
           this.pick('Cu');
         },
       },

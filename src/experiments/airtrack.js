@@ -32,9 +32,7 @@ export class AirTrackExperiment {
     this.track = new AirTrack({ L, gates: GX, b: rand(2.2e-3, 2.8e-3) });
     this.track.air = false;
     this.mBase = [rand(178, 186) / 1000, rand(178, 186) / 1000];
-    this.mW = [0, 1].map(() => (50 + gauss(0.02)) / 1000); // 一对配重中每块的质量
-    this.w = [0, 0]; // 两滑块上加的配重块数（0 或 2）
-    this.mode = 'spring';
+    this.mW = [0, 1, 2, 3].map(() => (50 + gauss(0.02)) / 1000); // 4 块配重各自的质量
     this.vp = 0.45; this.timeScale = 1; this.shot = null;
     this.g = [new Glider({ m: this.mass(0), x: X1, len: 0.21 }), new Glider({ m: this.mass(1), x: X2, len: 0.21 })];
     this.track.gliders.push(...this.g);
@@ -70,11 +68,72 @@ export class AirTrackExperiment {
     const c = this.app.comp && this.app.comp('g' + (i + 1)); if (c) c.pos = x * 100;
     this.app.changed();
   }
-  mass(i) { return this.mBase[i] + this.w[i] * this.mW[0]; }
-  applyCfg() { this.g.forEach((g, i) => (g.m = this.mass(i))); this.track.e = this.mode === 'spring' ? 0.97 : 0; }
+  /** 滑块 i 上的配重块（编号 0–3） */
+  wOn(i) { const zs = this.app.zones || []; return ['L', 'R'].map((sd) => zs.find((z) => z.id === `gw${i}${sd}`)).map((z) => z && z.occupant).filter(Boolean).map((c) => +c.key.slice(2) - 1); }
+  get w() { return [this.wOn(0).length, this.wOn(1).length]; }
+  /** 滑块 i 相碰一端装的是什么：'spring' | 'velcro' | 'bare' */
+  endOf(i) { const z = this.app.zones && this.app.zones.find((q) => q.id === `end${i}`), o = z && z.occupant; return !o ? 'bare' : o.key.startsWith('sp') ? 'spring' : 'velcro'; }
+  /** 两滑块相碰端的组合：'spring' 两边都是弹簧圈，'velcro' 两边都是尼龙搭扣，其他为 'mixed' */
+  get mode() { const a = this.endOf(0), b = this.endOf(1); return a === b && a !== 'bare' ? a : 'mixed'; }
+  /** 恢复系数：弹簧圈对弹簧圈 0.97；搭扣对搭扣粘住；其他组合按材料估计 */
+  restitution() {
+    const k = [this.endOf(0), this.endOf(1)].sort().join('+');
+    return { 'spring+spring': 0.97, 'velcro+velcro': 0, 'spring+velcro': 0.55, 'bare+spring': 0.9, 'bare+velcro': 0.6, 'bare+bare': 0.8 }[k];
+  }
+  cfgIssue() {
+    const out = [], ends = [this.endOf(0), this.endOf(1)], N = { spring: '弹簧圈', velcro: '尼龙搭扣', bare: '什么也没装' };
+    if (ends[0] !== ends[1] || ends[0] === 'bare') out.push(`两滑块相碰端：滑块 1 ${N[ends[0]]}，滑块 2 ${N[ends[1]]}`);
+    this.w.forEach((n, i) => { if (n === 1) out.push(`滑块 ${i + 1} 只在一侧加了配重，滑块偏向一侧擦着导轨`); });
+    return out;
+  }
+  mass(i) { return this.mBase[i] + this.wOn(i).reduce((s, k) => s + this.mW[k], 0); }
+  applyCfg() {
+    this.g.forEach((g, i) => { g.m = this.mass(i); g.bx = this.w[i] === 1 ? 0.03 : 0; });
+    this.track.e = this.restitution();
+  }
   get theta() { return (this.screw - this.s0) / 1000 / FEET; }
   get level() { return Math.abs(this.theta) < 1.5e-5; }
-  get kind() { return this.mode !== 'spring' ? 'in' : Math.abs(this.mass(0) - this.mass(1)) < 0.02 ? 'e1' : this.mass(0) > this.mass(1) ? 'e2' : 'e3'; }
+  get kind() { return this.endOf(0) === 'velcro' || this.endOf(1) === 'velcro' ? 'in' : Math.abs(this.mass(0) - this.mass(1)) < 0.02 ? 'e1' : this.mass(0) > this.mass(1) ? 'e2' : 'e3'; }
+  onPlace() { this.applyCfg(); }
+  onSlotChange() { this.applyCfg(); }
+  onRemove() { this.applyCfg(); }
+  canPlace(comp, o = {}) {
+    const sl = o.slot ?? comp.defaultSlot;
+    if (sl && (sl.startsWith('gw') || sl.startsWith('end'))) { const g = this.g[+sl.match(/\d/)[0]]; if (Math.abs(g.v) > 0.02) return '滑块在运动，先让它停下再装'; }
+    return null;
+  }
+  /** 跟着滑块走的挂点：配重插孔、相碰端 */
+  syncParts() {
+    const a = this.app;
+    for (const z of a.zones) {
+      const m = /^(gw|end)(\d)(L|R)?$/.exec(z.id); if (!m) continue;
+      const i = +m[2], x = X3(this.g[i].x);
+      if (m[1] === 'end') z.pos.set(x + (i === 0 ? 10.5 : -10.5), TY + 0.2, 0); else z.pos.set(x, TY - 2.6, m[3] === 'L' ? -3.6 : 3.6);
+      if (z.marker) z.marker.position.copy(z.pos).y += 0.15;
+      if (z.occupant && !(a.drag && a.drag.comp === z.occupant)) z.occupant.root.position.copy(z.pos);
+    }
+  }
+  /** 自动操作：两滑块相碰端都装上 mode（'spring' | 'velcro'） */
+  async setEnds(mode) {
+    const a = this.app, pre = mode === 'spring' ? 'sp' : 'vc';
+    for (const i of [0, 1]) {
+      if (this.endOf(i) === mode) continue;
+      const z = a.zones.find((q) => q.id === `end${i}`); if (z.occupant) a.remove(z.occupant);
+      const c = [1, 2].map((k) => a.comp(pre + k)).find((q) => !q.placed);
+      if (c) await a.autoPut(c.key, `end${i}`);
+    }
+    this.applyCfg();
+  }
+  /** 自动操作：滑块 i 上加 n 块配重（0 或 2，两侧各一块） */
+  async setWeights(i, n) {
+    const a = this.app;
+    for (const s of ['L', 'R']) {
+      const z = a.zones.find((q) => q.id === `gw${i}${s}`), want = n >= 2 || (n === 1 && s === 'L');
+      if (!want && z.occupant) a.remove(z.occupant);
+      if (want && !z.occupant) { const c = [1, 2, 3, 4].map((k) => a.comp('wt' + k)).find((q) => !q.placed); if (c) await a.autoPut(c.key, z.id); }
+    }
+    this.applyCfg();
+  }
 
   tick(dt) {
     const a = this.app, sdt = Math.min(0.25, dt * (a.running ? a.speed : this.timeScale));
@@ -101,7 +160,8 @@ export class AirTrackExperiment {
     if (Math.abs(g.v) > 0.02) return a.toast('滑块 1 还在运动，先让它停下', 'warn');
     const li = this.layoutIssue(); if (li) a.toast(li, 'warn');
     if (this.track.gates.some((q) => q.log.length)) a.toast('计时器里还有上一次的数据，记得先复位', 'warn');
-    this.shot = { m1: this.mass(0), m2: this.mass(1), kind: this.kind, t: this.track.t };
+    this.applyCfg();
+    this.shot = { m1: this.mass(0), m2: this.mass(1), kind: this.kind, t: this.track.t, issue: this.cfgIssue() };
     g.v = this.vp * (1 + gauss(0.04));
     a.changed();
   }
@@ -182,7 +242,6 @@ export class AirTrackExperiment {
       controls: () => [
         { type: 'toggle', label: '气泵', get: () => this.track.air, set: (v) => { this.track.air = v; if (!v) this.g.forEach((g) => (g.v = 0)); app.changed(); } },
         { type: 'knob', label: '调平螺钉（右端）', get: () => this.screw, set: (v) => { this.screw = clamp(Math.round(v * 1000) / 1000, -2, 2); app.changed(); }, min: -2, max: 2, step: 0.005, bigStep: 0.1, perRev: 0.5, fmt: () => '转动螺钉升降右端' },
-        { type: 'segment', label: '滑块相碰的一端装', get: () => this.mode, set: (v) => { this.mode = v; this.applyCfg(); app.changed(); }, options: [{ label: '弹簧圈（弹性碰撞）', value: 'spring' }, { label: '尼龙搭扣（完全非弹性）', value: 'velcro' }] },
       ],
     }));
     // ---- 滑块 ----
@@ -193,20 +252,15 @@ export class AirTrackExperiment {
       const fl = MAT.dark();
       g.add(mesh(new THREE.BoxGeometry(1.4, 0.4, 0.1), fl, 0, TY + 0.9, 0));
       for (const x of [-0.5, 0.5]) g.add(mesh(new THREE.BoxGeometry(0.4, 3.4, 0.1), fl, x, TY + 2.6, 0));
-      const end = i === 0 ? 10.2 : -10.2;
-      const spring = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.07, 6, 20), MAT.chrome()); spring.position.set(end + (i === 0 ? 0.3 : -0.3), TY + 0.2, 0); spring.rotation.y = Math.PI / 2; g.add(spring);
-      const velcro = mesh(new THREE.BoxGeometry(0.5, 1.6, 2), MAT.paint(0x22262b), end, TY + 0.2, 0); g.add(velcro);
-      const wts = new THREE.Group();
-      for (const s of [-1, 1]) { const c = mesh(new THREE.CylinderGeometry(1.25, 1.25, 1.3, 20), MAT.chrome(), 0, TY - 2.6, s * 3.6); c.rotation.x = Math.PI / 2; wts.add(c); }
-      g.add(wts);
-      return { g, spring, velcro, wts };
+      return { g };
     });
     const cmpG = (i) => new Component({
       key: 'g' + (i + 1), name: `滑块 ${i + 1}`, zone: 'rail', rail: 'glide', fixed: true, defaultPos: (i ? X2 : X1) * 100, object: this.gm[i].g, labelY: TY + 6,
       icon: SVG('<path d="M10 28l22-12 22 12" stroke="currentColor" fill="none" stroke-width="2"/><path d="M30 16v-8h4v8" stroke="currentColor" fill="none"/>'),
-      desc: `${i === 0 ? '拖到左边光电门的左侧，再推出去撞静止的滑块 2。' : '每次碰撞前拖到两光电门之间放稳。'}可以直接在导轨上拖动（拖住运动中的滑块就是用手把它按停）。滑块本身质量（物理天平称得）${(this.mBase[i] * 1000).toFixed(2)} g；配重每块 ${(this.mW[0] * 1000).toFixed(2)} g，成对加在两侧。顶上装 U 形挡光片，两齿前沿间距 Δx = 10.00 mm。`,
+      desc: `${i === 0 ? '拖到左边光电门的左侧，再推出去撞静止的滑块 2。' : '每次碰撞前拖到两光电门之间放稳。'}可以直接在导轨上拖动（拖住运动中的滑块就是用手把它按停）。滑块本身质量（物理天平称得）${(this.mBase[i] * 1000).toFixed(2)} g；配重块从器材柜拖到滑块两侧的插孔里（要成对加），弹簧圈或尼龙搭扣拖到相碰的一端。顶上装 U 形挡光片，两齿前沿间距 Δx = 10.00 mm。`,
       controls: () => [
-        { type: 'segment', label: '配重', get: () => this.w[i], set: (v) => { this.w[i] = v; this.applyCfg(); app.changed(); }, options: [{ label: '不加', value: 0 }, { label: '加两块', value: 2 }] },
+        { type: 'readout', label: '相碰端', get: () => ({ spring: '弹簧圈', velcro: '尼龙搭扣', bare: '没装东西' })[this.endOf(i)] },
+        { type: 'readout', label: '配重', get: () => `${this.w[i]} 块` },
         ...(i === 0
           ? [
             { type: 'slider', label: '推的力度（推出时的大致速度）', get: () => this.vp, set: (v) => (this.vp = v), min: 0.2, max: 0.7, step: 0.01, digits: 2, unit: 'm/s' },
@@ -218,6 +272,27 @@ export class AirTrackExperiment {
       ],
     });
     app.addComponent(cmpG(0)); app.addComponent(cmpG(1));
+    // ---- 相碰端的附件与配重块：从器材柜拖到滑块上 ----
+    for (const i of [0, 1]) {
+      app.addSlot({ id: `end${i}`, pos: new THREE.Vector3(0, TY, 0), accepts: ['sp1', 'sp2', 'vc1', 'vc2'], label: `滑块 ${i + 1} 相碰端`, r: 1.4, snap: 5 });
+      for (const sd of ['L', 'R']) app.addSlot({ id: `gw${i}${sd}`, pos: new THREE.Vector3(0, TY, 0), accepts: ['wt1', 'wt2', 'wt3', 'wt4'], label: `滑块 ${i + 1} 配重孔（${sd === 'L' ? '后' : '前'}）`, r: 1.4, snap: 4 });
+    }
+    for (const k of [1, 2]) {
+      const sg = new THREE.Group(), sm = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.07, 6, 20), MAT.chrome()); sm.rotation.y = Math.PI / 2; sg.add(sm);
+      app.addComponent(new Component({ key: 'sp' + k, name: `弹簧圈 ${k}`, group: '弹簧圈', zone: 'slot', defaultSlot: `end${k - 1}`, object: sg, labelY: 2, showLabel: false,
+        icon: SVG('<ellipse cx="32" cy="20" rx="8" ry="12" fill="none" stroke="currentColor" stroke-width="2"/>'),
+        desc: '钢丝弹簧圈，装在滑块相碰的一端：两块都装弹簧圈时碰撞接近完全弹性。' }));
+      const vg = new THREE.Group(); vg.add(mesh(new THREE.BoxGeometry(0.5, 1.6, 2), MAT.paint(0x22262b)));
+      app.addComponent(new Component({ key: 'vc' + k, name: `尼龙搭扣 ${k}`, group: '尼龙搭扣', zone: 'slot', defaultSlot: `end${k - 1}`, object: vg, labelY: 2, showLabel: false,
+        icon: SVG('<rect x="24" y="8" width="16" height="24" fill="currentColor"/><path d="M26 12h12M26 16h12M26 20h12M26 24h12M26 28h12" stroke="#fff"/>'),
+        desc: '尼龙搭扣（一面钩、一面毛），装在滑块相碰的一端：两块都装搭扣时碰后粘在一起（完全非弹性）。' }));
+    }
+    for (let k = 1; k <= 4; k++) {
+      const wg = new THREE.Group(), c = mesh(new THREE.CylinderGeometry(1.25, 1.25, 1.3, 20), MAT.chrome()); c.rotation.x = Math.PI / 2; wg.add(c);
+      app.addComponent(new Component({ key: 'wt' + k, name: `配重块 ${k}`, group: '配重块（50 g）', zone: 'slot', defaultSlot: 'gw0L', object: wg, labelY: 2, showLabel: false,
+        icon: SVG('<rect x="22" y="12" width="20" height="16" rx="3" fill="currentColor"/>'),
+        desc: `约 50 g（${(this.mW[k - 1] * 1000).toFixed(2)} g）的配重块，插在滑块两侧的孔里，要成对加：只加一侧时滑块偏向一边，擦着导轨走。` }));
+    }
     // ---- 计时器 ----
     const mb = (this.meter = meterBox(18, 9, 12, '数字毫秒计')); mb.group.position.set(-55, 0, 24); mb.group.rotation.y = 0.25;
     app.addComponent(new Component({
@@ -235,9 +310,8 @@ export class AirTrackExperiment {
       const c = this.app.comp('g' + (i + 1));
       if (c && Math.abs(c.pos - this.gSync[i]) > 1e-6) this.dropAt(i, c.pos / 100);
       if (c) { c.pos = this.gSync[i] = g.x * 100; c.root.position.set(X3(g.x), 0, 0); }
-      const o = this.gm[i];
-      o.spring.visible = this.mode === 'spring'; o.velcro.visible = this.mode !== 'spring'; o.wts.visible = this.w[i] > 0;
     });
+    this.syncParts();
     this.screwKnob.rotation.y = this.screw * 4 * Math.PI;
     this.pumpLed.material.emissiveIntensity = tr.air ? 2 : 0;
     this.leds.forEach((l, k) => (l.material.emissiveIntensity = this.g.some((g) => g.prongs().some(([a, b]) => tr.gates[k].x >= a && tr.gates[k].x <= b)) ? 3 : 1));
@@ -303,6 +377,7 @@ export class AirTrackExperiment {
     if (Math.abs(s.col.vb) > 0.004) fl.push(`碰撞前滑块 2 不是静止的（在${s.col.vb > 0 ? '向右' : '向左'}滑）：导轨没调平，或没放稳`);
     if (!this.level) fl.push('导轨没有调平');
     const sh = this.shot;
+    fl.push(...(sh.issue || []));
     t.flagAll(t.addRow({ kind: KINDS[sh.kind], m1: Math.round(sh.m1 * 1e5) / 100, m2: Math.round(sh.m2 * 1e5) / 100, t10: s.t10, ...(isFinite(s.t1) ? { t1: s.t1 } : {}), t2: s.t2, _d1: s.d1, _t: sh.t, _k: sh.kind }), fl);
   }
 
@@ -321,9 +396,9 @@ export class AirTrackExperiment {
     const a = this.app;
     if (!this.track.air) { a.select(a.comp('track')); this.track.air = true; a.renderInspector(); }
     if (!this.level) await this.levelIt();
-    if (this.mode !== mode) { a.select(a.comp('track')); this.mode = mode; a.renderInspector(); await a.wait(200); }
-    if (this.w[0] !== w1) { a.select(a.comp('g1')); this.w[0] = w1; a.renderInspector(); await a.wait(200); }
-    if (this.w[1] !== w2) { a.select(a.comp('g2')); this.w[1] = w2; a.renderInspector(); await a.wait(200); }
+    if (this.mode !== mode) await this.setEnds(mode);
+    if (this.w[0] !== w1) await this.setWeights(0, w1);
+    if (this.w[1] !== w2) await this.setWeights(1, w2);
     this.applyCfg(); a.changed();
   }
   async levelIt() {
@@ -340,8 +415,8 @@ export class AirTrackExperiment {
       if (!this.track.air) out.push({ msg: '气泵没开。', fix: { label: '打开气泵', run: async () => { this.track.air = true; } } });
       const li = this.layoutIssue(); if (li && this.g.every((g) => Math.abs(g.v) < 0.02)) out.push({ msg: li + '。', fix: { label: '帮我摆好两个滑块', run: async () => { this.placeG2(); } } });
       if (!this.level) out.push({ msg: '导轨还没调平：碰前滑块 2 不静止，滑块速度也一路在变。', fix: { label: '帮我调平', run: () => this.levelIt() } });
-      if (this.mode !== mode) out.push({ msg: `这一步滑块相碰的一端要装${mode === 'spring' ? '弹簧圈' : '尼龙搭扣'}。`, fix: { label: '换上', run: async () => { this.mode = mode; this.applyCfg(); } } });
-      if (this.w[0] !== w1 || this.w[1] !== w2) out.push({ msg: `配重不对：这一步${w1 ? '滑块 1 加两块配重' : '滑块 1 不加配重'}，${w2 ? '滑块 2 加两块' : '滑块 2 不加'}。`, fix: { label: '帮我改', run: async () => { this.w = [w1, w2]; this.applyCfg(); } } });
+      if (this.mode !== mode) out.push({ msg: `这一步两个滑块相碰的一端都要装${mode === 'spring' ? '弹簧圈' : '尼龙搭扣'}。`, fix: { label: '换上', run: () => this.setEnds(mode) } });
+      if (this.w[0] !== w1 || this.w[1] !== w2) out.push({ msg: `配重不对：这一步${w1 ? '滑块 1 两侧各加一块配重' : '滑块 1 不加配重'}，${w2 ? '滑块 2 加两块' : '滑块 2 不加'}。`, fix: { label: '帮我改', run: async () => { await this.setWeights(0, w1); await this.setWeights(1, w2); } } });
       return out;
     };
     const trialStep = (title, k, mode, w1, w2, html) => ({

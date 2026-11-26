@@ -3,7 +3,7 @@
 // 电极边界用 Shortley–Weller 精确处理，纸边绝缘，导电纸的电导率有约 ±10% 的不均匀，等势线因此略有畸变。
 import * as THREE from 'three';
 import { meta, thumb } from './efield.meta.js';
-import { benchTable } from '../core/circuit.js';
+import { benchTable, Circuit, dcSupply } from '../core/circuit.js';
 import { Component } from '../core/Component.js';
 import { MAT, mesh, canvasTexture, meterBox } from '../core/Models.js';
 import { mean, stdev, rand, relErr, pct, clamp, gauss, fmtU, linFit } from '../core/Stats.js';
@@ -31,7 +31,7 @@ export class EFieldExperiment {
     // 导电纸不均匀：几个随机方向的缓变起伏叠加
     this.waves = Array.from({ length: 5 }, () => ({ kx: rand(-1, 1) / 14, ky: rand(-1, 1) / 14, ph: rand(0, 6.28), a: rand(0.03, 0.05) }));
     this.ex = rand(-0.35, 0.35); this.ey = rand(-0.35, 0.35); // 内电极没有压在正中心
-    this.set = 'coax'; this.V0 = 0; this.on = false; this.target = 2;
+    this.set = 'coax'; this.target = 2; // set：最近装上的那组电极（描迹板上可能一组也没有，见 mounted）
     this.px = 30; this.py = 0;
     this.meterErr = 1 + rand(-0.002, 0.002);
     this.sheets = {};
@@ -51,11 +51,44 @@ export class EFieldExperiment {
     return (this.sheets[this.set] = F);
   }
   /** 探针处的真实电位（V） */
+  /** 接线正确时探针处应有的电位（自动操作找点用） */
   Utrue(x = this.px, y = this.py) { if (!this.on) return 0; const v = this.sheet().at(x, y); return isFinite(v) ? v * this.V0 : NaN; }
-  /** 数字电压表示数：三位半，分辨率 0.01 V */
-  get reading() { const u = this.Utrue(); if (!isFinite(u)) return NaN; return Math.round((u * this.meterErr + gauss(0.002)) * 100) / 100; }
-  setSet(s) {
-    if (s === this.set) return;
+  get on() { return !!(this.sup && this.sup.comp.placed && this.sup.on); }
+  set on(v) { this.sup.on = v; }
+  get V0() { return this.sup ? this.sup.Vset : 0; }
+  set V0(v) { this.sup.Vset = v; }
+  /** 描迹板上装着的电极（导电纸）：'coax' | 'pair' | 'plates' | null */
+  get mounted() { const z = this.app.zones && this.app.zones.find((q) => q.id === 'sheet'); return z && z.occupant ? z.occupant.key.slice(3) : null; }
+  /** 数字电压表示数：按实际接线解电路（导电纸 = 电极间的分压网络），三位半，分辨率 0.01 V */
+  get reading() {
+    if (!this.cir.placed('dvm')) return NaN;
+    this.cir.solve();
+    const u = this.cir.V('dvm:+', 'dvm:-');
+    return Math.round((u * this.meterErr + gauss(0.002)) * 100) / 100;
+  }
+  /** 接线问题（给记录时的标注与助教用） */
+  wireIssue() {
+    const n = this.cir.nets(), same = (a, b) => n(a) === n(b), out = [];
+    if (!same('supply:+', 'board:A') && !same('supply:-', 'board:A')) out.push('电源没有接到内电极（左电极）');
+    else if (same('supply:-', 'board:A')) out.push('电源正负极接反了：内电极（左电极）接的是负极');
+    if (!same('supply:-', 'board:B') && !same('supply:+', 'board:B')) out.push('电源没有接到外电极（右电极）');
+    if (!same('dvm:+', 'board:P')) out.push(same('dvm:-', 'board:P') ? '探针接在电压表的 COM 端，示数变号' : '探针没有接到电压表');
+    if (!same('dvm:-', 'board:B') && !same('dvm:-', 'supply:-')) out.push(same('dvm:-', 'board:A') || same('dvm:-', 'supply:+') ? '电压表 COM 端接在了正极上，测的是相对内电极的电位差' : '电压表 COM 端没有接到电源负极');
+    return out;
+  }
+  onPlace(c) { if (c && c.key.startsWith('sh_')) { const k = this.mounted; if (k) this.setSet(k, true); this.paper.visible = !!k; c.object.children[0].visible = !k; } this.app.renderInspector(); this.app.changed(); }
+  onSlotChange(c) { if (c && c.key.startsWith('sh_')) c.object.children[0].visible = this.app.slotOf(c.key) !== 'sheet'; this.onPlace(c); }
+  onRemove(c) { this.cir.removeDevice(c.key); if (c && c.key.startsWith('sh_')) { c.object.children[0].visible = true; this.paper.visible = !!this.mounted; } this.app.changed(); }
+  pointerDown(e) { return this.cir.pointerDown(e); }
+  pointerMove(e) { return this.cir.pointerMove(e); }
+  setSet(s, fromPlace = false) {
+    if (!fromPlace) {
+      // 自动操作：把这组电极装到描迹板上（原来那组放回台面）
+      const a = this.app, cur = this.mounted;
+      if (cur !== s) { if (cur) a.moveSlot(a.comp('sh_' + cur), 'rest_' + cur, { silent: true }); const c = a.comp('sh_' + s); if (c.placed) a.moveSlot(c, 'sheet', { silent: true }); else a.place(c, { slot: 'sheet', silent: true }); }
+      return;
+    }
+    if (s === this.set && this.sheets[s]) { this.paintBoard(); return; }
     this.set = s; this.target = TARGETS[s][0];
     const [x0, x1, y0, y1] = SETS[s].box; this.px = clamp(this.px, x0, x1); this.py = clamp(this.py, y0, y1);
     this.app.toast('正在计算这组电极的电位分布…', '');
@@ -89,32 +122,65 @@ export class EFieldExperiment {
     this.probe.add(mesh(new THREE.CylinderGeometry(0.35, 0.12, 6, 12), MAT.paint(0xb91c1c), 0, 3.0, 0));
     this.probe.add(mesh(new THREE.ConeGeometry(0.12, 0.6, 8), MAT.metal(), 0, 0, 0));
     g.add(this.probe);
-    this.paintBoard();
-    app.addComponent(new Component({
+    this.paintBoard(); this.paper.visible = false;
+    const cir = (this.cir = new Circuit(app)), self = this;
+    // 描迹板的三个接线柱：内电极（左电极）A、外电极（右电极）B、探针引线 P
+    const board = {
+      key: 'board', short: '描迹板',
+      terms: { A: { pos: new THREE.Vector3(-8, 1.6, -15.5), color: 0xb91c1c, label: '内/左电极' }, B: { pos: new THREE.Vector3(-2, 1.6, -15.5), color: 0x1b1b1b, label: '外/右电极' }, P: { pos: new THREE.Vector3(10, 1.6, -15.5), color: 0x1d4ed8, label: '探针' } },
+      /** 导电纸：电极间是电阻约 2 kΩ 的纸；探针处的电位按纸上的分压比 f 接成戴维南等效（内阻约 5 kΩ） */
+      elements(t) {
+        const k = self.mounted; if (!k) return [];
+        const out = [{ type: 'R', a: t('A'), b: t('B'), R: 2000 }];
+        const f = self.sheet().at(self.px, self.py);
+        if (isFinite(f)) { const ff = clamp(f, 1e-6, 1 - 1e-6), Rt = 5000; out.push({ type: 'R', a: t('A'), b: t('P'), R: Rt / ff }, { type: 'R', a: t('P'), b: t('B'), R: Rt / (1 - ff) }); }
+        return out;
+      },
+    };
+    board.comp = new Component({
       key: 'board', name: '导电纸描迹板', zone: 'none', fixed: true, required: true, object: g, labelY: 10,
       icon: SVG('<rect x="8" y="6" width="48" height="28" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="32" cy="20" r="4" fill="currentColor"/>'),
-      desc: '导电纸上压着金属电极，电极接直流电源。探针接数字电压表（负端接电源负极），在导电纸上移动探针即可测出各点的电位。点击“导电纸”观察窗中的任意位置，探针就移到那里。',
+      desc: '从器材柜拿一张压好电极的导电纸放到板上。自己接线：电源“+”接内电极（左电极），“−”接外电极（右电极）；探针接数字电压表“+”，电压表 COM 接电源负极。在导电纸上移动探针即可测出各点的电位；点击“导电纸”观察窗中的任意位置，探针就移到那里。',
       controls: () => [
-        { type: 'select', label: '电极', get: () => this.set, set: (v) => this.setSet(v), options: Object.entries(SETS).map(([k, s]) => ({ value: k, label: s.name })) },
+        { type: 'readout', label: '板上的导电纸', get: () => (this.mounted ? SETS[this.mounted].name : '没有：从器材柜拿一张放上来') },
         { type: 'knob', label: '探针 x', get: () => this.px, set: (v) => this.moveProbe(v, this.py), step: 0.1, bigStep: 2, perRev: 10, digits: 1, unit: 'mm' },
         { type: 'knob', label: '探针 y', get: () => this.py, set: (v) => this.moveProbe(this.px, v), step: 0.1, bigStep: 2, perRev: 10, digits: 1, unit: 'mm' },
       ],
-    }));
-    const sup = (this.supBox = meterBox(16, 9, 12, '直流稳压电源')); sup.group.position.set(-44, 0, -18);
-    app.addComponent(new Component({
-      key: 'supply', name: '直流稳压电源', zone: 'none', fixed: true, object: sup.group, labelY: 14,
-      desc: '0–15 V 连续可调，接在两个电极上（内电极 / 左电极接正极）。',
-      controls: () => [
-        { type: 'toggle', label: '电源开关', get: () => this.on, set: (v) => { this.on = v; app.changed(); } },
-        { type: 'knob', label: '输出电压', get: () => this.V0, set: (v) => { this.V0 = clamp(v, 0, 15); app.changed(); }, min: 0, max: 15, step: 0.01, bigStep: 0.5, perRev: 2, digits: 2, unit: 'V' },
-      ],
-    }));
-    const vm = (this.vmBox = meterBox(14, 8, 10, '数字电压表')); vm.group.position.set(44, 0, -18);
-    app.addComponent(new Component({
-      key: 'meter', name: '数字电压表', zone: 'none', fixed: true, object: vm.group, labelY: 13,
-      desc: '三位半数字电压表，20 V 挡，分辨率 0.01 V。负端接电源负极（外电极 / 右电极），正端接探针。',
-      controls: () => [{ type: 'readout', label: '示数', get: () => (isFinite(this.reading) ? `${this.reading.toFixed(2)} V` : '— 探针不在纸上') }],
-    }));
+    });
+    cir.add(board);
+    // 三张压好电极的导电纸：放到描迹板上，或放在台面上
+    app.addSlot({ id: 'sheet', pos: new THREE.Vector3(0, 1.62, 0), accepts: Object.keys(SETS).map((k) => 'sh_' + k), label: '描迹板上', r: 6, snap: 14 });
+    Object.entries(SETS).forEach(([k, st], i) => {
+      app.addSlot({ id: 'rest_' + k, pos: new THREE.Vector3(-30 + i * 30, 0.02, 32), accepts: ['sh_' + k], label: '台面', r: 6, snap: 12 });
+      const sg = new THREE.Group(), paper = mesh(new THREE.PlaneGeometry(30, 24), new THREE.MeshStandardMaterial({ color: 0x3d4247, roughness: 0.95 }), 0, 0.02, 0); paper.rotation.x = -Math.PI / 2; sg.add(paper);
+      const el = MAT.chrome();
+      const S = (mm) => mm * (this.paperScaleFor(k));
+      if (k === 'coax') { const ring = mesh(new THREE.TorusGeometry(S(this.r2 + 2.5), S(2.5), 6, 48), el, 0, 0.1, 0); ring.rotation.x = Math.PI / 2; sg.add(ring, mesh(new THREE.CylinderGeometry(S(this.r1), S(this.r1), 0.25, 24), el, S(this.ex), 0.12, -S(this.ey))); }
+      else if (k === 'pair') for (const x of [-40, 40]) sg.add(mesh(new THREE.CylinderGeometry(S(5), S(5), 0.25, 20), el, S(x), 0.12, 0));
+      else for (const x of [-35, 35]) sg.add(mesh(new THREE.BoxGeometry(S(4), 0.25, S(80)), el, S(x), 0.12, 0));
+      app.addComponent(new Component({
+        key: 'sh_' + k, name: st.name.replace(/（.*/, ''), zone: 'slot', defaultSlot: 'sheet', object: sg, labelY: 2,
+        icon: SVG(k === 'coax' ? '<circle cx="32" cy="20" r="14" fill="none" stroke="currentColor" stroke-width="3"/><circle cx="32" cy="20" r="3" fill="currentColor"/>' : k === 'pair' ? '<circle cx="18" cy="20" r="4" fill="currentColor"/><circle cx="46" cy="20" r="4" fill="currentColor"/>' : '<rect x="16" y="6" width="4" height="28" fill="currentColor"/><rect x="44" y="6" width="4" height="28" fill="currentColor"/>'),
+        desc: `${st.name}：导电纸上压好了金属电极。拖到描迹板上，电极的引线接到板上的接线柱。`,
+      }));
+    });
+    const sup = (this.sup = cir.add(dcSupply({ key: 'supply', defaultSlot: 'supply', vmax: 15, imax: 0.5 })));
+    app.addSlot({ id: 'supply', pos: new THREE.Vector3(-46, 0, -20), accepts: ['supply'], label: '台面', r: 6, snap: 12 });
+    app.place(sup.comp, { slot: 'supply', silent: true });
+    const vm = (this.vmBox = meterBox(14, 8, 10, '数字电压表'));
+    const dvm = {
+      key: 'dvm', short: '电压表',
+      terms: { '+': { pos: new THREE.Vector3(3, 0, 5.2), color: 0xb91c1c, label: 'V' }, '-': { pos: new THREE.Vector3(5.5, 0, 5.2), color: 0x1b1b1b, label: 'COM' } },
+      elements(t) { return [{ type: 'R', a: t('+'), b: t('-'), R: 1e7 }]; }, // 输入电阻 10 MΩ
+    };
+    dvm.comp = new Component({
+      key: 'dvm', name: '数字电压表', zone: 'slot', defaultSlot: 'dvm', object: vm.group, labelY: 13,
+      desc: '三位半数字电压表，20 V 挡，分辨率 0.01 V，输入电阻 10 MΩ。“V”端接探针，COM 端接电源负极（外电极 / 右电极）。',
+      controls: () => [{ type: 'readout', label: '示数', get: () => (isFinite(this.reading) ? `${this.reading.toFixed(2)} V` : '—') }],
+    });
+    cir.add(dvm);
+    app.addSlot({ id: 'dvm', pos: new THREE.Vector3(44, 0, -18), accepts: ['dvm'], label: '台面', r: 6, snap: 12 });
+    app.place(dvm.comp, { slot: 'dvm', silent: true });
     this.pv = app.addView({ id: 'paper', title: '导电纸（俯视，坐标纸 mm）', w: 330, h: 270, res: 1.6, onTap: (X, Y) => this.tap(X, Y) });
   }
   /** 观察窗坐标 ↔ 纸面坐标（mm） */
@@ -146,11 +212,13 @@ export class EFieldExperiment {
     this.tex.needsUpdate = true;
     this.paperScale = { s: (36 / W) * s, W, H };
   }
+  /** 某组电极的纸面 mm → 场景 cm 的比例（与 paintBoard 一致） */
+  paperScaleFor(k) { const [x0, x1, y0, y1] = SETS[k].box, W = 512, H = 400; return (36 / W) * Math.min(W / (x1 - x0), H / (y1 - y0)) * 0.92; }
   update() {
     const ps = this.paperScale;
     this.probe.position.set(this.px * ps.s, 1.62, -this.py * ps.s);
-    const sv = this.on ? this.V0.toFixed(2) : '----', mv = isFinite(this.reading) ? this.reading.toFixed(2) : '-.--';
-    if (sv !== this._sv) { this._sv = sv; this.supBox.setText(sv, 'V', this.on ? '输出' : '关'); }
+    this.cir.solve();
+    const mv = isFinite(this.reading) ? this.reading.toFixed(2) : '-.--';
     if (mv !== this._mv) { this._mv = mv; this.vmBox.setText(mv, 'V', '20 V 挡'); }
     this.drawPaper();
   }
@@ -212,7 +280,9 @@ export class EFieldExperiment {
   rec(t) {
     const a = this.app, u = this.reading;
     if (!this.on || this.V0 < 1) return a.toast('电源没有打开或电压太低', 'warn');
-    if (!isFinite(u)) return a.toast('探针不在导电纸上', 'warn');
+    if (!this.mounted) return a.toast('描迹板上没有导电纸', 'warn');
+    if (!isFinite(u)) return a.toast('电压表不在台上', 'warn');
+    const wi = this.wireIssue(); if (wi.length) a.toast(wi.join('；'), 'warn');
     if (Math.abs(u - this.target) > 0.05) a.toast(`电压表示数 ${u.toFixed(2)} V，与要找的 ${this.target} V 差得较多，这个点不在等势线上`, 'warn');
     t.addRow({ name: SETS[this.set].name.replace(/（.*/, ''), set: this.set, U: this.target, x: this.px, y: this.py, Um: u });
   }
@@ -239,6 +309,7 @@ export class EFieldExperiment {
   }
   async powerUp() {
     const a = this.app;
+    if (this.wireIssue().length) await this.cir.rewire([['supply:+', 'board:A'], ['supply:-', 'board:B'], ['dvm:-', 'board:B'], ['dvm:+', 'board:P']]);
     a.select(a.comp('supply'));
     this.on = true; a.renderInspector();
     await a.tween(() => this.V0, (v) => (this.V0 = v), 10, 700); this.V0 = 10; a.changed();
@@ -249,12 +320,14 @@ export class EFieldExperiment {
     return [
       {
         title: '接通电源，把电压调到 10.00 V',
-        html: '<p>选同轴电极，打开电源，把输出电压调到 10.00 V。可以把探针放到内电极上，用电压表核对一下电极间的电压。</p>',
-        check: () => this.on && Math.abs(this.V0 - 10) < 0.02 && this.set === 'coax',
+        html: '<p>从器材柜把同轴电极那张导电纸拖到描迹板上。<b>接线</b>：点一个接线柱再点另一个连一根导线——电源“+”接内电极、“−”接外电极，电压表 COM 接外电极、“V”接探针。打开电源，把输出电压调到 10.00 V。可以把探针放到内电极上，用电压表核对一下电极间的电压。</p>',
+        check: () => this.on && Math.abs(this.V0 - 10) < 0.02 && this.mounted === 'coax' && !this.wireIssue().length,
         status: () => `电极：${SETS[this.set].name}；电源 ${this.on ? '开' : '关'}，${this.V0.toFixed(2)} V`,
         diagnose: () => {
           const out = [];
-          if (this.set !== 'coax') out.push({ msg: '这一步用同轴电极。', fix: { label: '换成同轴电极', run: async () => this.setSet('coax') } });
+          if (this.mounted && this.mounted !== 'coax') out.push({ msg: '这一步用同轴电极。', fix: { label: '换成同轴电极', run: async () => this.setSet('coax') } });
+          if (!this.mounted) out.push({ msg: '描迹板上还没有导电纸：从器材柜把同轴电极那张拖上来。', fix: { label: '放上同轴电极', run: async () => this.setSet('coax') } });
+          const wi = this.wireIssue(); if (wi.length) out.push({ msg: `接线：${wi.join('；')}。`, fix: { label: '帮我接好', run: () => this.cir.rewire([['supply:+', 'board:A'], ['supply:-', 'board:B'], ['dvm:-', 'board:B'], ['dvm:+', 'board:P']]) } });
           if (!this.on) out.push({ msg: '电源开关没有打开，电极间没有电压。', fix: { label: '打开电源', run: async () => { this.on = true; app.changed(); } } });
           else if (Math.abs(this.V0 - 10) >= 0.02) out.push({ msg: `电源输出是 ${this.V0.toFixed(2)} V，要调到 10.00 V（各条等势线的电位按 10 V 设计）。`, fix: { label: '调到 10.00 V', run: () => app.tween(() => this.V0, (v) => (this.V0 = v), 10, 600).then(() => { this.V0 = 10; }) } });
           return out;
@@ -270,7 +343,7 @@ export class EFieldExperiment {
         diagnose: () => {
           const out = [], u = this.reading;
           if (!this.on || this.V0 < 9.9) out.push({ msg: '电源没开或电压不是 10 V，等势线的电位对不上。', fix: { label: '打开并调到 10 V', run: () => this.powerUp() } });
-          if (this.set !== 'coax') out.push({ msg: '现在的电极不是同轴电极。', fix: { label: '换成同轴电极', run: async () => this.setSet('coax') } });
+          if (this.mounted !== 'coax') out.push({ msg: '现在的电极不是同轴电极。', fix: { label: '换成同轴电极', run: async () => this.setSet('coax') } });
           if (isFinite(u) && this.on && Math.abs(u - this.target) > 0.05) {
             const r = Math.hypot(this.px, this.py), rr = coaxR(this.target, this.r1, this.r2, this.V0 || 10);
             out.push({ msg: `探针处是 ${u.toFixed(2)} V，要找 ${this.target} V：应该${u > this.target ? '往外（远离内电极）' : '往里（靠近内电极）'}移。这条等势线的半径大约 ${rr.toFixed(0)} mm，探针现在离中心 ${r.toFixed(1)} mm。`, fix: { label: '帮我把探针移到等势线上', run: async () => { const a0 = Math.atan2(this.py, this.px), p = this.findOnSegment(this.target, (this.r1 + 0.3) * Math.cos(a0), (this.r1 + 0.3) * Math.sin(a0), (this.r2 - 0.3) * Math.cos(a0), (this.r2 - 0.3) * Math.sin(a0)); if (p) { await app.tween(() => this.px, (v) => this.moveProbe(v, this.py), p[0], 400); await app.tween(() => this.py, (v) => this.moveProbe(this.px, v), p[1], 400); this.moveProbe(p[0], p[1]); } } } });

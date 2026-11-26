@@ -18,7 +18,7 @@ export const TOOLS = [
   { name: 'get_history', description: '读取学生从开始到现在的操作轨迹（按时间顺序）：调过哪些参数、从多少调到多少、放取了哪些器材、记录了哪些数据、在哪一步出现过什么仪器警告、哪些步骤是自动完成的。用来判断学生是怎么走到现在这个状态的、哪一步操作导致了问题。', params: { last: '最多返回多少条，默认 60' } },
   { name: 'set_control', description: '把某个仪器的一个可调参数调到指定值，学生能看到旋钮被转过去。component 用 get_state 里仪器的 key（“测量与读数”面板用 global），control 用参数名称。一次只调确实有问题的那一项。', params: { component: '仪器的 key 或名称；测量与读数面板写 global', control: '参数名称（get_state 中 controls 的 label）', value: '目标值：数值（不带单位）、选项文字，或 开 / 关' } },
   { name: 'press_button', description: '按下仪器或测量面板上的一个按钮（如“开始测量”“记录”之类的操作按钮）。', params: { component: '仪器 key 或 global', button: '按钮文字' } },
-  { name: 'place_component', description: '把器材柜里的一件器材放到实验台上它的标准位置。', params: { component: '器材 key 或名称' } },
+  { name: 'place_component', description: '把器材柜里的一件器材放到实验台上；有几个可放位置（挂钩、孔位、秤盘等，get_state 里该器材的 spots）时用 where 指定放到哪里，也可以把已放好的器材移到另一个位置。where 写“器材柜”就是取下放回柜里。', params: { component: '器材 key 或名称', where: '可选：位置名称（spots 里的一项），或 器材柜' } },
   { name: 'apply_fix', description: '执行本地诊断 diagnosis 列表中第 index 条的修正（从 0 开始，只有带 fix 的条目可以执行）。', params: { index: '条目序号，如 0' } },
   { name: 'show_component', description: '选中并高亮一个仪器，打开它的调节面板，让学生看清你说的是哪一个。', params: { component: '仪器 key 或名称' } },
   { name: 'take_over_step', description: '让程序按规范操作自动完成当前这一步（会先把前面被改乱的设置恢复）。引导模式下只在学生明确要求，或者你调了几次仍然不行时使用；代做模式下某一步自己做了几次仍不通过时使用。', params: {} },
@@ -116,6 +116,7 @@ export class Tutor {
     const comps = [...a.comps.values()].map((c) => ({
       key: c.key, name: strip(c.name), placed: !!c.placed, ...(c.required ? { required: true } : {}),
       ...(c.placed ? { controls: this.controlsOf(c).map((d) => this.descOf(d)) } : {}),
+      ...this.spotsOf(c),
     }));
     const tables = a.tables.map((t) => {
       let filled = 0, cells = 0, pend = 0;
@@ -232,10 +233,31 @@ export class Tutor {
     this.log(`按下「${strip(d.label)}」`);
     return { ok: true };
   }
-  async place(compQ) {
+  /** 器材可以放的几个位置（挂点、孔位、托盘）和现在所在的位置 */
+  spotsOf(c) {
+    const a = this.app, zs = a.zoneFor(c).filter((z) => z.type === 'slot');
+    if (zs.length < 2) return {};
+    const nm = (z) => strip(z.label || z.id);
+    const at = c.placed && c.slot ? zs.find((z) => z.id === c.slot) : null;
+    return { spots: zs.map((z) => nm(z) + (z.occupant && z.occupant !== c ? `（已有${strip(z.occupant.name)}）` : '')), ...(at ? { at: nm(at) } : {}) };
+  }
+  async place(compQ, where = '') {
     this.ready();
-    const c = this.findComp(compQ);
+    const a = this.app, c = this.findComp(compQ);
     if (!c || c === 'global') throw new Error(`找不到器材「${compQ}」`);
+    if (where) {
+      if (c.noShelf && /器材柜/.test(where)) throw new Error(`「${strip(c.name)}」不放进器材柜，放回${c.home || '原处'}`);
+      if (/器材柜|取下|放回/.test(where) && !c.noShelf) { if (!c.placed) return { ok: true, note: '本来就在器材柜里' }; a.remove(c); this.log(`把「${strip(c.name)}」取下放回器材柜`); return { ok: !c.placed }; }
+      const zs = a.zoneFor(c).filter((z) => z.type === 'slot'), w = norm(where);
+      const z = zs.find((q) => q.id === where) || zs.find((q) => norm(q.label || '') === w) || zs.find((q) => q.label && (norm(q.label).includes(w) || w.includes(norm(q.label))));
+      if (!z) throw new Error(`「${strip(c.name)}」不能放到「${where}」；可放的位置：${zs.map((q) => strip(q.label || q.id)).join('、') || '（只有标准位置）'}`);
+      if (z.occupant && z.occupant !== c) throw new Error(`「${strip(z.label || z.id)}」上已经有「${strip(z.occupant.name)}」`);
+      const err = a.exp.canPlace && a.exp.canPlace(c, { slot: z.id, moving: c.placed });
+      if (err) throw new Error(strip(err));
+      await a.autoPut(c.key, z.id);
+      this.log(`把「${strip(c.name)}」放到${strip(z.label || z.id)}`);
+      return { ok: c.slot === z.id };
+    }
     if (c.placed) return { ok: true, note: '已经在实验台上了' };
     await this.app.autoPlace(c.key);
     this.log(`把「${strip(c.name)}」放上实验台`);
@@ -330,7 +352,7 @@ export class Tutor {
       case 'get_history': return { history: this.history(Math.min(200, +g('last') || 60)), totalEvents: this.hist.length };
       case 'set_control': return this.setControl(g('component'), g('control'), g('value'));
       case 'press_button': return this.pressButton(g('component'), g('button'));
-      case 'place_component': return this.place(g('component'));
+      case 'place_component': return this.place(g('component'), g('where'));
       case 'apply_fix': return this.applyFix(g('index'));
       case 'show_component': return this.show(g('component'));
       case 'take_over_step': return this.takeOver();

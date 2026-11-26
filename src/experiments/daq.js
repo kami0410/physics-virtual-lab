@@ -26,18 +26,47 @@ export class DaqExperiment {
     this.app = app;
     this.Sfs = rand(1.45, 1.75); this.beta = rand(0.001, 0.003) * (Math.random() < 0.5 ? -1 : 1); this.hy = rand(3e-4, 8e-4);
     this.off = rand(-3, 3); this.mu = Math.round(rand(150, 450) * 10) / 10;
-    this.m = 0; this.dir = 'load'; this.zero = 0; this.G = 200;
+    this.dir = 'load'; this._ms = 0; this.zero = 0; this.G = 200;
     this.ch = 1; this.fs = 1000; this.bits = 16; this.f = 100; this.A = 2;
     this.acq = null; this.acqKey = ''; this.tAcq = 0; this.ph = 0;
   }
-  get mass() { return this.m === 'U' ? this.mu : this.m; }
+  /** 托盘上的 50 g 砝码个数、未知物体在不在托盘上（由拖放决定） */
+  get nW() { return this.app.stackOf ? this.app.stackOf('pan').length : 0; }
+  get unkOn() { return !!(this.app.slotOf && this.app.slotOf('unk') === 'panU'); }
+  /** 托盘上放的：砝码总质量（g），或 'U'（有未知物体） */
+  get m() { return this.unkOn ? 'U' : 50 * this.nW; }
+  get mass() { return 50 * this.nW + (this.unkOn ? this.mu : 0); }
+  /** 托盘上的东西变了：质量增加算加载、减少算卸载（决定迟滞走哪条支路） */
+  loadChanged() { const nw = this.mass; if (nw > this._ms + 1e-9) this.dir = 'load'; else if (nw < this._ms - 1e-9) this.dir = 'unload'; this._ms = nw; this.acqKey = ''; this.app.changed(); }
+  onPlace() { this.loadChanged(); }
+  onSlotChange() { this.loadChanged(); }
+  onRemove() { this.loadChanged(); }
+  /** 托盘上的挂点跟着悬臂梁走 */
+  syncPan() {
+    const a = this.app, base = -6.0 + (this.unkOn ? 2.6 : 0), v = new THREE.Vector3();
+    for (const z of a.zones) {
+      let y;
+      if (z.id === 'panU') y = -6.0; else { const m = /^pw(\d)$/.exec(z.id); if (!m) continue; y = base + +m[1] * 0.85; }
+      this.pan.localToWorld(v.set(0, y, 0)); z.pos.copy(v);
+      if (z.marker) z.marker.position.copy(v).y += 0.15;
+      if (z.occupant && !(a.drag && a.drag.comp === z.occupant)) z.occupant.root.position.copy(v);
+    }
+  }
+  /** 自动操作：托盘上换成 v（砝码克数，或 'U' 只放未知物体），一个一个加减 */
+  async setLoadTo(v) {
+    const a = this.app;
+    if (v === 'U') { while (this.nW) { a.remove(a.stackOf('pan').pop()); await a.wait(60); } if (!this.unkOn) await a.autoPut('unk', 'panU'); return; }
+    if (this.unkOn) { a.remove(a.comp('unk')); await a.wait(80); }
+    const n = Math.round(v / 50);
+    while (this.nW > n) { a.remove(a.stackOf('pan').pop()); await a.wait(60); }
+    for (let k = 1; k <= 10 && this.nW < n; k++) if (!a.comp('w' + k).placed) await a.autoPut('w' + k, 'pw0');
+  }
   /** 桥路输出（V），含非线性与迟滞 */
   bridge() {
     const x = this.mass / FS, k = EX * this.Sfs * 1e-3;
     return k * (x + this.beta * x * (x - 1) + (this.dir === 'unload' && this.m !== 'U' ? this.hy * 4 * x * (1 - x) : 0));
   }
   ampOut() { return this.G * (this.bridge() + (this.off - this.zero) * 1e-3); }
-  setLoad(v) { const old = this.mass; this.m = v; const nw = this.mass; if (v === 'U' || nw > old) this.dir = 'load'; else if (nw < old) this.dir = 'unload'; this.acqKey = ''; }
 
   // ---------- 采集 ----------
   sample() {
@@ -79,16 +108,31 @@ export class DaqExperiment {
     this.pan = new THREE.Group(); this.pan.position.set(20, 0, 0); this.beam.add(this.pan);
     this.pan.add(mesh(new THREE.CylinderGeometry(0.15, 0.15, 6, 8), MAT.chrome(), 0, -3, 0));
     this.pan.add(mesh(new THREE.CylinderGeometry(4, 4, 0.4, 32), MAT.chrome(), 0, -6.2, 0));
-    this.wts = [];
-    for (let k = 0; k < 10; k++) { const w = mesh(new THREE.CylinderGeometry(1.6 - (k % 2) * 0.2, 1.6 - (k % 2) * 0.2, 0.8, 24), MAT.paint(0x9aa3ad), 0, -5.6 + k * 0.85, 0); this.wts.push(w); this.pan.add(w); }
-    this.obj = mesh(new THREE.BoxGeometry(4, 2.6, 3), MAT.paint(0x6b4f2a), 0, -4.7, 0); this.pan.add(this.obj);
+    // 托盘：50 g 砝码一个个摞上去（从器材柜拖），未知物体放在最底下
+    for (let k = 0; k < 10; k++) app.addSlot({ id: `pw${k}`, pos: new THREE.Vector3(0, 0, 0), accepts: Array.from({ length: 10 }, (_, i) => `w${i + 1}`), label: '传感器托盘', r: 2.5, snap: 6, stack: 'pan', level: k });
+    app.addSlot({ id: 'panU', pos: new THREE.Vector3(0, 0, 0), accepts: ['unk'], label: '传感器托盘', r: 2.5, snap: 6 });
+    app.addSlot({ id: 'unkRest', pos: new THREE.Vector3(-14, 0, 20), accepts: ['unk'], label: '台面', r: 3, snap: 8 });
+    for (let k = 1; k <= 10; k++) {
+      const wg = new THREE.Group(), rr = 1.6 - ((k - 1) % 2) * 0.2; wg.add(mesh(new THREE.CylinderGeometry(rr, rr, 0.8, 24), MAT.paint(0x9aa3ad), 0, 0.4, 0));
+      app.addComponent(new Component({
+        key: 'w' + k, name: `50 g 砝码 ${k}`, group: '50 g 砝码', zone: 'slot', defaultSlot: 'pw0', object: wg, labelY: 2, showLabel: false,
+        icon: SVG('<rect x="20" y="14" width="24" height="12" rx="2" fill="currentColor"/><text x="32" y="36" font-size="8" text-anchor="middle" fill="currentColor">50 g</text>'),
+        desc: '50 g 标准砝码。拖到传感器托盘上加载，拖回器材柜就是取下。',
+      }));
+    }
+    const ug = new THREE.Group(); ug.add(mesh(new THREE.BoxGeometry(4, 2.6, 3), MAT.paint(0x6b4f2a), 0, 1.3, 0));
+    app.addComponent(new Component({
+      key: 'unk', name: '未知物体', zone: 'slot', defaultSlot: 'panU', object: ug, labelY: 4,
+      icon: SVG('<rect x="20" y="10" width="24" height="20" fill="currentColor"/><text x="32" y="24" font-size="10" text-anchor="middle" fill="#fff">?</text>'),
+      desc: '质量未知（几百克）的物体。放到传感器托盘上，由标定直线求它的质量。',
+    }));
     const amp = (this.aBox = meterBox(16, 9, 10, '仪表放大器输出')); amp.group.position.set(-10, 0, -20); scene.add(amp.group);
     app.addComponent(new Component({
       key: 'cell', name: '称重传感器与放大器', zone: 'none', fixed: true, required: true, object: cell, labelY: 22,
       icon: SVG('<path d="M6 30V10h6v6h36v4H12"/><path d="M48 20v8"/><path d="M42 28h12"/>'),
       desc: '铝合金悬臂梁上、下表面各贴两片应变片，接成全桥，激励电压 5.000 V，量程 500 g。仪表放大器的增益可选，调零电位器补偿桥路不平衡和放大器失调。托盘上可放 50 g 一个的标准砝码（最多 10 个）或一个未知质量的物体。',
       controls: () => [
-        { type: 'segment', label: '托盘', options: [...MS.map((m) => ({ value: m, label: `${m} g` })), { value: 'U', label: '未知物体' }], get: () => this.m, set: (v) => { this.setLoad(v); app.changed(); } },
+        { type: 'readout', label: '托盘上', get: () => [this.nW ? `${this.nW} 个 50 g 砝码` : '', this.unkOn ? '未知物体' : ''].filter(Boolean).join(' + ') || '空' },
         { type: 'segment', label: '放大器增益', options: GAINS.map((g) => ({ value: g, label: `×${g}` })), get: () => this.G, set: (v) => { this.G = v; app.changed(); } },
         { type: 'knob', label: '调零（折合输入）', get: () => this.zero, set: (v) => { this.zero = Math.round(clamp(v, -5, 5) * 1000) / 1000; app.changed(); }, min: -5, max: 5, step: 0.001, bigStep: 0.1, perRev: 0.5, digits: 3, unit: 'mV' },
       ],
@@ -125,9 +169,7 @@ export class DaqExperiment {
     return this.ch === 1 ? `均值 ${s.mean.toFixed(4)} V，标准差 ${(s.std * 1e3).toFixed(2)} mV` : `峰值频率 ${s.peak.toFixed(2)} Hz，拟合残差 ${(s.rms * 1e3).toPrecision(3)} mV`;
   }
   update() {
-    const n = this.m === 'U' ? 0 : this.m / 50;
-    this.wts.forEach((w, k) => (w.visible = k < n)); this.obj.visible = this.m === 'U';
-    this.beam.rotation.z = -0.02 * (this.mass / FS);
+    this.beam.rotation.z = -0.02 * (this.mass / FS); this.beam.updateMatrixWorld(true); this.syncPan();
     const o = this.ampOut(), so = Math.abs(o) > 12 ? '过载' : o.toFixed(3);
     if (so !== this._a) { this._a = so; this.aBox.setText(so, so === '过载' ? '' : 'V', `增益 ×${this.G}`); }
     const g = `${this.f.toFixed(1)}|${this.A}`; if (g !== this._g) { this._g = g; this.gBox.setText(this.f.toFixed(1), 'Hz', `幅度 ${this.A.toFixed(2)} V`); }
@@ -215,7 +257,8 @@ export class DaqExperiment {
   recUnk(t) {
     const a = this.app, cal = a.table('cal').rows;
     if (!this.ch1ok()) return;
-    if (this.m !== 'U') a.toast('托盘上要放未知物体', 'warn');
+    if (!this.unkOn) a.toast('托盘上要放未知物体', 'warn');
+    else if (this.nW) a.toast(`托盘上除了未知物体还压着 ${this.nW} 个砝码，读数里含砝码的重量`, 'warn');
     t.set(0, 'U', this.meanRead());
     if (cal.length && (cal[0]._G !== this.G || Math.abs(cal[0]._z - this.zero) > 1e-9)) t.flagAll(0, ['增益或调零和标定时不同，标定曲线不再适用']);
   }
@@ -239,7 +282,7 @@ export class DaqExperiment {
   }
 
   // ======================= 自动操作 =======================
-  async seg(comp, key, v) { const a = this.app; a.select(a.comp(comp)); if (this[key] !== v) { if (key === 'm') this.setLoad(v); else this[key] = v; a.renderInspector(); a.changed(); await a.wait(120); } }
+  async seg(comp, key, v) { const a = this.app; a.select(a.comp(comp)); if (this[key] !== v) { if (key === 'm') await this.setLoadTo(v); else this[key] = v; a.renderInspector(); a.changed(); await a.wait(120); } }
   async adj(comp, key, to, ms = 250) { const a = this.app; a.select(a.comp(comp)); if (Math.abs(this[key] - to) > 1e-9) await a.tween(() => this[key], (v) => (this[key] = v), to, ms); this[key] = to; a.changed(); await a.wait(60); }
   steps() {
     const app = this.app, rows = (id) => app.table(id).completeRows(), cal = (d) => rows('cal').filter((r) => r.dir === d);

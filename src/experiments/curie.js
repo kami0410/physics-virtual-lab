@@ -25,14 +25,29 @@ export class CurieExperiment {
       { name: '1 号样品（锰锌铁氧体）', Tc: rand(95, 110), U0: rand(42, 58), Ub: rand(0.2, 0.3) },
       { name: '2 号样品（镍锌铁氧体）', Tc: rand(135, 155), U0: rand(30, 42), Ub: rand(0.15, 0.25) },
     ];
-    this.si = 0; this.power = false; this.heat = false; this.P = 0; this.fan = false;
-    this.Tf = this.Ta; this.Ts = this.Ta; this.t = 0; this.hold = null; this.timeScale = 1;
+    this.last = 0; this.power = false; this.heat = false; this.P = 0; this.fan = false;
+    this.Tf = this.Ta; this.sT = [this.Ta, this.Ta]; // 两个样品各自的温度 this.t = 0; this.hold = null; this.timeScale = 1;
   }
+  /** 炉膛里的样品序号（没有为 -1）；si：表格、曲线用的样品（炉里没有时取最近放进去的那个） */
+  get inOven() { const z = this.app.zones && this.app.zones.find((q) => q.id === 'ovenIn'); return z && z.occupant ? +z.occupant.key.slice(4) : -1; }
+  get si() { const k = this.inOven; return k < 0 ? this.last : k; }
   get sample() { return this.samples[this.si]; }
+  get Ts() { return this.sT[this.si]; }
+  canRemove(comp) { if (comp.key.startsWith('ring') && +comp.key.slice(4) === this.inOven && this.Tf > 60) return `炉膛 ${this.Tf.toFixed(0)} °C，样品烫手拿不出来：开风扇等降到 60 °C 以下`; return null; }
+  onPlace(c) { if (c && c.key.startsWith('ring') && this.inOven >= 0) this.last = this.inOven; this.app.renderInspector(); if (this.tBox) this.show(); this.app.changed(); }
+  onSlotChange(c) { this.onPlace(c); }
+  onRemove(c) { this.onPlace(c); }
+  /** 自动操作：把 i 号样品放进炉膛（原来的放回台面） */
+  async putSample(i) {
+    const a = this.app, k = this.inOven;
+    if (k === i) return;
+    if (k >= 0) a.moveSlot(a.comp('ring' + k), 'rest' + k, { silent: true });
+    await a.autoPut('ring' + i, 'ovenIn');
+  }
   /** 炉温读数（°C，0.1） */
   readT() { return Math.round(this.Tf * 10) / 10; }
   /** 次级电压读数（mV，0.01） */
-  readU() { const s = this.sample; return this.power ? Math.round(secondaryU(this.Ts + K0, { Tc: s.Tc + K0, U0: s.U0, Ub: s.Ub, Tref: 298.15 }) * 100) / 100 : 0; }
+  readU() { const s = this.sample; return this.power && this.inOven >= 0 ? Math.round(secondaryU(this.Ts + K0, { Tc: s.Tc + K0, U0: s.U0, Ub: s.Ub, Tref: 298.15 }) * 100) / 100 : 0; }
   heating() { return this.heat && this.P > 0 && this.Tf < TMAX; }
   advance(T) {
     while (T > 1e-9) {
@@ -42,7 +57,8 @@ export class CurieExperiment {
       const P = this.heat && !this.over ? this.P : 0, hh = this.fan ? HFAN : H0;
       this.Tf += (h * (P - hh * (this.Tf - this.Ta))) / CF;
       if (this.over && this.Tf < TMAX - 10) this.over = false;
-      this.Ts += (this.Tf - this.Ts) * (1 - Math.exp(-h / TAUS));
+      const io = this.inOven;
+      for (let k = 0; k < this.sT.length; k++) this.sT[k] += ((k === io ? this.Tf : this.Ta) - this.sT[k]) * (1 - Math.exp(-h / (k === io ? TAUS : 300))); // 炉外的样品在空气里慢慢冷却
       T -= h; this.t += h;
     }
   }
@@ -65,8 +81,19 @@ export class CurieExperiment {
     const shell = mesh(new THREE.CylinderGeometry(6.5, 6.5, 14, 40, 1, true), MAT.paint(0xc9c3b6), 0, 9, 0); shell.material.side = THREE.DoubleSide; fg.add(shell);
     fg.add(mesh(new THREE.CylinderGeometry(4.2, 4.2, 13.6, 32, 1, true), MAT.paint(0xe9e1cf), 0, 9, 0));
     const lid = new THREE.Mesh(new THREE.RingGeometry(4.2, 6.5, 40), MAT.paint(0x9c958a)); lid.rotation.x = -Math.PI / 2; lid.position.y = 16.01; fg.add(lid);
-    this.coil = mesh(new THREE.TorusGeometry(2.2, 0.9, 16, 40), MAT.paint(0x2a2a2a), 0, 13.6, 0); this.coil.rotation.x = Math.PI / 2; fg.add(this.coil);
-    const wind = mesh(new THREE.TorusGeometry(2.2, 1.0, 8, 40), new THREE.MeshStandardMaterial({ color: 0xb87333, metalness: 0.8, roughness: 0.35, wireframe: true }), 0, 13.6, 0); wind.rotation.x = Math.PI / 2; fg.add(wind);
+    // 两个环形样品（绕好初级、次级线圈）：从器材柜拿出来放进炉膛
+    app.addSlot({ id: 'ovenIn', pos: new THREE.Vector3(-24, 13.6, -2), accepts: ['ring0', 'ring1'], label: '炉膛中央', r: 3, snap: 10 });
+    this.samples.forEach((sm, i) => {
+      app.addSlot({ id: 'rest' + i, pos: new THREE.Vector3(-40 + i * 8, 1, 18), accepts: ['ring' + i], label: '台面', r: 3, snap: 8 });
+      const rg = new THREE.Group();
+      const c = mesh(new THREE.TorusGeometry(2.2, 0.9, 16, 40), MAT.paint(i ? 0x3a3530 : 0x2a2a2a)); c.rotation.x = Math.PI / 2; rg.add(c);
+      const w = mesh(new THREE.TorusGeometry(2.2, 1.0, 8, 40), new THREE.MeshStandardMaterial({ color: 0xb87333, metalness: 0.8, roughness: 0.35, wireframe: true })); w.rotation.x = Math.PI / 2; rg.add(w);
+      app.addComponent(new Component({
+        key: 'ring' + i, name: sm.name, zone: 'slot', defaultSlot: 'ovenIn', object: rg, labelY: 3,
+        icon: '<svg viewBox="0 0 64 40"><circle cx="32" cy="20" r="11" fill="none" stroke="currentColor" stroke-width="5"/></svg>',
+        desc: `${sm.name}，环形，外径约 20 mm，上面绕着初级、次级线圈，引线插在测试仪上。放进炉膛中央测量；炉温高时样品烫手，不能取出。刚放进热炉膛的样品要过一阵才跟上炉温。`,
+      }));
+    });
     this.hotRing = new THREE.Mesh(new THREE.RingGeometry(3.9, 4.2, 40), MAT.emissive(0xff5a1f, 0)); this.hotRing.rotation.x = -Math.PI / 2; this.hotRing.position.y = 15.9; fg.add(this.hotRing);
     this.fanG = new THREE.Group(); this.fanG.position.set(8.5, 4, 0);
     fg.add(mesh(new THREE.BoxGeometry(1.2, 5, 5), MAT.paint(0x2b3440), 8.2, 4, 0));
@@ -75,9 +102,9 @@ export class CurieExperiment {
     app.addComponent(new Component({
       key: 'oven', name: '加热炉与样品', zone: 'none', fixed: true, required: true, object: fg, labelY: 22,
       icon: '<svg viewBox="0 0 64 40"><circle cx="32" cy="20" r="12" fill="none" stroke="currentColor" stroke-width="5"/><path d="M14 6h36v28H14z" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>',
-      desc: '小型管式加热炉，炉膛中央放环形铁氧体样品（外径约 20 mm），样品上绕初级、次级线圈。铂电阻温度计测的是炉膛温度。炉温超过 200 °C 时过温保护自动切断加热，降到 190 °C 以下恢复。<br>两个样品：1 号锰锌铁氧体、2 号镍锌铁氧体。炉温高时不要换样品。',
+      desc: '小型管式加热炉，炉膛中央放环形铁氧体样品。铂电阻温度计测的是炉膛温度，不是样品温度。炉温超过 200 °C 时过温保护自动切断加热，降到 190 °C 以下恢复。',
       controls: () => [
-        { type: 'segment', label: '样品', options: this.samples.map((s, i) => ({ value: i, label: `${i + 1} 号` })), get: () => this.si, set: (v) => { if (v === this.si) return; if (this.Tf > 45) { app.toast('炉温还高，等降到 45 °C 以下再换样品', 'warn'); app.renderInspector(); return; } this.si = v; this.Ts = this.Tf; app.changed(); } },
+        { type: 'readout', label: '炉膛里', get: () => (this.inOven < 0 ? '没有样品：从器材柜拿一个放进来' : this.samples[this.inOven].name) },
         { type: 'toggle', label: '加热', get: () => this.heat, set: (v) => { this.heat = v; app.changed(); } },
         { type: 'knob', label: '加热功率', get: () => this.P, set: (v) => { this.P = Math.round(clamp(v, 0, 60)); app.changed(); }, min: 0, max: 60, step: 1, bigStep: 5, perRev: 20, digits: 0, unit: 'W' },
         { type: 'toggle', label: '散热风扇', get: () => this.fan, set: (v) => { this.fan = v; app.changed(); } },
@@ -95,7 +122,7 @@ export class CurieExperiment {
       controls: () => [
         { type: 'toggle', label: '电源', get: () => this.power, set: (v) => { this.power = v; app.changed(); } },
         { type: 'readout', label: '炉温', get: () => `${this.readT().toFixed(1)} °C` },
-        { type: 'readout', label: '次级电压', get: () => (this.power ? `${this.readU().toFixed(2)} mV` : '电源未开') },
+        { type: 'readout', label: '次级电压', get: () => (!this.power ? '电源未开' : this.inOven < 0 ? '炉膛里没有样品（线圈没接上）' : `${this.readU().toFixed(2)} mV`) },
       ],
     }));
     this.cv = app.addView({ id: 'ut', title: '次级电压–炉温（已记录的点）', w: 300, h: 200, res: 1.6 });
@@ -175,9 +202,9 @@ export class CurieExperiment {
     return [
       {
         title: '接通测试仪',
-        html: '<p>选定样品放进加热炉，打开居里温度测试仪的电源。室温下记下次级电压的大小。</p>',
-        check: () => this.power,
-        auto: async () => { await app.view('全景'); await this.flag('power', true); },
+        html: '<p>从器材柜拿一个样品<b>拖进加热炉的炉膛</b>，打开居里温度测试仪的电源。室温下记下次级电压的大小。</p>',
+        check: () => this.power && this.inOven >= 0,
+        auto: async () => { await app.view('全景'); if (this.inOven < 0) await this.putSample(this.last); await this.flag('power', true); },
       },
       {
         title: '升温测量',
@@ -188,6 +215,7 @@ export class CurieExperiment {
         diagnose: () => (!this.power ? [{ msg: '测试仪电源没开。', fix: { label: '打开', run: async () => { this.power = true; } } }] : !this.heating() && !this.over ? [{ msg: '加热没有打开，或功率为 0。', fix: { label: '打开加热', run: async () => { this.heat = true; this.P = this.sample.Tc > 120 ? 45 : 32; this.fan = false; } } }] : []),
         auto: async () => {
           app.showTable(0); await app.view('仪器');
+          if (this.inOven < 0) await this.putSample(this.last);
           if (!this.power) await this.flag('power', true);
           if (this.fan) await this.flag('fan', false);
           await this.flag('heat', true); await this.knob(this.sample.Tc > 120 ? 45 : 32);
@@ -203,6 +231,7 @@ export class CurieExperiment {
         diagnose: () => (this.heat ? [{ msg: '加热还开着。', fix: { label: '关掉', run: async () => { this.heat = false; } } }] : !this.power ? [{ msg: '测试仪电源没开。', fix: { label: '打开', run: async () => { this.power = true; } } }] : []),
         auto: async () => {
           app.showTable(1); await app.view('仪器');
+          if (this.inOven < 0) await this.putSample(this.last);
           if (!this.power) await this.flag('power', true);
           // 还没升到居里点以上时先加热上去
           const top = this.sample.Tc + 13;

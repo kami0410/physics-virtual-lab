@@ -13,6 +13,7 @@ import { rand, gauss, clamp, mean, stdev, uA, fmtU, relErr, pct } from '../core/
 const N = 6;
 const D_CAL = 0.02, D_MIC = 0.004, D_BAL = 0.02; // 仪器最大允差：游标卡尺 0.02 mm，一级千分尺 0.004 mm，电子天平 0.02 g
 const FEATS = { z: '合拢读零点', D: '外径 D', d: '内径 d（内量爪）', H: '高 H' };
+const CAL_SLOT = { calD: 'D', calH: 'H', calIn: 'd' }, FEAT_SLOT = { D: 'calD', H: 'calH', d: 'calIn' };
 const SVG = (inner) => `<svg viewBox="0 0 64 40" fill="none" stroke="currentColor" stroke-width="1.5">${inner}</svg>`;
 
 export class DensityExperiment {
@@ -38,20 +39,83 @@ export class DensityExperiment {
     this.cal = new Caliper({ zero: [0, 0.02, -0.02, 0.04][Math.floor(Math.random() * 4)] });
     this.mic = new Micrometer({ zero: Math.round(rand(-10, 12)) / 1000 || 0.004 });
     this.cal.open = 12; this.mic.gap = 3;
-    this.tool = 'cal'; this.feat = 'z'; this.micAt = 'z';
-    this.balOff = Math.round(rand(2, 8)) / 100; this.pan = null; this.assist = false;
+    this.tool = 'cal';
+    this.balOff = Math.round(rand(2, 8)) / 100; this.assist = false;
+  }
+  /** 卡尺量爪间夹的是圆柱的哪个尺寸（由圆柱放在卡尺的哪个位置决定）；空着时为 'z' */
+  get feat() { return CAL_SLOT[this.app.slotOf ? this.app.slotOf('cyl') : null] || 'z'; }
+  /** 千分尺测砧间有没有钢球 */
+  get micAt() { return this.app.slotOf && this.app.slotOf('ball') === 'mic' ? 'b' : 'z'; }
+  /** 秤盘上的东西：'cyl' | 'ball' | null */
+  get pan() { const z = this.app.zones && this.app.zones.find((q) => q.id === 'pan'), o = z && z.occupant; return o ? o.key : null; }
+  /** 圆柱放进 / 取出卡尺后，卡尺的状态跟着变 */
+  syncCal() {
+    const f = this.feat, s = this.calSize(); this.tool = 'cal';
+    if (f === 'd') this.cal.obj = null; else this.cal.setObject(f === 'z' ? null : s);
+    this.app.changed();
+  }
+  syncMic() { this.tool = 'mic'; this.mic.setObject(this.micAt === 'z' ? null : this.balls[this.nextRow('ball', 'r')]); this.app.changed(); }
+  canPlace(comp, o = {}) {
+    const a = this.app, sl = o.slot ?? comp.defaultSlot;
+    if (CAL_SLOT[sl]) {
+      if (!a.comp('cal').placed) return '先把游标卡尺拿到台上';
+      const f = CAL_SLOT[sl], size = this.dims[f][this.nextRow('cyl', f)];
+      if (f === 'd' && this.cal.open > size - 0.5) return `内量爪张开 ${this.cal.open.toFixed(1)} mm，比内径还大，伸不进内孔：先把尺框推拢`;
+      if (f !== 'd' && this.cal.open < size) return `量爪开口只有 ${this.cal.open.toFixed(1)} mm，比工件小，放不进去：先把尺框拉开`;
+    }
+    if (sl === 'mic') {
+      if (!a.comp('mic').placed) return '先把螺旋测微器拿到台上';
+      if (this.mic.gap < this.balls[this.nextRow('ball', 'r')]) return `测杆与测砧的间隙只有 ${this.mic.gap.toFixed(2)} mm，比钢球小：先旋开微分筒`;
+    }
+    if (sl === 'pan' && !a.comp('bal').placed) return '先把电子天平拿到台上';
+    return null;
+  }
+  onPlace(c) {
+    if (!c) return;
+    if (c.key === 'cyl') this.syncCal();
+    else if (c.key === 'ball') this.syncMic();
+    if (c.slot === 'pan') this.tool = 'bal';
+  }
+  onSlotChange(c) { this.onPlace(c); }
+  onRemove(c) {
+    const a = this.app; if (!c) return;
+    // 量具、天平收回柜里时，夹在上面、放在上面的工件放回台面
+    const back = (key, rest) => { const q = a.comp(key); if (q.placed) a.moveSlot(q, rest, { silent: true }); };
+    if (c.key === 'cal' && CAL_SLOT[a.slotOf('cyl')]) back('cyl', 'restC');
+    if (c.key === 'mic' && a.slotOf('ball') === 'mic') back('ball', 'restB');
+    if (c.key === 'bal' && this.pan) back(this.pan, this.pan === 'cyl' ? 'restC' : 'restB');
+    if (c.key === 'cyl') this.syncCal();
+    if (c.key === 'ball') this.syncMic();
+  }
+  /** 自动操作：把圆柱放到卡尺上测 f（'z' 表示从卡尺上拿下来） */
+  setFeat(f) {
+    const a = this.app, c = a.comp('cyl'), slot = FEAT_SLOT[f];
+    if (!slot) { if (this.feat !== 'z') a.moveSlot(c, 'restC', { silent: true }); this.syncCal(); return; }
+    const size = this.dims[f][this.nextRow('cyl', f)];
+    if (f === 'd') this.cal.open = Math.min(this.cal.open, size - 3); else if (this.cal.open < size) this.cal.open = Math.min(150, size + 5);
+    if (c.placed) a.moveSlot(c, slot, { silent: true }); else a.place(c, { slot, silent: true });
+    this.syncCal();
+  }
+  /** 自动操作：钢球放进 / 拿出千分尺 */
+  setMic(at) {
+    const a = this.app, c = a.comp('ball');
+    if (at === 'z') { if (this.micAt === 'b') a.moveSlot(c, 'restB', { silent: true }); this.syncMic(); return; }
+    const size = this.balls[this.nextRow('ball', 'r')];
+    if (this.mic.gap < size) { this.mic.locked = false; this.mic.gap = Math.min(25, size + 0.5); }
+    if (c.placed) a.moveSlot(c, 'mic', { silent: true }); else a.place(c, { slot: 'mic', silent: true });
+    this.syncMic();
+  }
+  /** 自动操作：秤盘上放 key（null 表示拿下来） */
+  async putPan(key) {
+    const a = this.app;
+    if (this.pan && this.pan !== key) await a.autoPut(this.pan, this.pan === 'cyl' ? 'restC' : 'restB');
+    if (key) await a.autoPut(key, 'pan');
+    this.tool = 'bal'; a.changed();
   }
 
   // ---------- 游标卡尺：外量爪夹工件时开口不能小于工件，内量爪撑内壁时开口不能大于内径 ----------
   nextRow(id, k) { const i = this.app.table(id)?.rows.findIndex((r) => !(r[k] != null && r[k] !== '' && isFinite(r[k]))); return i == null || i < 0 ? N - 1 : i; }
   calSize() { return this.feat === 'z' ? null : this.dims[this.feat][this.nextRow('cyl', this.feat)]; }
-  setFeat(f) {
-    this.feat = f; this.tool = 'cal';
-    const s = this.calSize();
-    if (f === 'd') { this.cal.obj = null; this.cal.open = Math.min(this.cal.open, s - 3); }
-    else this.cal.setObject(s);
-    this.app.changed();
-  }
   calPush(v) {
     this.tool = 'cal';
     if (this.feat === 'd') this.cal.open = clamp(v, 0, this.calSize());
@@ -64,11 +128,6 @@ export class DensityExperiment {
     return this.cal.open > s + 1e-9 ? '量爪还没有贴紧工件' : null;
   }
   get calRead() { return Math.round(this.cal.reading / 0.02) * 0.02; }
-  setMic(at) {
-    this.micAt = at; this.tool = 'mic';
-    this.mic.setObject(at === 'z' ? null : this.balls[this.nextRow('ball', 'r')]);
-    this.app.changed();
-  }
   get balShow() { return Math.round(((this.pan === 'cyl' ? this.mC : this.pan === 'ball' ? this.mB : 0) + this.balOff) * 100) / 100; }
 
   // ======================= 场景 =======================
@@ -84,11 +143,11 @@ export class DensityExperiment {
     this.calJaw = new THREE.Group(); this.calJaw.add(mesh(new THREE.BoxGeometry(5, 0.5, 3), MAT.alu(), 1.8, 0.1, 0), mesh(new THREE.BoxGeometry(1.4, 0.3, 6), MAT.chrome(), 0, 0, -2.6));
     cal.add(this.calJaw);
     app.addComponent(new Component({
-      key: 'cal', name: '游标卡尺（50 分度）', zone: 'none', fixed: true, object: cal, labelY: 4,
+      key: 'cal', name: '游标卡尺（50 分度）', zone: 'none', object: cal, labelY: 4,
       icon: SVG('<path d="M4 14h56v6H4z"/><path d="M8 14V4h4v10M22 20v10h4V20"/><path d="M20 14h12v6H20"/>'),
-      desc: '量程 0–150 mm，游标 50 格对应主尺 49 mm，分度值 0.02 mm，不估读。外量爪测外径和高，内量爪测内径。用前先合拢读零点，测量值 = 读数 − 零点读数。',
+      desc: '量程 0–150 mm，游标 50 格对应主尺 49 mm，分度值 0.02 mm，不估读。把空心圆柱拖到外量爪间（立着夹外径、躺着夹高），或把内量爪伸进内孔（测内径）；放之前量爪开口要合适。用前先合拢读零点，测量值 = 读数 − 零点读数。',
       controls: () => [
-        { type: 'select', label: '测量', get: () => this.feat, set: (v) => { this.setFeat(v); app.renderInspector(); }, options: Object.entries(FEATS).map(([value, label]) => ({ label, value })) },
+        { type: 'readout', label: '量爪间', get: () => (this.feat === 'z' ? '空着（合拢可读零点）' : `空心圆柱 · ${FEATS[this.feat]}`) },
         { type: 'knob', label: this.feat === 'd' ? '拉开尺框' : '推动尺框', get: () => this.cal.open, set: (v) => { this.calPush(v); app.changed(); }, min: 0, max: 150, step: 0.02, bigStep: 1, perRev: 10, digits: 2, unit: 'mm', fmt: () => (this.calProblem() ? '移动尺框' : '已贴紧') },
         { type: 'readout', label: '位置', get: () => (this.feat === 'z' ? '—' : `第 ${this.nextRow('cyl', this.feat) + 1} 处`) },
       ],
@@ -101,11 +160,11 @@ export class DensityExperiment {
     this.micSpindle.position.set(0, 0.2, 0); mic.add(this.micSpindle);
     mic.add(mesh(new THREE.CylinderGeometry(0.6, 0.6, 3, 16), MAT.alu(), 3.2, 0.2, 0).rotateZ(Math.PI / 2));
     app.addComponent(new Component({
-      key: 'mic', name: '螺旋测微器（千分尺）', zone: 'none', fixed: true, object: mic, labelY: 9,
+      key: 'mic', name: '螺旋测微器（千分尺）', zone: 'none', object: mic, labelY: 9,
       icon: SVG('<path d="M10 30a12 12 0 0 1 0-22"/><path d="M10 8h8M10 30h8"/><rect x="24" y="15" width="22" height="8"/><path d="M46 17h10v4H46"/>'),
-      desc: '量程 0–25 mm，螺距 0.5 mm，微分筒 50 格，分度值 0.01 mm，要估读到 0.001 mm。测砧接近工件时改用测力装置（棘轮），听到“咔咔”声即停。用前先读零点（可正可负）。',
+      desc: '量程 0–25 mm，螺距 0.5 mm，微分筒 50 格，分度值 0.01 mm，要估读到 0.001 mm。把钢球拖到测砧与测杆之间（间隙要先旋开）。测砧接近工件时改用测力装置（棘轮），听到“咔咔”声即停。用前先读零点（可正可负）。',
       controls: () => [
-        { type: 'segment', label: '测量', get: () => this.micAt, set: (v) => { this.setMic(v); app.renderInspector(); }, options: [{ label: '零点', value: 'z' }, { label: '钢球直径', value: 'b' }] },
+        { type: 'readout', label: '测砧间', get: () => (this.micAt === 'z' ? '空着（读零点）' : '钢球') },
         ...this.mic.controls(() => { this.tool = 'mic'; app.changed(); }),
         { type: 'readout', label: '位置', get: () => (this.micAt === 'z' ? '—' : `第 ${this.nextRow('ball', 'r') + 1} 次（每次转动钢球换一个方向）`) },
       ],
@@ -116,11 +175,11 @@ export class DensityExperiment {
     bal.add(mesh(new THREE.CylinderGeometry(5.5, 5.5, 0.4, 40), MAT.chrome(), 0, 3.4, -1.5));
     const disp = (this.balBox = meterBox(10, 3.2, 2, '电子天平')); disp.group.position.set(0, 1.4, 8.6); disp.group.scale.setScalar(0.7); bal.add(disp.group);
     app.addComponent(new Component({
-      key: 'bal', name: '电子天平', zone: 'none', fixed: true, object: bal, labelY: 8,
+      key: 'bal', name: '电子天平', zone: 'none', object: bal, labelY: 8,
       icon: SVG('<rect x="8" y="22" width="48" height="12" rx="2"/><path d="M14 18h36"/><rect x="24" y="26" width="16" height="5"/>'),
-      desc: '最大称量 200 g，分度值 0.01 g，最大允差按 0.02 g 计。开机后秤盘上没有东西时示数不一定是 0，要先按“置零”。',
+      desc: '最大称量 200 g，分度值 0.01 g，最大允差按 0.02 g 计。把工件拖到秤盘上称。开机后秤盘上没有东西时示数不一定是 0，要先按“置零”。',
       controls: () => [
-        { type: 'segment', label: '秤盘上', get: () => this.pan ?? 'none', set: (v) => { this.pan = v === 'none' ? null : v; this.tool = 'bal'; app.changed(); }, options: [{ label: '空', value: 'none' }, { label: '空心圆柱', value: 'cyl' }, { label: '钢球', value: 'ball' }] },
+        { type: 'readout', label: '秤盘上', get: () => ({ cyl: '空心圆柱', ball: '钢球' })[this.pan] || '空' },
         { type: 'button', label: '置零', onClick: () => this.tare() },
         { type: 'readout', label: '示数', get: () => `${this.balShow.toFixed(2)} g` },
       ],
@@ -134,9 +193,30 @@ export class DensityExperiment {
     cyl.add(mesh(new THREE.CylinderGeometry(r, r, h, 40, 1, true), inner, 0, h / 2, 0));
     const cap = new THREE.RingGeometry(r, R, 40); cap.rotateX(-Math.PI / 2);
     cyl.add(mesh(cap, brass, 0, h, 0)); const cap2 = cap.clone(); cap2.rotateX(Math.PI); cyl.add(mesh(cap2, brass, 0, 0.01, 0));
-    scene.add(cyl);
-    this.ballObj = mesh(new THREE.SphereGeometry(this.balls[0] * sc * 0.75, 24, 16), MAT.chrome());
-    scene.add(this.ballObj);
+    const cylG = new THREE.Group(); cylG.add(cyl);
+    const rb = this.balls[0] * sc * 0.75;
+    this.ballObj = mesh(new THREE.SphereGeometry(rb, 24, 16), MAT.chrome(), 0, rb, 0);
+    const ballG = new THREE.Group(); ballG.add(this.ballObj);
+    // 工件可以放的地方：台面、卡尺外量爪（横夹外径 / 竖夹高）、内量爪、千分尺测砧、天平秤盘
+    app.addSlot({ id: 'restC', pos: new THREE.Vector3(-6, 0, -8), accepts: ['cyl'], label: '台面', r: 3.4, snap: 6 });
+    app.addSlot({ id: 'restB', pos: new THREE.Vector3(4, 0, -8), accepts: ['ball'], label: '台面', r: 1.6, snap: 5 });
+    app.addSlot({ id: 'calD', pos: new THREE.Vector3(-24, 0.9, 4), accepts: ['cyl'], label: '卡尺外量爪（立着夹外径）', r: 3, snap: 3 });
+    app.addSlot({ id: 'calH', pos: new THREE.Vector3(-17, 0.9, 4), accepts: ['cyl'], label: '卡尺外量爪（躺着夹两端面测高）', r: 3, snap: 3 });
+    app.addSlot({ id: 'calIn', pos: new THREE.Vector3(-31, 0.9, 4), accepts: ['cyl'], label: '卡尺内量爪（伸进内孔）', r: 3, snap: 3 });
+    app.addSlot({ id: 'mic', pos: new THREE.Vector3(7.6, 0.4 - rb, 14), accepts: ['ball'], label: '千分尺测砧间', r: 1.4, snap: 4 });
+    app.addSlot({ id: 'pan', pos: new THREE.Vector3(34, 3.6, 0.5), accepts: ['cyl', 'ball'], label: '天平秤盘', r: 5, snap: 7 });
+    app.addComponent(new Component({
+      key: 'cyl', name: '空心铜圆柱', zone: 'slot', defaultSlot: 'restC', object: cylG, labelY: 9,
+      icon: SVG('<ellipse cx="32" cy="10" rx="14" ry="4"/><ellipse cx="32" cy="10" rx="7" ry="2"/><path d="M18 10v20M46 10v20"/><path d="M18 30a14 4 0 0 0 28 0"/>'),
+      desc: '空心铜圆柱，外径、内径、高要用游标卡尺测。拖到卡尺上的不同位置测不同尺寸，拖到天平秤盘上称质量。',
+      controls: () => [{ type: 'readout', label: '现在在', get: () => { const z = this.app.zones.find((q) => q.id === this.app.slotOf('cyl')); return z ? z.label : '—'; } }],
+    }));
+    app.addComponent(new Component({
+      key: 'ball', name: '小钢球', zone: 'slot', defaultSlot: 'restB', object: ballG, labelY: 4,
+      icon: SVG('<circle cx="32" cy="20" r="11"/><path d="M26 15a7 7 0 0 1 6-3" />'),
+      desc: '小钢球，直径用螺旋测微器测。拖到千分尺测砧与测杆之间，或天平秤盘上。',
+      controls: () => [{ type: 'readout', label: '现在在', get: () => { const z = this.app.zones.find((q) => q.id === this.app.slotOf('ball')); return z ? z.label : '—'; } }],
+    }));
     this.view = app.addView({ id: 'gauge', title: '读数窗', w: 320, h: 150, res: 2 });
   }
 
@@ -149,9 +229,8 @@ export class DensityExperiment {
 
   update() {
     // 被测物放到正在使用的量具上
-    const onCal = this.tool === 'cal' && this.feat !== 'z', onMic = this.tool === 'mic' && this.micAt === 'b';
-    this.cylObj.position.set(...(this.pan === 'cyl' ? [34, 3.6, 0.5] : onCal ? [-24, 0.9, 4] : [-6, 0, -8]));
-    this.ballObj.position.set(...(this.pan === 'ball' ? [34, 4.4, -1.5] : onMic ? [7.6, 0.4, 14] : [4, 1.3, -8]));
+    // 夹高时圆柱横躺在量爪间
+    this.cylObj.rotation.z = this.feat === 'H' ? Math.PI / 2 : 0;
     this.calJaw.position.x = -6.5 + clamp(this.cal.open, 0, 150) * 0.15;
     this.micSpindle.position.x = clamp(this.mic.gap, 0, 25) * 0.12 - 0.5;
     const b = this.balShow.toFixed(2);
@@ -295,28 +374,28 @@ export class DensityExperiment {
           return out;
         },
         auto: async () => {
-          app.showTable(0); app.select(app.comp('cal')); this.setFeat('z'); app.renderInspector();
+          app.showTable(0); await app.autoPlace('cal'); app.select(app.comp('cal')); this.setFeat('z'); app.renderInspector();
           await this.calMeasure(); await app.record('zero');
-          app.select(app.comp('mic')); this.setMic('z'); app.renderInspector();
+          await app.autoPlace('mic'); app.select(app.comp('mic')); this.setMic('z'); app.renderInspector();
           await this.micMeasure(); await app.record('zero');
           this.mic.turnRatchet(2);
         },
       },
       {
         title: '用游标卡尺测空心圆柱的外径、内径和高',
-        html: '<p>外径 $D$ 用外量爪、内径 $d$ 用内量爪、高 $H$ 用外量爪，在不同位置和方向各测 6 次。量爪要贴紧但不能夹得太紧，读数时视线垂直尺面。</p>',
+        html: '<p>把空心圆柱拖到卡尺上：立着放进外量爪测外径 $D$，躺着放进外量爪（夹两端面）测高 $H$，内量爪伸进内孔测内径 $d$（放之前量爪开口要合适），在不同位置和方向各测 6 次。量爪要贴紧但不能夹得太紧，读数时视线垂直尺面。</p>',
         hint: '游标卡尺读数 = 主尺上游标 0 线左边的整毫米数 + 对齐的游标格数 × 0.02 mm，不估读。',
         status: () => `外径 ${filled('cyl', 'D')}/6，内径 ${filled('cyl', 'd')}/6，高 ${filled('cyl', 'H')}/6`,
         check: () => ['D', 'd', 'H'].every((k) => filled('cyl', k) >= N),
         diagnose: () => {
           const out = [];
           if (this.tool !== 'cal') out.push({ msg: '这一步用游标卡尺。', fix: { label: '拿起游标卡尺', run: () => { this.tool = 'cal'; app.select(app.comp('cal')); app.changed(); } } });
-          else if (this.feat === 'z') out.push({ msg: '先选要测的尺寸（外径、内径或高）。', fix: { label: '测外径', run: () => { this.setFeat('D'); app.renderInspector(); } } });
+          else if (this.feat === 'z') out.push({ msg: '把空心圆柱放到卡尺上（外量爪立着夹外径、躺着夹高，内量爪伸进内孔测内径）。', fix: { label: '夹外径', run: () => { this.setFeat('D'); app.renderInspector(); } } });
           else if (this.calProblem()) out.push({ msg: this.calProblem() + '。' });
           return out;
         },
         auto: async () => {
-          app.showTable(1); app.select(app.comp('cal'));
+          app.showTable(1); await app.autoPlace('cal'); if (this.pan === 'cyl') await this.putPan(null); app.select(app.comp('cal'));
           for (const k of ['D', 'd', 'H']) {
             this.setFeat(k); app.renderInspector();
             while (filled('cyl', k) < N) { await this.calMeasure(); await app.record('cyl'); }
@@ -325,36 +404,36 @@ export class DensityExperiment {
       },
       {
         title: '用螺旋测微器测钢球直径',
-        html: '<p>把钢球放在测砧与测杆之间，先转微分筒使测杆接近钢球，再转测力装置到“咔咔”声响起，读数（估读到 0.001 mm）。转动钢球换方向，共测 6 次。</p>',
+        html: '<p>旋开微分筒，把钢球拖到测砧与测杆之间，先转微分筒使测杆接近钢球，再转测力装置到“咔咔”声响起，读数（估读到 0.001 mm）。转动钢球换方向，共测 6 次。</p>',
         hint: '直接用微分筒拧紧会把钢球与测砧压出弹性变形，读数偏小几微米。',
         status: () => `已测 ${filled('ball', 'r')}/6 次`,
         check: () => filled('ball', 'r') >= N,
         diagnose: () => {
           const out = [];
-          if (this.tool !== 'mic' || this.micAt !== 'b') out.push({ msg: '把钢球放进螺旋测微器。', fix: { label: '放入钢球', run: () => { this.setMic('b'); app.select(app.comp('mic')); } } });
+          if (this.tool !== 'mic' || this.micAt !== 'b') out.push({ msg: '把钢球放进螺旋测微器的测砧之间。', fix: { label: '放入钢球', run: async () => { await app.autoPlace('mic'); this.setMic('b'); app.select(app.comp('mic')); } } });
           else if (this.mic.locked) out.push({ msg: '锁紧装置锁着，测杆转不动。', fix: { label: '松开锁紧', run: () => { this.mic.locked = false; app.renderInspector(); } } });
           else if (this.mic.squeeze > 0.0015) out.push({ msg: '微分筒拧过头了，钢球被压得变形，读数偏小。退开后用测力装置重新夹。' });
           return out;
         },
         auto: async () => {
-          app.showTable(2); app.select(app.comp('mic')); this.setMic('b'); app.renderInspector();
+          app.showTable(2); await app.autoPlace('mic'); if (this.pan === 'ball') await this.putPan(null); app.select(app.comp('mic')); this.setMic('b'); app.renderInspector();
           while (filled('ball', 'r') < N) { await this.micMeasure(); await app.record('ball'); }
         },
       },
       {
         title: '用电子天平称质量',
-        html: '<p>秤盘空着时按“置零”，再分别放上空心圆柱和钢球，示数稳定后记录质量。</p>',
+        html: '<p>秤盘空着时按“置零”，再分别把空心圆柱和钢球拖到秤盘上，示数稳定后记录质量。</p>',
         check: () => filled('mass', 'm') >= 2,
         diagnose: () => {
           const out = [];
-          if (Math.abs(this.balOff) > 0.004) out.push({ msg: this.balOff < 0 ? '天平是在秤盘上有东西时置零的，称出来会偏小。' : '天平空盘时示数不为零，要先置零。', fix: { label: '拿下物体并置零', run: () => { this.pan = null; this.tare(); app.renderInspector(); } } });
+          if (Math.abs(this.balOff) > 0.004) out.push({ msg: this.balOff < 0 ? '天平是在秤盘上有东西时置零的，称出来会偏小。' : '天平空盘时示数不为零，要先置零。', fix: { label: '拿下物体并置零', run: async () => { await this.putPan(null); this.tare(); app.renderInspector(); } } });
           return out;
         },
         auto: async () => {
-          app.showTable(3); app.select(app.comp('bal')); this.tool = 'bal';
-          this.pan = null; app.renderInspector(); await app.wait(300); this.tare(); await app.wait(300);
-          for (const p of ['cyl', 'ball']) { this.pan = p; app.renderInspector(); app.changed(); await app.wait(500); await app.record('mass'); }
-          this.pan = null; app.renderInspector();
+          app.showTable(3); await app.autoPlace('bal'); app.select(app.comp('bal')); this.tool = 'bal';
+          await this.putPan(null); app.renderInspector(); await app.wait(300); this.tare(); await app.wait(300);
+          for (const p of ['cyl', 'ball']) { await this.putPan(p); app.renderInspector(); app.changed(); await app.wait(500); await app.record('mass'); }
+          await this.putPan(null); app.renderInspector();
         },
       },
       {

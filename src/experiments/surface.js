@@ -14,6 +14,8 @@ import { surfaceFig } from './mechFigs2.js';
 const G = 9.794;
 const D1 = 33.10e-3, D2 = 34.96e-3; // 吊环内、外直径（m）
 const M_RING = 2.62e-3, M_PAN = 1.85e-3, M_W = 0.5e-3; // 吊环、砝码盘、每个砝码的质量（kg）
+const SOAK = 4, RINSE = 2; // 在 NaOH 里浸泡、在纯水里涮的时间（s）
+const HOOK_Y = 22; // 挂钩上物体的挂点高度（cm）
 const NREP = 5;
 const SVG = (inner) => `<svg viewBox="0 0 64 40">${inner}</svg>`;
 
@@ -28,14 +30,25 @@ export class SurfaceExperiment {
     this.sigma = waterSigma(this.Tc); this.lc = capLength(this.sigma, waterRho(this.Tc), G);
     this.B = rand(2.85, 3.15); // 传感器灵敏度 mV/mN
     this.off = rand(-15, 15); this.zero = 0; // 零点偏移与调零（mV）
-    this.hang = 'pan'; this.nW = 0; this.wErr = Array.from({ length: 7 }, () => 1 + gauss(0.003));
-    this.clean = false; this.tilt = rand(1.2, 2.5) * (Math.random() < 0.5 ? -1 : 1); // 吊环倾角（°）
+    this.wErr = Array.from({ length: 7 }, () => 1 + gauss(0.003));
+    // 吊环清洗：在 NaOH 溶液里泡够 SOAK 秒去掉油污；之后要在纯水里涮净残留的碱液
+    this.clean = false; this.soak = 0; this.residue = false; this.rinse = 0; this.tilt = rand(1.2, 2.5) * (Math.random() < 0.5 ? -1 : 1); // 吊环倾角（°）
     this.z = -12; // 液面相对吊环下沿的高度（mm）：>0 吊环浸入液中
     this.attached = false; this.jit = 1; this.psiB = rand(97, 108) * Math.PI / 180; // 膜被拉断时的弯月面角
     this._peak = 0;
   }
-  /** 有效表面张力：吊环没洗干净时接触角约 25°，竖直分量打折扣 */
-  get sigEff() { return this.sigma * (this.clean ? 1 : Math.cos((25 * Math.PI) / 180)); }
+  /** 挂钩上挂的是什么：'ring' | 'pan' | 'none' */
+  get hang() { const z = this.app.zones && this.app.zones.find((q) => q.id === 'hook'), o = z && z.occupant; return o ? o.key : 'none'; }
+  /** 砝码盘上的砝码个数 */
+  get nW() { return this.app.stackOf ? this.app.stackOf('pw').length : 0; }
+  /** 有效表面张力：吊环没洗干净时接触角约 25°，竖直分量打折扣；碱液没涮净，带进水里的碱和皂化物使表面张力下降 */
+  get sigEff() { return this.sigma * (this.clean ? 1 : Math.cos((25 * Math.PI) / 180)) * (this.residue && this.dipped ? 0.96 : 1); }
+  tick(dt) {
+    const a = this.app, sdt = dt * (a.running ? a.speed : 1), sl = a.slotOf('ring');
+    if (sl === 'naoh') { this.soak += sdt; if (this.soak >= SOAK) { if (!this.clean) a.toast('吊环在 NaOH 溶液里泡够了，油污已去掉；拿到纯水里涮净碱液', 'ok'); this.clean = true; } this.residue = true; this.rinse = 0; }
+    else if (sl === 'rinse' && this.residue) { this.rinse += sdt; if (this.rinse >= RINSE) { this.residue = false; a.toast('吊环上的碱液已涮净', 'ok'); } }
+    if (this.hang === 'ring' && this.z > 0 && this.residue) this.dipped = true; // 带着碱液浸到水里：水被污染了
+  }
   /** 液面在 z（mm）时，吊环沿圆周 36 个点处的弯月面角 */
   psis(z = this.z) {
     const t = Math.tan((this.tilt * Math.PI) / 180), R = (D1 + D2) / 4;
@@ -60,7 +73,7 @@ export class SurfaceExperiment {
   }
   /** 传感器受的总力（N） */
   force() {
-    const w = this.hang === 'ring' ? M_RING : this.hang === 'pan' ? M_PAN + this.wErr.slice(0, this.nW).reduce((s, x) => s + x * M_W, 0) : 0;
+    const w = this.hang === 'ring' ? M_RING : this.hang === 'pan' ? M_PAN + this.app.stackOf('pw').reduce((s, c) => s + this.wErr[+c.key.slice(1) - 1] * M_W, 0) : 0;
     const buoy = this.hang === 'ring' && this.z > 0 ? 1000 * G * (Math.PI / 4) * (D2 * D2 - D1 * D1) * Math.min(this.z, 8) / 1000 : 0;
     return w * G - buoy + this.film();
   }
@@ -79,13 +92,27 @@ export class SurfaceExperiment {
     g.add(mesh(new THREE.BoxGeometry(16, 2.5, 3), frame, -5, 44, -8));
     g.add(mesh(new THREE.BoxGeometry(5, 3, 4), MAT.alu(), 0, 42, -8)); // 力敏传感器
     this.hook = mesh(new THREE.CylinderGeometry(0.06, 0.06, 1, 6), MAT.metal(), 0, 0, 0); g.add(this.hook);
-    this.ringM = new THREE.Group();
+    this.ringM = new THREE.Group(); this.ringM.position.y = 18 - HOOK_Y;
     this.ringM.add(mesh(new THREE.CylinderGeometry(D2 * 50, D2 * 50, 0.9, 40, 1, true), new THREE.MeshStandardMaterial({ color: 0xd9dde2, metalness: 0.85, roughness: 0.25, side: THREE.DoubleSide })));
     for (let k = 0; k < 3; k++) { const a = (k * 2 * Math.PI) / 3, s = mesh(new THREE.CylinderGeometry(0.03, 0.03, 4.5, 4), MAT.metal(), D2 * 25 * Math.cos(a), 2.2, D2 * 25 * Math.sin(a)); s.rotation.z = Math.cos(a) * 0.35; s.rotation.x = -Math.sin(a) * 0.35; this.ringM.add(s); }
-    this.panM = new THREE.Group(); this.panM.add(mesh(new THREE.CylinderGeometry(1.8, 1.8, 0.2, 24), MAT.alu())); this.wts = new THREE.Group(); this.panM.add(this.wts);
+    this.panM = new THREE.Group(); this.panM.add(mesh(new THREE.CylinderGeometry(1.8, 1.8, 0.2, 24), MAT.alu()));
+    this.panM.add(mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.6, 4), MAT.metal(), 0, 0.4, 0));
     // 被拉起的液膜：吊环下沿与液面之间的一圈半透明薄筒
     this.filmM = mesh(new THREE.CylinderGeometry(D2 * 50, D2 * 50 * 1.12, 1, 48, 1, true), new THREE.MeshPhysicalMaterial({ color: 0xbfe0ee, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false, roughness: 0.05 }));
-    g.add(this.ringM, this.panM, this.filmM);
+    g.add(this.filmM);
+    // 清洗用的两个烧杯：NaOH 溶液、纯水
+    const beaker = (x, col, label) => {
+      const b = new THREE.Group(); b.position.set(x, 0, 16);
+      b.add(mesh(new THREE.CylinderGeometry(3.6, 3.4, 7, 32, 1, true), new THREE.MeshPhysicalMaterial({ color: 0xe9f2ef, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false }), 0, 3.5, 0));
+      b.add(mesh(new THREE.CylinderGeometry(3.4, 3.3, 5, 32), new THREE.MeshPhysicalMaterial({ color: col, transparent: true, opacity: 0.45, depthWrite: false }), 0, 2.6, 0));
+      const lb = app.stage.makeLabel(label); lb.position.set(0, 9, 0); b.add(lb);
+      scene.add(b);
+    };
+    beaker(-34, 0xd9d2f0, 'NaOH 溶液'); beaker(-24, 0x9fc6d8, '纯水');
+    app.addSlot({ id: 'hook', pos: new THREE.Vector3(0, HOOK_Y, 0), accepts: ['ring', 'pan'], label: '传感器挂钩', r: 2.4, snap: 7 });
+    app.addSlot({ id: 'naoh', pos: new THREE.Vector3(-34, 6.5, 16), accepts: ['ring'], label: 'NaOH 溶液烧杯', r: 3.6, snap: 7 });
+    app.addSlot({ id: 'rinse', pos: new THREE.Vector3(-24, 6.5, 16), accepts: ['ring'], label: '纯水烧杯', r: 3.6, snap: 7 });
+    for (let i = 0; i < 7; i++) app.addSlot({ id: `pw${i}`, pos: new THREE.Vector3(0, HOOK_Y + 0.1 + i * 0.38, 0), accepts: ['g1', 'g2', 'g3', 'g4', 'g5', 'g6', 'g7'], label: '砝码盘', r: 1.8, snap: 5, stack: 'pw', level: i });
     // 升降台与玻璃皿
     this.jack = new THREE.Group();
     this.jack.add(mesh(new THREE.BoxGeometry(12, 1, 12), MAT.alu(), 0, 0, 0));
@@ -97,34 +124,66 @@ export class SurfaceExperiment {
     app.addComponent(new Component({
       key: 'stand', name: '力敏传感器与吊环', zone: 'none', fixed: true, required: true, object: g, labelY: 48,
       icon: SVG('<ellipse cx="32" cy="26" rx="14" ry="4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M32 4v12M22 25l10-9 10 9" stroke="currentColor" fill="none"/>'),
-      desc: `硅压阻力敏传感器挂在支架横梁上，输出电压与拉力成正比（灵敏度约 3 mV/mN，需用砝码定标）。吊环为铝合金薄壁圆环：内径 D₁ = ${(D1 * 1000).toFixed(2)} mm，外径 D₂ = ${(D2 * 1000).toFixed(2)} mm，用三根细线吊在传感器挂钩上。下方升降台上放盛有纯水的玻璃皿，室温 ${this.Tc.toFixed(1)} °C。`,
+      desc: `硅压阻力敏传感器挂在支架横梁上，输出电压与拉力成正比（灵敏度约 3 mV/mN，需用砝码定标）。砝码盘、吊环从器材柜拖到传感器挂钩上。下方升降台上放盛有纯水的玻璃皿，室温 ${this.Tc.toFixed(1)} °C。`,
       controls: () => [
-        { type: 'segment', label: '挂钩上挂的是', get: () => this.hang, set: (v) => { this.hang = v; this.film(); app.changed(); }, options: [{ label: '砝码盘', value: 'pan' }, { label: '吊环', value: 'ring' }, { label: '空', value: 'none' }] },
-        { type: 'button', label: '砝码盘上加一个 0.500 g 砝码', onClick: () => { if (this.hang !== 'pan') return app.toast('先挂上砝码盘', 'warn'); if (this.nW >= 7) return app.toast('砝码已经加满（7 个）', 'warn'); this.nW++; app.changed(); } },
-        { type: 'button', label: '取下一个砝码', onClick: () => { if (this.nW > 0) this.nW--; app.changed(); } },
-        { type: 'button', label: '清洗吊环（NaOH 溶液浸泡后用纯水冲净）', onClick: () => { this.clean = true; app.toast('吊环已清洗', 'ok'); app.changed(); } },
+        { type: 'readout', label: '挂钩上', get: () => ({ ring: '吊环', pan: `砝码盘（${this.nW} 个砝码）`, none: '空' })[this.hang] },
         { type: 'knob', label: '吊环水平（调三根吊线）', get: () => this.tilt, set: (v) => { this.tilt = clamp(v, -4, 4); app.changed(); }, min: -4, max: 4, step: 0.02, bigStep: 0.5, perRev: 2, fmt: () => (Math.abs(this.tilt) < 0.15 ? '水平' : `倾斜约 ${Math.abs(this.tilt).toFixed(1)}°`) },
+        { type: 'button', label: '玻璃皿里换上新的纯水', onClick: () => { if (this.z > 0) return app.toast('先降下升降台，让吊环离开水面', 'warn'); this.dipped = false; this.attached = false; app.toast('已换上新的纯水', 'ok'); app.changed(); } },
         { type: 'knob', label: '升降台（液面高度）', get: () => this.z, set: (v) => { this.moveZ(clamp(Math.round(v * 100) / 100, -15, 4)); app.changed(); }, min: -15, max: 4, step: 0.02, bigStep: 1, perRev: 2, fmt: () => (this.z > 0 ? `吊环浸入 ${this.z.toFixed(1)} mm` : '转动螺杆升降') },
       ],
     }));
+    const rg = new THREE.Group(); rg.add(this.ringM);
+    app.addComponent(new Component({
+      key: 'ring', name: '吊环', zone: 'slot', defaultSlot: 'hook', object: rg, labelY: 3, showLabel: false,
+      icon: SVG('<ellipse cx="32" cy="28" rx="14" ry="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M32 6L20 27M32 6l12 21M32 6v18" stroke="currentColor" fill="none"/>'),
+      desc: `铝合金薄壁吊环：内径 D₁ = ${(D1 * 1000).toFixed(2)} mm，外径 D₂ = ${(D2 * 1000).toFixed(2)} mm，用三根细线吊着。使用前拖到 NaOH 溶液烧杯里浸泡去油污，再拖到纯水烧杯里涮净碱液，然后挂到传感器挂钩上。`,
+      controls: () => [{ type: 'readout', label: '吊环表面', get: () => (!this.clean ? (this.app.slotOf('ring') === 'naoh' ? `在 NaOH 溶液里浸泡（${Math.min(this.soak, SOAK).toFixed(0)} / ${SOAK} s）` : '有油污') : this.residue ? (this.app.slotOf('ring') === 'rinse' ? '在纯水里涮' : '油污已除，还沾着碱液') : '干净') }],
+    }));
+    const pg = new THREE.Group(); pg.add(this.panM);
+    app.addComponent(new Component({
+      key: 'pan', name: '砝码盘', zone: 'slot', defaultSlot: 'hook', object: pg, labelY: 3, showLabel: false,
+      icon: SVG('<ellipse cx="32" cy="28" rx="16" ry="4" fill="currentColor"/><path d="M32 6v20" stroke="currentColor"/>'),
+      desc: '定标用的小砝码盘。挂到传感器挂钩上，再把 0.500 g 砝码一个个拖到盘上。',
+    }));
+    const wm = MAT.metal();
+    for (let i = 0; i < 7; i++) {
+      const wg = new THREE.Group(); wg.add(mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.35, 16), wm.clone(), 0, 0.175, 0));
+      app.addComponent(new Component({
+        key: `g${i + 1}`, name: `0.500 g 砝码 ${i + 1}`, group: '0.500 g 砝码', zone: 'slot', defaultSlot: 'pw0', object: wg, labelY: 2, showLabel: false,
+        icon: SVG('<rect x="20" y="16" width="24" height="9" rx="2" fill="currentColor"/><text x="32" y="38" font-size="9" text-anchor="middle" fill="currentColor">0.5 g</text>'),
+        desc: '0.500 g 砝码（实际质量有约 ±0.3% 的偏差）。拖到挂钩上的砝码盘里。',
+      }));
+    }
     const mb = (this.meter = meterBox(16, 9, 10, '数字电压表')); mb.group.position.set(30, 0, 0);
     app.addComponent(new Component({
-      key: 'meter', name: '数字电压表', zone: 'none', fixed: true, object: mb.group, labelY: 12,
+      key: 'meter', name: '数字电压表', zone: 'none', object: mb.group, labelY: 12,
+      icon: SVG('<rect x="8" y="8" width="48" height="26" rx="3" fill="currentColor"/><rect x="14" y="13" width="30" height="10" fill="#fff"/>'),
       desc: '显示力敏传感器的输出电压，分辨率 0.1 mV。面板上有调零旋钮。',
       controls: () => [{ type: 'knob', label: '调零', get: () => this.zero, set: (v) => { this.zero = clamp(Math.round(v * 10) / 10, -30, 30); app.changed(); }, min: -30, max: 30, step: 0.1, bigStep: 2, perRev: 10, digits: 1, unit: 'mV' }],
     }));
     this.sv = app.addView({ id: 'side', title: '吊环与液面（侧视放大）', w: 280, h: 220, res: 1.6 });
   }
+  canPlace(comp, o = {}) {
+    const sl = o.slot ?? comp.defaultSlot;
+    if (sl && sl.startsWith('pw') && this.hang !== 'pan') return '先把砝码盘挂到传感器挂钩上，再往盘里加砝码';
+    if (comp.key === 'pan' && this.app.slotOf('pan') === 'hook' && this.nW) return '先把盘里的砝码取下来';
+    return null;
+  }
+  onPlace(c) { if (c && (c.key === 'ring' || c.key === 'pan')) this.film(); }
+  onSlotChange(c) { this.onPlace(c); }
+  onRemove(c) {
+    // 砝码盘拿下来时，盘里的砝码一起放回柜里
+    if (c && c.key === 'pan') for (const w of this.app.stackOf('pw')) this.app.remove(w);
+    this.film();
+  }
+  get meterOn() { return this.app.comp('meter').placed; }
   update() {
     const f = this.film(); // 更新附着状态
     const s = this.Ushow.toFixed(1);
     if (s !== this._s) { this._s = s; this.meter.setText(s, 'mV'); }
     const ringY = 18, panY = 22;
-    this.ringM.visible = this.hang === 'ring'; this.panM.visible = this.hang === 'pan';
-    this.ringM.position.y = ringY; this.ringM.rotation.z = (this.tilt * Math.PI) / 180;
-    this.panM.position.y = panY;
-    if (this._nW !== this.nW) { this._nW = this.nW; this.wts.clear(); for (let k = 0; k < this.nW; k++) this.wts.add(mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.35, 16), MAT.metal(), 0, 0.3 + k * 0.38, 0)); }
-    const top = this.hang === 'pan' ? panY + 0.5 : ringY + 4.5;
+    this.ringM.rotation.z = this.hang === 'ring' ? (this.tilt * Math.PI) / 180 : 0;
+    const top = this.hang === 'pan' ? panY + 0.7 : this.hang === 'ring' ? ringY + 4.5 : 30;
     this.hook.position.set(0, (40.5 + top) / 2, 0); this.hook.scale.y = 40.5 - top;
     const waterTop = ringY - 0.45 + this.z / 10; // 液面（cm）
     this.jack.position.y = waterTop - 3.5;
@@ -164,7 +223,7 @@ export class SurfaceExperiment {
       g.lineWidth = 1; g.strokeStyle = '#9aa5ab'; g.beginPath(); g.moveTo(cx, 4); g.lineTo(ends[0][0], ends[0][1] - 26); g.moveTo(cx, 4); g.lineTo(ends[1][0], ends[1][1] - 26); g.stroke();
       g.beginPath(); g.moveTo(ends[0][0], ends[0][1] - 26); g.lineTo(ends[0][0], ends[0][1]); g.moveTo(ends[1][0], ends[1][1] - 26); g.lineTo(ends[1][0], ends[1][1]); g.stroke();
     } else { g.beginPath(); g.moveTo(0, yS); g.lineTo(W, yS); g.stroke(); }
-    g.fillStyle = '#0b1410'; g.fillRect(W * 0.62, H * 0.05, W * 0.34, H * 0.15); g.fillStyle = '#7dff9e'; g.font = `bold ${H * 0.08}px "IBM Plex Mono"`; g.textAlign = 'right'; g.fillText(this.Ushow.toFixed(1), W * 0.92, H * 0.16);
+    g.fillStyle = '#0b1410'; g.fillRect(W * 0.62, H * 0.05, W * 0.34, H * 0.15); g.fillStyle = '#7dff9e'; g.font = `bold ${H * 0.08}px "IBM Plex Mono"`; g.textAlign = 'right'; g.fillText(this.meterOn ? this.Ushow.toFixed(1) : '----', W * 0.92, H * 0.16);
     g.fillStyle = '#9aa5ab'; g.font = `${H * 0.04}px "IBM Plex Mono"`; g.fillText('mV', W * 0.96, H * 0.16);
     let foot;
     if (this.hang === 'pan') foot = `砝码盘上 ${this.nW} 个 0.500 g 砝码`;
@@ -194,6 +253,7 @@ export class SurfaceExperiment {
   }
   recCal(t) {
     const a = this.app;
+    if (!this.meterOn) return a.toast('台上还没有电压表，读不到传感器的输出', 'warn');
     if (this.hang !== 'pan') return a.toast('定标要挂砝码盘', 'warn');
     if (!t.rows.length && Math.abs(this.U - this.B * M_PAN * G * 1000) > 0.3 && Math.abs(this.U) > 0.3) a.toast('还没有调零：挂上砝码盘、未加砝码时，先把读数调到 0.0 mV', 'warn');
     if (t.rows.some((r) => Math.abs(r.m - this.nW * 0.5) < 1e-6)) a.toast('这个砝码数已经记过了', 'warn');
@@ -201,7 +261,10 @@ export class SurfaceExperiment {
   }
   rec1(t) {
     const a = this.app;
+    if (!this.meterOn) return a.toast('台上还没有电压表，读不到传感器的输出', 'warn');
     if (this.hang !== 'ring') return a.toast('先挂上吊环', 'warn');
+    if (!this.clean) a.toast('吊环没有用 NaOH 洗过：油污使接触角变大，拉力偏小', 'warn');
+    if (this.dipped) a.toast('吊环带着碱液浸过水，水面被污染，表面张力偏小', 'warn');
     if (!this.attached || this.z > 0) a.toast(this.z > 0 ? '吊环还在水里：要在液膜被拉起、快要断开时记录' : '液膜已经断了：U₁ 要在膜断开之前读', 'warn');
     else if (this.film() < 0.97 * this.scan().fPeak) a.toast('液膜还没拉到最高：继续慢慢降低液面，读数还会增大', 'warn');
     const i = t.rows.length - 1;
@@ -210,6 +273,7 @@ export class SurfaceExperiment {
   }
   rec2(t) {
     const a = this.app, i = t.rows.length - 1;
+    if (!this.meterOn) return a.toast('台上还没有电压表', 'warn');
     if (i < 0) return a.toast('先记录 U₁', 'warn');
     if (isFinite(t.rows[i].U2)) a.toast('这一行已经有 U₂ 了：重新测一次，先记 U₁', 'warn');
     if (this.attached) a.toast('液膜还没断', 'warn');
@@ -221,6 +285,28 @@ export class SurfaceExperiment {
   /** 改变液面高度，并立即更新液膜状态（不依赖画面刷新：加速运行时两帧之间液面可能走过很远） */
   moveZ(v) { this.z = v; this.film(); }
   async setZ(z, ms = 600) { await this.app.tween(() => this.z, (v) => this.moveZ(v), z, ms); this.moveZ(z); this.app.changed(); }
+  /** 自动操作：挂钩上挂 key（'pan' | 'ring'），先取下别的 */
+  async hangOn(key) {
+    const a = this.app;
+    if (this.hang === key) return;
+    if (this.hang === 'pan') { for (const w of a.stackOf('pw').reverse()) a.remove(w); a.remove(a.comp('pan')); }
+    else if (this.hang === 'ring') a.remove(a.comp('ring'));
+    await a.autoPut(key, 'hook'); this.film();
+  }
+  /** 自动操作：砝码盘里放 k 个砝码 */
+  async setW(k) {
+    const a = this.app;
+    while (this.nW > k) { a.remove(a.stackOf('pw').pop()); await a.wait(120); }
+    for (let i = 1; i <= 7 && this.nW < k; i++) if (!a.comp(`g${i}`).placed) await a.autoPut(`g${i}`, 'pw0');
+    a.changed();
+  }
+  /** 自动操作：NaOH 浸泡、纯水涮净、挂到挂钩上 */
+  async washRing() {
+    const a = this.app;
+    if (!this.clean) { if (this.hang === 'pan') { await this.setW(0); a.remove(a.comp('pan')); } await a.autoPut('ring', 'naoh'); await a.until(() => this.clean, 30000); }
+    if (this.residue) { await a.autoPut('ring', 'rinse'); await a.until(() => !this.residue, 30000); }
+    await this.hangOn('ring');
+  }
   async pullOnce() {
     const a = this.app;
     a.select(a.comp('stand'));
@@ -242,33 +328,33 @@ export class SurfaceExperiment {
         check: () => cal().length >= 6,
         diagnose: () => {
           const out = [];
-          if (this.hang !== 'pan') out.push({ msg: '定标时挂钩上要挂砝码盘。', fix: { label: '挂上砝码盘', run: async () => { this.hang = 'pan'; } } });
+          if (this.hang !== 'pan') out.push({ msg: '定标时挂钩上要挂砝码盘。', fix: { label: '挂上砝码盘', run: () => this.hangOn('pan') } });
           else if (!cal().length && Math.abs(this.U) > 0.15 && this.nW === 0) out.push({ msg: `读数 ${this.Ushow.toFixed(1)} mV，先调零。`, fix: { label: '帮我调零', run: async () => { const z = this.zero - this.U; await app.tween(() => this.zero, (v) => (this.zero = v), z, 600); this.zero = Math.round(z * 10) / 10; } } });
           return out;
         },
         auto: async () => {
-          app.showTable(0); app.select(app.comp('stand')); this.hang = 'pan'; this.nW = 0; app.renderInspector();
+          app.showTable(0); await app.autoPlace('meter'); await this.hangOn('pan'); await this.setW(0); app.renderInspector();
           app.select(app.comp('meter'));
           const z = Math.round((this.zero - this.U) * 10) / 10; await app.tween(() => this.zero, (v) => (this.zero = v), z, 600); this.zero = z; app.changed();
           app.select(app.comp('stand'));
-          for (let k = 0; k <= 7; k++) { if (!cal().some((r) => Math.abs(r.m - k * 0.5) < 1e-6)) { this.nW = k; app.changed(); await app.wait(250); await app.record('cal', 0); } }
-          this.nW = 0; app.changed();
+          for (let k = 0; k <= 7; k++) { if (!cal().some((r) => Math.abs(r.m - k * 0.5) < 1e-6)) { await this.setW(k); app.changed(); await app.wait(250); await app.record('cal', 0); } }
+          await this.setW(0); app.changed();
         },
       },
       {
         title: '挂吊环：清洗并调水平',
-        html: '<p>取下砝码盘，挂上吊环。吊环要先用 NaOH 溶液浸泡、再用纯水冲净（油污使液体对吊环的接触角变大，拉力减小）。调节三根吊线，使吊环下沿水平——否则液膜从高的一侧先断，测得的拉力偏小。</p>',
-        check: () => this.hang === 'ring' && this.clean && Math.abs(this.tilt) < 0.15,
+        html: '<p>取下砝码盘。吊环先<b>拖到 NaOH 溶液烧杯里</b>浸泡几秒去油污（油污使液体对吊环的接触角变大，拉力减小），再<b>拖到纯水烧杯里</b>涮净碱液，然后挂到传感器挂钩上。调节三根吊线，使吊环下沿水平——否则液膜从高的一侧先断，测得的拉力偏小。</p>',
+        check: () => this.hang === 'ring' && this.clean && !this.residue && Math.abs(this.tilt) < 0.15,
         diagnose: () => {
           const out = [];
-          if (this.hang !== 'ring') out.push({ msg: '挂钩上还不是吊环。', fix: { label: '挂上吊环', run: async () => { this.hang = 'ring'; } } });
-          if (!this.clean) out.push({ msg: '吊环还没清洗，油污会使测得的表面张力偏小 10% 左右。', fix: { label: '清洗吊环', run: async () => { this.clean = true; } } });
+          if (!this.clean) out.push({ msg: '吊环还没清洗，油污会使测得的表面张力偏小 10% 左右。', fix: { label: '帮我清洗并挂上', run: () => this.washRing() } });
+          else if (this.residue) out.push({ msg: '吊环上还沾着碱液：带进水里会污染水面，表面张力偏小。先在纯水烧杯里涮净。', fix: { label: '帮我涮净并挂上', run: () => this.washRing() } });
+          else if (this.hang !== 'ring') out.push({ msg: '挂钩上还不是吊环。', fix: { label: '挂上吊环', run: () => this.hangOn('ring') } });
           if (Math.abs(this.tilt) >= 0.15) out.push({ msg: `吊环倾斜约 ${Math.abs(this.tilt).toFixed(1)}°，调吊线使它水平（从侧面看，环的下沿与液面平行）。`, fix: { label: '帮我调平', run: async () => { await app.tween(() => this.tilt, (v) => (this.tilt = v), 0, 600); this.tilt = 0; } } });
           return out;
         },
         auto: async () => {
-          await app.view('吊环'); app.select(app.comp('stand'));
-          this.hang = 'ring'; this.clean = true; app.renderInspector();
+          await app.view('全景'); await this.washRing(); await app.view('吊环'); app.select(app.comp('stand')); app.renderInspector();
           await app.tween(() => this.tilt, (v) => (this.tilt = v), gauss(0.03), 700); app.changed();
         },
       },
@@ -287,7 +373,7 @@ export class SurfaceExperiment {
         },
         auto: async () => {
           app.showTable(1);
-          if (this.hang !== 'ring' || !this.clean || Math.abs(this.tilt) >= 0.15) { app.select(app.comp('stand')); this.hang = 'ring'; this.clean = true; await app.tween(() => this.tilt, (v) => (this.tilt = v), 0, 500); app.changed(); }
+          if (this.hang !== 'ring' || !this.clean || this.residue || Math.abs(this.tilt) >= 0.15) { await this.washRing(); app.select(app.comp('stand')); await app.tween(() => this.tilt, (v) => (this.tilt = v), 0, 500); app.changed(); }
           for (let k = 0; k < 8 && sig().length < NREP; k++) await this.pullOnce();
         },
       },

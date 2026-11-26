@@ -27,6 +27,8 @@ const CFG = { o: '下盘', r: '下盘 + 圆环', cA: '下盘 + 圆柱（内孔�
 const NREP = { o: 3, r: 3, cA: 2, cB: 2, cC: 2 };
 const MASS = [['m1', '圆环 m₁', 'ring'], ['m2a', '圆柱 1', 'c1'], ['m2b', '圆柱 2', 'c2']];
 const PAN = { none: '（空）', ring: '圆环', c1: '圆柱 1', c2: '圆柱 2' };
+const CYL = [['cyl1', 'c1', '圆柱 1'], ['cyl2', 'c2', '圆柱 2']];
+const SIDE = { L: -1, R: 1 };
 
 export class TrifilarExperiment {
   static meta = meta;
@@ -44,12 +46,11 @@ export class TrifilarExperiment {
     this.dc = rand(29, 31) / 1000;
     // 下盘上三对对称的孔（中心到转轴的距离 x，m）
     this.hx = { A: rand(2.9, 3.1) / 100, B: rand(4.1, 4.3) / 100, C: rand(5.4, 5.6) / 100 };
-    this.hole = 'B';
     this.ringE = [0, 0]; // 圆环中心相对下盘中心的偏移（cm，下盘坐标）
     // 天平：每个物体的称量值（g，含 ±0.04% 的称量误差）；空盘零点有漂移，要先清零
     const w = (m) => Math.round(m * 1000 * (1 + gauss(0.0004)) * 10) / 10;
     this.mw = { m0: w(this.m0), m1: w(this.m1), m2: [w(this.m2[0]), w(this.m2[1])] };
-    this.pan = 'none'; this.bz0 = Math.round(rand(0.4, 1.6) * (Math.random() < 0.5 ? -1 : 1) * 10) / 10; this.tare = 0;
+    this.bz0 = Math.round(rand(0.4, 1.6) * (Math.random() < 0.5 ? -1 : 1) * 10) / 10; this.tare = 0;
     // ---- 摆 ----
     this.p = new Trifilar({ R: this.R, r: this.r, H: this.H, g: G });
     this.p.c = 2.2e-6; // 空气阻尼
@@ -63,15 +64,40 @@ export class TrifilarExperiment {
   }
 
   /** 按台上放的物体更新总质量和转动惯量 */
-  setLoad() {
-    const a = this.app, ring = a.comp && a.comp('ring') && a.comp('ring').placed, cyl = a.comp && a.comp('cyls') && a.comp('cyls').placed;
-    this.p.M = this.m0 + (ring ? this.m1 : 0) + (cyl ? this.m2[0] + this.m2[1] : 0);
-    this.p.I = this.I0 + (ring ? this.Iring + this.m1 * this.ecc() ** 2 : 0) + (cyl ? this.Icyl : 0);
-    this.cfg = ring ? 'r' : cyl ? 'c' + this.hole : 'o';
+  /** 插在下盘孔里的圆柱：[{ i, h, s }]（i 第几个圆柱，h 孔位 A/B/C，s 左 -1 / 右 +1） */
+  cylsOn() {
+    const a = this.app, out = [];
+    CYL.forEach(([key], i) => { const sl = a.slotOf ? a.slotOf(key) : null; if (sl && sl[0] === 'h') out.push({ i, h: sl[1], s: SIDE[sl[2]] }); });
+    return out;
   }
-  /** 两圆柱（当前孔位）绕转轴的转动惯量 */
-  get Icyl() { return this.IcylAt(this.hole); }
+  ringOn() { return !!(this.app.slotOf && this.app.slotOf('ring') === 'disk'); }
+  setLoad() {
+    const ring = this.ringOn(), cs = this.cylsOn();
+    let M = this.m0, I = this.I0, ex = 0, ez = 0;
+    if (ring) { M += this.m1; I += this.Iring + this.m1 * this.ecc() ** 2; ex += (this.m1 * this.ringE[0]) / 100; ez += (this.m1 * this.ringE[1]) / 100; }
+    for (const c of cs) { const m = this.m2[c.i], x = this.hx[c.h]; M += m; I += m * (x * x + this.dc ** 2 / 8); ex += m * c.s * x; }
+    this.p.M = M; this.p.I = I;
+    this.cmE = Math.hypot(ex, ez) / M; // 总质心离转轴的距离（m）：不为零时放手后下盘会晃
+    const pair = cs.length === 2 && cs[0].h === cs[1].h && cs[0].s !== cs[1].s;
+    this.cfg = !ring && !cs.length ? 'o' : ring && !cs.length ? 'r' : !ring && pair ? 'c' + cs[0].h : 'x';
+    // 摆法不标准时，学生多半会把这组读数记到哪一行
+    this.rowKey = ring ? 'r' : cs.length ? 'c' + cs[0].h : 'o';
+    const iss = [];
+    if (ring && cs.length) iss.push('圆环和圆柱同时放在下盘上');
+    if (cs.length === 1) iss.push(`只插了一个圆柱（${HN[cs[0].h]}），质心不在转轴上`);
+    if (cs.length === 2 && cs[0].h !== cs[1].h) iss.push(`两个圆柱不在同一对孔里（${HN[cs[0].h]}、${HN[cs[1].h]}）`);
+    if (cs.length === 2 && cs[0].h === cs[1].h && cs[0].s === cs[1].s) iss.push('两个圆柱插在同一侧');
+    this.cfgIssue = iss.join('，');
+  }
+  /** 两圆柱都插在 h 孔时绕转轴的转动惯量 */
   IcylAt(h) { const x = this.hx[h]; return (this.m2[0] + this.m2[1]) * (x * x + this.dc ** 2 / 8); }
+  /** 两个圆柱是否对称地插在 h 这对孔里 */
+  pairIn(h) { const cs = this.cylsOn(); return cs.length === 2 && cs.every((c) => c.h === h) && cs[0].s !== cs[1].s; }
+  /** 秤盘上放的东西：'none' | 'ring' | 'c1' | 'c2' */
+  get pan() {
+    const z = this.app.zones && this.app.zones.find((q) => q.id === 'pan'), o = z && z.occupant;
+    return !o ? 'none' : o.key === 'ring' ? 'ring' : (CYL.find((c) => c[0] === o.key) || [0, 'none'])[1];
+  }
   /** 圆环偏心距（m） */
   ecc() { return Math.hypot(this.ringE[0], this.ringE[1]) / 100; }
   get moving() { return Math.abs(this.p.th) > 0.002 || Math.abs(this.p.w) > 0.002 || this.p.sw > 0.002; }
@@ -94,19 +120,6 @@ export class TrifilarExperiment {
     if (this.moving) { this.app.toast('下盘在转动，先让它停下再推圆环', 'warn'); return; }
     this.ringE[i] = clamp(v, -1.5, 1.5); this.setLoad();
   }
-  setHole(h) {
-    if (h === this.hole) return;
-    const c = this.app.comp('cyls');
-    if (c && c.placed && this.moving) { this.app.toast('下盘在转动，先让它停下再换孔', 'warn'); return; }
-    this.hole = h; this.setLoad();
-    if (this.meas.startsWith('Lc')) this.setMeas(this.meas);
-  }
-  setPan(v) {
-    const a = this.app;
-    if (v === 'ring' && a.comp('ring').placed) return a.toast('圆环还在下盘上，先把它取下来', 'warn');
-    if ((v === 'c1' || v === 'c2') && a.comp('cyls').placed) return a.toast('圆柱还插在下盘上，先取下来', 'warn');
-    this.pan = v;
-  }
   setMeas(k) {
     this.meas = k;
     if (k === 'H') this.tape.measure(this.H * 100, { sigma: 0.04 });
@@ -118,7 +131,7 @@ export class TrifilarExperiment {
     const p = this.p, a = (this.amp0 * Math.PI) / 180;
     p.th = a; p.w = gentle ? 0 : rand(-0.3, 0.3);
     const tl = Math.hypot(this.tilt[0], this.tilt[1]);
-    const ecc = this.cfg === 'r' ? this.ecc() * 100 : 0; // 圆环放偏：质心不在轴上，放手后下盘会晃
+    const ecc = this.cmE * 100; // 圆环放偏、圆柱插得不对称：质心不在轴上，放手后下盘会晃
     p.sw = (gentle ? 0.0006 : rand(0.012, 0.02)) + tl * 0.004 + ecc * 0.006; p.swPh = rand(0, 6.28);
     this.gentle = gentle;
     this.app.changed();
@@ -143,7 +156,7 @@ export class TrifilarExperiment {
     if (moving || this.sw.run) a.changed();
   }
   /** 计时开始时的状态，用于记录时检查 */
-  info() { return { amp: (this.p.amp * 180) / Math.PI, sw: this.p.sw, cfg: this.cfg, gentle: this.gentle, phase: this.phaseErr(), e: this.cfg === 'r' ? this.ecc() * 100 : 0 }; }
+  info() { return { amp: (this.p.amp * 180) / Math.PI, sw: this.p.sw, cfg: this.cfg, row: this.rowKey, issue: this.cfgIssue, gentle: this.gentle, phase: this.phaseErr(), e: this.ringOn() ? this.ecc() * 100 : 0, cm: this.cmE * 100 }; }
   /** 当前位置离平衡位置有多远（以周期计）：用于判断学生是否在平衡位置按表 */
   phaseErr() { const T = this.p.T0, d = (this.p.t - this.lastCross) % T; return Math.min(d, Math.abs(d - T / 2), T - d) / T; }
 
@@ -209,7 +222,9 @@ export class TrifilarExperiment {
       ],
     }));
     // ---------- 待测物体 ----------
-    app.addSlot({ id: 'disk', pos: new THREE.Vector3(0, yd0 + 0.4, 0), accepts: ['ring', 'cyls'] });
+    app.addSlot({ id: 'disk', pos: new THREE.Vector3(0, yd0 + 0.4, 0), accepts: ['ring'], label: '下盘', r: 6.2, snap: 9 });
+    for (const h of HOLES) for (const sd of ['L', 'R']) app.addSlot({ id: `h${h}${sd}`, pos: new THREE.Vector3(SIDE[sd] * this.hx[h] * 100, yd0 + 0.4, 0), accepts: ['cyl1', 'cyl2'], label: `${HN[h]}（${sd === 'L' ? '左' : '右'}）`, r: (this.dc * 100) / 2 + 0.2, snap: 4 });
+    app.addSlot({ id: 'pan', pos: new THREE.Vector3(56, 5.85, 16), accepts: ['ring', 'cyl1', 'cyl2'], label: '天平秤盘', r: 7.5, snap: 12 });
     const ringG = new THREE.Group();
     const ri = (this.D1 * 100) / 2, ro = (this.D2 * 100) / 2;
     this.ringMesh = new THREE.Mesh(new THREE.LatheGeometry([new THREE.Vector2(ri, 0), new THREE.Vector2(ro, 0), new THREE.Vector2(ro, 1.6), new THREE.Vector2(ri, 1.6), new THREE.Vector2(ri, 0)], 72), new THREE.MeshStandardMaterial({ color: 0x5b6470, metalness: 0.8, roughness: 0.3 }));
@@ -217,9 +232,9 @@ export class TrifilarExperiment {
     app.addComponent(new Component({
       key: 'ring', name: '圆环', zone: 'slot', defaultSlot: 'disk', object: ringG, labelY: 8,
       icon: SVG('<circle cx="32" cy="20" r="14" fill="none" stroke="currentColor" stroke-width="6"/>'),
-      desc: '钢制圆环，质量要自己用天平称。放到下盘上时一般不会正好同心：看下盘上的刻圈，轻推圆环，直到刻圈四周都被外缘盖住。',
+      desc: '钢制圆环，质量要自己用天平称。拖到天平秤盘上称，拖到下盘上测周期，拖回器材柜就是取下。放到下盘上时一般不会正好同心：看下盘上的刻圈，轻推圆环，直到刻圈四周都被外缘盖住。',
       controls: () => {
-        if (!this.app.comp('ring').placed) return [{ type: 'note', html: '圆环不在下盘上：可以放到天平上称质量，或放到下盘上测周期。' }];
+        if (!this.ringOn()) return [{ type: 'note', html: '圆环不在下盘上：拖到天平秤盘上可以称质量，拖到下盘上测周期。' }];
         return [
           { type: 'knob', label: '向左 / 右推圆环', get: () => this.ringE[0], set: (v) => this.pushRing(0, v), step: 0.01, bigStep: 0.1, perRev: 0.5, fmt: () => '轻推' },
           { type: 'knob', label: '向前 / 后推圆环', get: () => this.ringE[1], set: (v) => this.pushRing(1, v), step: 0.01, bigStep: 0.1, perRev: 0.5, fmt: () => '轻推' },
@@ -227,31 +242,30 @@ export class TrifilarExperiment {
         ];
       },
     }));
-    const cylG = new THREE.Group(), cm = new THREE.MeshStandardMaterial({ color: 0x9aa3ad, metalness: 0.85, roughness: 0.25 });
-    this.cylM = [-1, 1].map((s) => { const m = mesh(new THREE.CylinderGeometry((this.dc * 100) / 2, (this.dc * 100) / 2, 3, 36), cm, s * this.hx[this.hole] * 100, 1.5, 0); cylG.add(m); return m; });
-    app.addComponent(new Component({
-      key: 'cyls', name: '两个圆柱', zone: 'slot', defaultSlot: 'disk', object: cylG, labelY: 8,
-      icon: SVG('<rect x="12" y="10" width="12" height="20" rx="2" fill="currentColor"/><rect x="40" y="10" width="12" height="20" rx="2" fill="currentColor"/>'),
-      desc: '两个相同的钢圆柱（质量用天平分别称）。下盘上有内、中、外三对对称的孔：换孔就是改变圆柱中心到转轴的距离 x，可以验证 I 随 x² 线性变化（平行轴定理）。',
-      controls: () => [
-        { type: 'segment', label: '插在哪一对孔', get: () => this.hole, set: (v) => this.setHole(v), options: HOLES.map((h) => ({ label: HN[h], value: h })) },
-        { type: 'note', html: '换孔前先让下盘停下。' },
-      ],
-    }));
+    const cm = new THREE.MeshStandardMaterial({ color: 0x9aa3ad, metalness: 0.85, roughness: 0.25 });
+    CYL.forEach(([key, , name], i) => {
+      const g = new THREE.Group(); g.add(mesh(new THREE.CylinderGeometry((this.dc * 100) / 2, (this.dc * 100) / 2, 3, 36), cm.clone(), 0, 1.5, 0));
+      app.addComponent(new Component({
+        key, name, zone: 'slot', defaultSlot: `hB${i ? 'R' : 'L'}`, object: g, labelY: 6,
+        icon: SVG(`<rect x="24" y="8" width="16" height="24" rx="2" fill="currentColor"/><text x="32" y="25" font-size="11" text-anchor="middle" fill="#fff">${i + 1}</text>`),
+        desc: '钢圆柱（两个看起来一样，质量用天平分别称）。拖进下盘上的孔：内、中、外三对孔离转轴的距离 x 不同，两个圆柱要插在同一对孔的两侧，质心才在转轴上。拖到天平秤盘上称质量，拖回器材柜就是取下。',
+        controls: () => {
+          const sl = this.app.slotOf(key), z = this.app.zones.find((q) => q.id === sl);
+          return [{ type: 'readout', label: '现在在', get: () => (z ? z.label : '—') }, { type: 'note', html: '在三维视图里按住圆柱拖到别的孔，或拖到天平秤盘上。换孔前先让下盘停下。' }];
+        },
+      }));
+    });
     // ---------- 电子天平 ----------
     const bal = new THREE.Group(); bal.position.set(56, 0, 18);
     bal.add(mesh(new THREE.BoxGeometry(20, 5, 24), MAT.paint(0xe5e7eb), 0, 2.5, 0));
     bal.add(mesh(new THREE.BoxGeometry(14, 3.2, 0.4), MAT.black(), 0, 2.6, 12.1));
     bal.add(mesh(new THREE.CylinderGeometry(7.5, 7.5, 0.5, 40), MAT.metal(), 0, 5.6, -2));
-    this.panRing = new THREE.Mesh(new THREE.LatheGeometry([new THREE.Vector2(ri, 0), new THREE.Vector2(ro, 0), new THREE.Vector2(ro, 1.6), new THREE.Vector2(ri, 1.6), new THREE.Vector2(ri, 0)], 48), new THREE.MeshStandardMaterial({ color: 0x5b6470, metalness: 0.8, roughness: 0.3 }));
-    this.panRing.position.set(0, 5.9, -2);
-    this.panCyl = mesh(new THREE.CylinderGeometry((this.dc * 100) / 2, (this.dc * 100) / 2, 3, 28), cm, 0, 7.4, -2);
-    bal.add(this.panRing, this.panCyl);
     app.addComponent(new Component({
-      key: 'balance', name: '电子天平', zone: 'none', fixed: true, object: bal, labelY: 12,
-      desc: '分度值 0.1 g。空盘显示不为零时先按“清零”，否则每个称量值都带同样的偏差。物体放在下盘上时不能称。',
+      key: 'balance', name: '电子天平', zone: 'none', object: bal, labelY: 12,
+      icon: SVG('<rect x="10" y="22" width="44" height="12" rx="2" fill="currentColor"/><rect x="18" y="16" width="28" height="4" rx="2" fill="currentColor"/>'),
+      desc: '分度值 0.1 g。把圆环、圆柱拖到秤盘上称。空盘显示不为零时先按“清零”，否则每个称量值都带同样的偏差。',
       controls: () => [
-        { type: 'select', label: '秤盘上放', get: () => this.pan, set: (v) => this.setPan(v), options: Object.entries(PAN).map(([value, label]) => ({ value, label })) },
+        { type: 'readout', label: '秤盘上', get: () => PAN[this.pan] },
         { type: 'button', label: '清零（去皮）', onClick: () => { this.tare = this.bz0 + this.panMass(); } },
         { type: 'readout', label: '天平显示', get: () => `${this.scale.toFixed(1)} g` },
       ],
@@ -260,20 +274,26 @@ export class TrifilarExperiment {
     this.gv = app.addView({ id: 'tool', title: '量具读数', w: 330, h: 150, res: 1.8 });
   }
 
-  canPlace(comp) {
-    if ((comp.key === 'ring' || comp.key === 'cyls') && (Math.abs(this.p.th) > 0.002 || this.p.sw > 0.002)) return '下盘还在转动，先让它停下再放物体';
+  canPlace(comp, o = {}) {
+    const sl = o.slot ?? comp.defaultSlot, onDisk = sl === 'disk' || (sl && sl[0] === 'h');
+    const from = comp.placed ? comp.slot : null, offDisk = from === 'disk' || (from && from[0] === 'h');
+    if ((onDisk || offDisk) && this.moving) return '下盘还在转动，先让它停下再放或取物体';
+    if (sl === 'pan' && !this.app.comp('balance').placed) return '先把电子天平拿到实验台上';
     return null;
   }
   onPlace(c) {
-    if (c && c.key === 'ring') {
+    if (c && c.key === 'ring' && c.slot === 'disk') {
       const an = rand(0, 6.28), e = rand(0.4, 0.9);
       this.ringE = [e * Math.cos(an), e * Math.sin(an)];
-      if (this.pan === 'ring') this.pan = 'none';
     }
-    if (c && c.key === 'cyls' && (this.pan === 'c1' || this.pan === 'c2')) this.pan = 'none';
     this.setLoad();
   }
-  onRemove() { this.setLoad(); }
+  onSlotChange(c) { this.onPlace(c); }
+  onRemove(c) {
+    // 天平拿走了，秤盘上的东西也一起放回柜里
+    if (c && c.key === 'balance') { const z = this.app.zones.find((q) => q.id === 'pan'); if (z && z.occupant) this.app.remove(z.occupant); }
+    this.setLoad();
+  }
 
   update() {
     const p = this.p, yd0 = YU - this.H * 100;
@@ -282,10 +302,12 @@ export class TrifilarExperiment {
     const k = (Math.PI / 180) * 2;
     this.lower.position.set(sx, yd, 0);
     this.lower.rotation.set(this.tilt[0] * k, -p.th, this.tilt[1] * k, 'YXZ');
-    for (const key of ['ring', 'cyls']) { const c = this.app.comp(key); if (c.placed) { c.root.position.set(sx, yd + 0.4, 0); c.root.rotation.y = -p.th; } }
-    this.ringMesh.position.set(this.ringE[0], 0, this.ringE[1]);
-    for (const [i, s] of [[0, -1], [1, 1]]) this.cylM[i].position.x = s * this.hx[this.hole] * 100;
-    this.panRing.visible = this.pan === 'ring'; this.panCyl.visible = this.pan === 'c1' || this.pan === 'c2';
+    { const c = this.app.comp('ring'); if (c.slot === 'disk') { c.root.position.set(sx, yd + 0.4, 0); c.root.rotation.y = -p.th; } }
+    for (const cc of this.cylsOn()) {
+      const c = this.app.comp(CYL[cc.i][0]), ox = cc.s * this.hx[cc.h] * 100;
+      c.root.position.set(sx + ox * Math.cos(p.th), yd + 0.4, ox * Math.sin(p.th)); c.root.rotation.y = -p.th;
+    }
+    this.ringMesh.position.set(this.ringOn() ? this.ringE[0] : 0, 0, this.ringOn() ? this.ringE[1] : 0);
     const pos = this.lines.geometry.attributes.position;
     for (let i = 0; i < 3; i++) {
       const an = Math.PI / 2 + (i * 2 * Math.PI) / 3;
@@ -314,8 +336,8 @@ export class TrifilarExperiment {
     const sc = Rp / RD;
     g.strokeStyle = '#2a1e0c'; g.lineWidth = 1; g.beginPath(); g.arc(0, 0, this.D2 * 50 * sc, 0, 7); g.stroke();
     g.fillStyle = '#5a4520'; for (const h of HOLES) for (const s of [-1, 1]) { g.beginPath(); g.arc(s * this.hx[h] * 100 * sc, 0, this.dc * 50 * sc, 0, 7); g.fill(); }
-    if (a.comp('ring').placed) { g.strokeStyle = 'rgba(75,85,99,0.92)'; g.lineWidth = ((this.D2 - this.D1) * 100 / 2) * sc; g.beginPath(); g.arc(this.ringE[0] * sc, this.ringE[1] * sc, ((this.D1 + this.D2) / 4) * 100 * sc, 0, 7); g.stroke(); }
-    if (a.comp('cyls').placed) { g.fillStyle = '#9aa3ad'; for (const s of [-1, 1]) { g.beginPath(); g.arc(s * this.hx[this.hole] * 100 * sc, 0, this.dc * 50 * sc, 0, 7); g.fill(); } }
+    if (this.ringOn()) { g.strokeStyle = 'rgba(75,85,99,0.92)'; g.lineWidth = ((this.D2 - this.D1) * 100 / 2) * sc; g.beginPath(); g.arc(this.ringE[0] * sc, this.ringE[1] * sc, ((this.D1 + this.D2) / 4) * 100 * sc, 0, 7); g.stroke(); }
+    g.fillStyle = '#9aa3ad'; for (const c of this.cylsOn()) { g.beginPath(); g.arc(c.s * this.hx[c.h] * 100 * sc, 0, this.dc * 50 * sc, 0, 7); g.fill(); }
     for (let k = 0; k < 3; k++) { const an = -Math.PI / 2 - (k * 2 * Math.PI) / 3; g.fillStyle = '#111'; g.beginPath(); g.arc((this.R * 100 * Rp / RD) * Math.cos(an), (this.R * 100 * Rp / RD) * Math.sin(an), 3, 0, 7); g.fill(); }
     g.restore();
     // 平衡位置标线
@@ -388,11 +410,13 @@ export class TrifilarExperiment {
     if (this.sw.run) a.toast('秒表还在走，先停表', 'warn');
     if (!(this.sw.value > 0)) return a.toast('秒表读数为零', 'warn');
     if (!s) return a.toast('没有完整的一次计时', 'warn');
-    const i = t.rows.findIndex((r) => r.k === this.cfg && (r.t == null || r.t === ''));
-    if (i < 0) return a.toast(`「${CFG[this.cfg]}」已经测满 ${NREP[this.cfg]} 次`, 'warn');
+    const rk = this.rowKey, i = t.rows.findIndex((r) => r.k === rk && (r.t == null || r.t === ''));
+    if (i < 0) return a.toast(`「${CFG[rk]}」已经测满 ${NREP[rk]} 次`, 'warn');
     const fl = [];
-    if (s.cfg !== this.cfg) fl.push(`计时过程中换过下盘上的物体（开始时是「${CFG[s.cfg]}」）`);
+    if (s.row !== rk || s.cfg !== this.cfg) fl.push(`计时过程中动过下盘上的物体（开始时是「${s.cfg === 'x' ? s.issue : CFG[s.cfg]}」）`);
+    if (s.issue) fl.push(`计时时${s.issue}，下盘上的东西和这一行「${CFG[rk]}」不符`);
     if (s.e > 0.1) fl.push(`计时时圆环偏离中心约 ${(s.e * 10).toFixed(1)} mm，多出 m₁e² 的转动惯量，下盘也会晃`);
+    else if (s.cm > 0.1 && !s.issue) fl.push(`计时时总质心偏离转轴约 ${(s.cm * 10).toFixed(1)} mm`);
     if (s.amp > 6) fl.push(`开始计时时扭转角约 ${s.amp.toFixed(0)}°，偏大，周期会偏大`);
     if (s.sw > 0.004) fl.push('计时时下盘在整体晃动（直接扭动下盘造成的），平衡位置判断不准');
     const T = this.p.T0, n = this.sw.value / T;
@@ -403,14 +427,15 @@ export class TrifilarExperiment {
   recGeo(t) {
     const a = this.app, k = this.meas;
     if (k !== 'H') { const p = this.cal.problem(); if (p) a.toast(p, 'warn'); }
-    if (k.startsWith('Lc') && !(a.comp('cyls').placed && this.hole === k[2])) a.toast(`先把两个圆柱插到${HN[k[2]]}，再量它们的外侧间距`, 'warn');
+    if (k.startsWith('Lc') && !this.pairIn(k[2])) a.toast(`先把两个圆柱插到${HN[k[2]]}，再量它们的外侧间距`, 'warn');
     const i = t.rows.findIndex((r) => r.k === k);
     t.set(i, 'v', Math.round((k === 'H' ? this.tape.reading : this.cal.reading) * 100) / 100);
   }
 
   recMass(t) {
     const a = this.app, row = MASS.find((m) => m[2] === this.pan);
-    if (!row) return a.toast('秤盘上没有东西', 'warn');
+    if (!a.comp('balance').placed) return a.toast('台上还没有天平', 'warn');
+    if (!row) return a.toast('秤盘上没有东西：把要称的物体拖到秤盘上', 'warn');
     if (Math.abs(this.tare - this.bz0) > 0.05) a.toast('提示：称之前空盘没有清零，读数里带着零点偏差', 'warn');
     t.set(t.rows.findIndex((r) => r.k === row[0]), 'v', this.scale);
   }
@@ -431,6 +456,13 @@ export class TrifilarExperiment {
     await a.tween(() => 0, (k) => { this.ringE = [t0[0] + (t1[0] - t0[0]) * k, t0[1] + (t1[1] - t0[1]) * k]; this.setLoad(); }, 1, 700);
   }
   async takeOff(key) { const a = this.app, c = a.comp(key); if (c.placed) { this.stopDisk(); a.remove(c); this.setLoad(); await a.wait(200); } }
+  /** 自动操作：两个圆柱对称地插到 h 这对孔 */
+  async putCyls(h) {
+    const a = this.app; this.stopDisk();
+    if (this.pairIn(h)) return;
+    for (const [key] of CYL) if (a.comp(key).placed) await this.takeOff(key);
+    await a.autoPut('cyl1', `h${h}L`); await a.autoPut('cyl2', `h${h}R`); this.setLoad();
+  }
   steps() {
     const app = this.app, done = (k) => app.table('per').rows.filter((r) => r.k === k && isFinite(r.t) && r.t !== '' && r.t != null).length;
     const mrow = (k) => app.table('mass').rows.find((r) => r.k === k);
@@ -448,7 +480,7 @@ export class TrifilarExperiment {
       },
       {
         title: '用天平称圆环和两个圆柱',
-        html: '<p>选中电子天平。<b>先看空盘读数</b>：不为零就按“清零”。然后依次把圆环、圆柱 1、圆柱 2 放到秤盘上，读数记入“质量”表。下盘质量 m₀ 已标在盘上。</p>',
+        html: '<p>从器材柜把电子天平拿到台上。<b>先看空盘读数</b>：不为零就按“清零”。然后依次把圆环、圆柱 1、圆柱 2 <b>拖到秤盘上</b>，读数记入“质量”表（每次只放一样）。下盘质量 m₀ 已标在盘上。</p>',
         hint: '没清零就称，每个读数都差同一个零点值，转动惯量会整体偏大或偏小。',
         status: () => `天平：${PAN[this.pan]}，显示 ${this.scale.toFixed(1)} g`,
         check: () => MASS.every(([k]) => filled(mrow(k))),
@@ -459,12 +491,12 @@ export class TrifilarExperiment {
           return out;
         },
         auto: async () => {
-          await app.view('全景'); await this.takeOff('ring'); await this.takeOff('cyls');
-          app.select(app.comp('balance')); app.showTable(2);
-          this.pan = 'none'; app.changed(); await app.wait(400);
+          await app.view('全景'); await this.takeOff('ring'); for (const [key] of CYL) await this.takeOff(key);
+          await app.autoPlace('balance'); app.select(app.comp('balance')); app.showTable(2);
+          await app.wait(400);
           this.tare = this.bz0; app.changed(); await app.wait(300);
-          for (const [k, , p] of MASS) { if (filled(mrow(k))) continue; this.pan = p; app.changed(); await app.wait(500); await app.record('mass'); }
-          this.pan = 'none'; app.changed();
+          const KEY = { ring: 'ring', c1: 'cyl1', c2: 'cyl2' };
+          for (const [k, , p] of MASS) { if (filled(mrow(k))) continue; await app.autoPut(KEY[p], 'pan'); await app.wait(400); await app.record('mass'); await this.takeOff(KEY[p]); }
         },
       },
       {
@@ -473,7 +505,7 @@ export class TrifilarExperiment {
         hint: '从平衡位置开始计时：这时下盘转得最快，经过标线的时刻最容易判断准。',
         check: () => done('o') >= 3,
         auto: async () => {
-          await this.takeOff('ring'); await this.takeOff('cyls');
+          await this.takeOff('ring'); for (const [key] of CYL) await this.takeOff(key);
           await app.view('下盘'); app.select(app.comp('frame'));
           await this.knob(() => this.amp0, (v) => (this.amp0 = Math.round(v)), 4, 300);
           app.showTable(0);
@@ -488,9 +520,8 @@ export class TrifilarExperiment {
         check: () => done('r') >= 3,
         diagnose: () => (app.comp('ring').placed && this.ecc() > 0.001 ? [{ msg: `圆环没放正（${this.gapText()}）。`, fix: { label: '帮我推到中心', run: () => this.center() } }] : []),
         auto: async () => {
-          await this.takeOff('cyls'); this.stopDisk();
-          if (this.pan === 'ring') this.pan = 'none';
-          await app.autoPlace('ring'); this.setLoad();
+          for (const [key] of CYL) await this.takeOff(key); this.stopDisk();
+          await app.autoPut('ring', 'disk'); this.setLoad();
           await this.center();
           app.showTable(0);
           for (let i = done('r'); i < 3; i++) await this.timeOnce();
@@ -498,18 +529,16 @@ export class TrifilarExperiment {
       },
       {
         title: '圆柱依次插在内、中、外三对孔，测周期',
-        html: '<p>取下圆环，把两个圆柱对称地插入下盘的<b>内孔</b>，测 2 次；再换到中孔、外孔各测 2 次。圆柱离转轴越远，周期越长。三组数据画 $I-x^2$ 图，可以检验平行轴定理。</p>',
-        hint: '选中圆柱，在面板里选“插在哪一对孔”。换孔前先让下盘停下。',
+        html: '<p>取下圆环（拖回器材柜），把两个圆柱<b>拖进下盘内孔的左右两个孔</b>，测 2 次；再换到中孔、外孔各测 2 次。圆柱离转轴越远，周期越长。三组数据画 $I-x^2$ 图，可以检验平行轴定理。</p>',
+        hint: '按住圆柱拖到另一个孔。两个圆柱要在同一对孔的左右两侧；只插一个或插得不对称，质心偏离转轴，下盘会晃，周期也不对。换孔前先让下盘停下。',
         status: () => HOLES.map((h) => `${HN[h]} ${done('c' + h)}/2`).join('　'),
         check: () => HOLES.every((h) => done('c' + h) >= 2),
         auto: async () => {
           await this.takeOff('ring'); this.stopDisk();
-          if (this.pan === 'c1' || this.pan === 'c2') this.pan = 'none';
-          await app.autoPlace('cyls');
           app.showTable(0);
           for (const h of HOLES) {
             if (done('c' + h) >= 2) continue;
-            this.stopDisk(); app.select(app.comp('cyls')); this.setHole(h); app.changed(); await app.wait(300);
+            await this.putCyls(h); app.changed(); await app.wait(300);
             for (let i = done('c' + h); i < 2; i++) await this.timeOnce();
           }
           this.stopDisk();
@@ -518,14 +547,14 @@ export class TrifilarExperiment {
       {
         title: '测量几何量',
         html: '<p>用游标卡尺测上、下盘悬点间距 a、b，圆环内外径，圆柱直径，以及圆柱插在内、中、外孔时<b>两圆柱的外侧间距</b>；用米尺测两盘间距 H。悬点到中心的距离 $r=a/\\sqrt3$，$R=b/\\sqrt3$。</p>',
-        hint: '量外侧间距时圆柱要插在对应的孔里（选中圆柱换孔）。',
+        hint: '量外侧间距时两个圆柱要插在对应的那对孔里。',
         check: () => app.table('geo').rows.every((r) => isFinite(r.v) && r.v !== '' && r.v != null),
         auto: async () => {
           app.showTable(1);
           for (const [k] of GEO) {
             const row = app.table('geo').rows.find((r) => r.k === k);
             if (row && row.v !== '' && row.v != null && isFinite(row.v)) continue;
-            if (k.startsWith('Lc')) { if (!app.comp('cyls').placed) { await this.takeOff('ring'); this.stopDisk(); await app.autoPlace('cyls'); } this.stopDisk(); this.setHole(k[2]); }
+            if (k.startsWith('Lc')) { await this.takeOff('ring'); await this.putCyls(k[2]); }
             this.setMeas(k); app.renderInspector(); app.changed();
             if (k !== 'H') { const s = this.objSize(k); this.cal.open = s + 8; await this.knob(() => this.cal.open, (v) => this.cal.push(v), s - 1, 400); }
             await app.wait(300); await app.record('geo');

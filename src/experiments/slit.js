@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { meta, thumb, LAMBDA } from './slit.meta.js';
 import { GPU, GLSL } from '../core/gpu.js';
 import { Component } from '../core/Component.js';
+import { Mount } from '../core/Mount.js';
 import { AXIS_Y, MAT, mesh, labTable, opticalRail, carriage, whiteScreen, laserMesh, Beam, ICONS, meterBox, knobMesh } from '../core/Models.js';
 import { fresnel1D, slitApertures, sinc2 } from '../physics/diffraction.js';
 import { linFit, mean, uA, fmtU, texU, sig, gauss, rand, relErr, pct, clamp } from '../core/Stats.js';
@@ -35,7 +36,7 @@ export class SlitExperiment {
     this.laserOn = false;
     this.a0 = rand(0.006, 0.014); // 测微器零点误差 mm
     this.aRead = 0.45; // 缝宽测微器读数 mm
-    this.type = 'single';
+    // 衍射元件：可调单缝前面可以插一块双缝片（type 由插没插决定）
     this.slitOff = rand(0.5, 0.9) * (Math.random() < 0.5 ? -1 : 1); // 狭缝横向偏离光束 mm
     this.stage = 10; // 探头测微平移台读数 mm
     this.center = rand(23.5, 26.5); // 衍射图样中心在平移台上的位置
@@ -56,6 +57,10 @@ export class SlitExperiment {
       t: `来自“单缝衍射的光强分布”：缝宽 a = ${this.a.toFixed(3)} mm，缝到探测面 ${(this.L / 10).toFixed(1)} cm，He-Ne 激光。把观察距离从几毫米拖到几米，看图样怎样从缝的几何投影过渡到 sinc² 形的夫琅禾费衍射。`,
     };
   }
+  get type() { return this.dsm && this.dsm.value === 'double' ? 'double' : 'single'; }
+  onPlace() { if (this.app.exp !== this) return; this.app.renderInspector(); this.app.changed(); }
+  onSlotChange() { this.onPlace(); }
+  onRemove() { this.onPlace(); }
   aps() { return slitApertures(this.type, this.a, 0.25, 0); }
   beam() { return { w: BEAM_W, c: this.slitOff }; }
   /** 屏上相对光强（以入射光束中心光强为 1） */
@@ -127,14 +132,27 @@ export class SlitExperiment {
     sc.top.add(sg);
     app.addComponent(new Component({
       key: 'slit', name: '可调单缝', icon: ICONS.slit, zone: 'rail', defaultPos: 32, required: true, object: sc.group, labelY: 30,
-      desc: '缝宽由测微螺旋调节，分度 0.01 mm（存在零点误差，缝宽以衍射测量结果为准）。也可换成双缝片观察。',
+      desc: '缝宽由测微螺旋调节，分度 0.01 mm（存在零点误差，缝宽以衍射测量结果为准）。从器材柜拿双缝片插到缝前的卡槽里，就变成双缝衍射。',
       controls: () => [
-        { type: 'segment', label: '衍射元件', get: () => this.type, set: (v) => (this.type = v), options: [{ label: '单缝', value: 'single' }, { label: '双缝 (d=0.25mm)', value: 'double' }] },
+        { type: 'readout', label: '衍射元件', get: () => (this.type === 'double' ? '双缝片（插在缝前）' : '单缝') },
         { type: 'knob', label: '缝宽测微螺旋读数', get: () => this.aRead, set: (v) => { this.aRead = v; this.minW = Math.min(this.minW, v); this.maxW = Math.max(this.maxW, v); }, min: 0, max: 1, step: 0.002, bigStep: 0.02, perRev: 0.5, digits: 3, unit: 'mm' },
         { type: 'knob', label: '狭缝横向位置', get: () => this.slitOff, set: (v) => (this.slitOff = v), min: -2, max: 2, step: 0.01, bigStep: 0.1, perRev: 0.5, digits: 2, unit: 'mm', sub: '使激光束正好照在狭缝中央（透过光最强）' },
       ],
     }));
 
+    // 双缝片：插到狭缝架前面的卡槽里（跟着狭缝滑座走）
+    const dp = new THREE.Group();
+    dp.add(mesh(new THREE.BoxGeometry(0.2, 6, 6), MAT.dark()));
+    for (const z of [-0.18, 0.18]) dp.add(mesh(new THREE.BoxGeometry(0.22, 3, 0.08), MAT.emissive(0xd9e2ec, 0.2), 0, 0, z));
+    const tmp = new THREE.Vector3();
+    this.dsm = new Mount(app, {
+      id: 'dslot', label: '狭缝前的卡槽', pos: new THREE.Vector3(30, AXIS_Y, 0), r: 2, snap: 6,
+      follow: () => { this.slitGroup.updateWorldMatrix(true, false); return this.slitGroup.localToWorld(tmp.set(-1.2, 0, 0)); },
+      rest: () => new THREE.Vector3(14, 0.2, 26), restRotY: 0,
+      items: [{ key: 'dslit', name: '双缝片（d = 0.25 mm）', value: 'double', object: dp, labelY: 5,
+        icon: '<svg viewBox="0 0 64 40"><rect x="22" y="4" width="20" height="32" fill="currentColor"/><path d="M30 10v20M34 10v20" stroke="#fff" stroke-width="1.5"/></svg>',
+        desc: '两条缝、中心间距 0.25 mm 的双缝片。插到可调单缝前面的卡槽里，屏上出现双缝干涉条纹调制的衍射图样；拿掉就回到单缝。' }],
+    });
     const scrC = carriage(0x9aa3b2, AXIS_Y);
     const ws = whiteScreen(16, 10); scrC.top.add(ws.group);
     this.scrView = app.addView({ id: 'scr', title: '白屏上的衍射图样', w: 280, h: 120, res: 1.6 });
@@ -175,14 +193,21 @@ export class SlitExperiment {
     this.profile = app.addView({ id: 'prof', title: '光强分布（探头处，理论曲线仅供参考）', w: 280, h: 150, res: 1.5 });
   }
 
-  canPlace(comp) {
+  canPlace(comp, o = {}) {
     if (comp.key === 'det' && this.app.comp('screen').placed) return '请先把白屏放回器材柜，再放置光电探头';
     if (comp.key === 'screen' && this.app.comp('det').placed) return '请先取下光电探头';
+    if (comp.key === 'dslit' && o.slot === 'dslot' && !this.app.comp('slit').placed) return '导轨上还没有可调狭缝，双缝片没地方插';
+    return null;
+  }
+  canRemove(comp) {
+    // 拿走狭缝架时，插在上面的双缝片一起拿下来放到台面上
+    if (comp.key === 'slit' && this.dsm.value) this.app.moveSlot(this.app.comp('dslit'), 'dslot_r0', { silent: true });
     return null;
   }
 
   update() {
     const app = this.app;
+    this.dsm.sync();
     this.noise = 0.0004 + Math.abs(gauss(0.0006));
     const lit = this.lit();
     this.laserAp.material.emissiveIntensity = this.laserOn && app.comp('laser').placed ? 3 : 0.1;

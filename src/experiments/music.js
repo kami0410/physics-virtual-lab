@@ -28,14 +28,26 @@ export class MusicExperiment {
     this.d = rand(0.248, 0.252) * 1e-3;
     this.mu = 7850 * Math.PI * (this.d / 2) ** 2;
     this.muLabel = Math.round(this.mu * (1 + gauss(0.002)) * 1e7) / 1e7;
-    this.mErr = Object.fromEntries(MASSES.map((m) => [m, 1 + rand(-0.001, 0.001)]));
+    // 砝码钩（1 kg，一直挂在弦上）和 6 个 1 kg 槽码的实际质量
+    this.mHook = 1 + rand(-0.001, 0.001); this.mPiece = Array.from({ length: 6 }, () => 1 + rand(-0.001, 0.001));
     this.box = Array.from({ length: 30 }, () => 10 ** (gauss(0.4) / 20)); // 音箱对各次谐波的响应（±0.4 dB）
     this.fA = 440 + gauss(0.03); this.fB0 = 440 + rand(0.2, 0.5);
-    this.m = 7; this.L = 60; this.x0 = 15; this.s = 0;
+    this.L = 60; this.x0 = 15; this.s = 0;
     this.tb = 3; this.sp = 2; this.fc = 261.6; this.c1 = 1; this.c2 = 9; this.snd = false;
     this.cap = null; this.lastB = null; this._n = 0;
   }
-  get T() { return this.m * this.mErr[this.m] * G; }
+  /** 砝码钩上的槽码（编号 0–5） */
+  pieces() { const a = this.app; return a.stackOf ? a.stackOf('hanger').map((c) => +c.key.slice(1) - 1) : []; }
+  /** 砝码总质量（标称，kg） */
+  get m() { return 1 + this.pieces().length; }
+  get T() { return (this.mHook + this.pieces().reduce((s, i) => s + this.mPiece[i], 0)) * G; }
+  /** 自动操作：砝码钩上加减槽码，使总质量为 m kg */
+  async setMassTo(m) {
+    const a = this.app, k = m - 1;
+    while (this.pieces().length > k) { a.remove(a.stackOf('hanger').pop()); await a.wait(150); }
+    for (let i = 1; i <= 6 && this.pieces().length < k; i++) if (!a.comp(`k${i}`).placed) await a.autoPut(`k${i}`, 'mw0');
+    a.select(a.comp('sono')); a.changed();
+  }
   /** 钢丝弦第 n 次谐波的频率（计入抗弯刚度） */
   fString(n, L = this.L / 100, T = this.T) {
     const B = (Math.PI ** 3 * 2e11 * this.d ** 4) / (64 * T * L * L);
@@ -57,7 +69,7 @@ export class MusicExperiment {
       if (kind !== 'forkB') fork(this.fA, 0.3);
       if (kind !== 'forkA') fork(this.fForkB(), 0.28);
     }
-    this.cap = { kind, comps, L: this.L, x0: this.x0, m: this.m, s: this.s, id: ++this._n };
+    this.cap = { kind, comps, L: this.L, x0: this.x0, m: this.m, T: this.T, s: this.s, id: ++this._n };
     if (kind === 'forkB') this.lastB = { s: this.s, f: this.fForkB() };
     if (this.snd) this.play(comps, kind === 'string' ? 3 : 5);
     this._key = ''; this.app.changed();
@@ -111,7 +123,11 @@ export class MusicExperiment {
     const pul = mesh(new THREE.CylinderGeometry(2.4, 2.4, 0.8, 28), alu, 53, Y0 - 2.4, 0); pul.rotation.x = Math.PI / 2; g.add(pul);
     this.wire = mesh(new THREE.CylinderGeometry(0.05, 0.05, 1, 6), MAT.metal()); this.wire.rotation.z = Math.PI / 2; g.add(this.wire);
     g.add(mesh(new THREE.CylinderGeometry(0.05, 0.05, 20, 6), MAT.metal(), 55.4, Y0 - 12.4, 0));
-    this.wts = new THREE.Group(); this.wts.position.set(55.4, Y0 - 23, 0); g.add(this.wts);
+    // 砝码钩（1 kg）：挂钩、立杆、托盘；槽码从器材柜拖上来摞在托盘上
+    const HY = Y0 - 22.4;
+    g.add(mesh(new THREE.CylinderGeometry(0.25, 0.25, 11, 8), MAT.metal(), 55.4, HY - 5.5, 0));
+    g.add(mesh(new THREE.CylinderGeometry(2.6, 2.6, 0.6, 24), MAT.metal(), 55.4, HY - 11, 0));
+    for (let i = 0; i < 6; i++) app.addSlot({ id: `mw${i}`, pos: new THREE.Vector3(55.4, HY - 10.7 + i * 1.6, 0), accepts: ['k1', 'k2', 'k3', 'k4', 'k5', 'k6'], label: '砝码钩', r: 3, snap: 8, stack: 'hanger', level: i });
     this.pick = mesh(new THREE.ConeGeometry(0.6, 2.4, 10), MAT.paint(0xc41e3a)); this.pick.rotation.z = Math.PI; g.add(this.pick);
     app.addComponent(new Component({
       key: 'sono', name: '弦音计', zone: 'none', fixed: true, required: true, object: g, labelY: Y0 + 9,
@@ -119,7 +135,7 @@ export class MusicExperiment {
       desc: `钢丝弦一端固定，跨过琴码 A、B 和滑轮，下挂砝码，张力 T = mg（g = ${G} m/s²）。琴码 B 可沿米尺移动（零点对准琴码 A），红色拨片指示拨弦位置。弦线标签：直径 0.25 mm，μ = ${(this.muLabel * 1e4).toFixed(3)}×10⁻⁴ kg/m。`,
       controls: () => [
         { type: 'knob', label: '琴码 B 的位置（弦长）', get: () => this.L, set: (v) => { this.L = clamp(v, LMIN, LMAX); this.x0 = Math.min(this.x0, this.L / 2); app.changed(); }, min: LMIN, max: LMAX, step: 0.01, bigStep: 1, perRev: 2, fmt: () => '看米尺读数' },
-        { type: 'select', label: '砝码', get: () => this.m, set: (v) => { this.m = +v; app.changed(); }, options: MASSES.map((m) => ({ value: m, label: `${m.toFixed(1)} kg` })) },
+        { type: 'readout', label: '砝码（含 1 kg 砝码钩）', get: () => `${this.m} kg` },
         { type: 'knob', label: '拨弦位置（离琴码 A）', get: () => this.x0, set: (v) => { this.x0 = clamp(v, 1, this.L / 2); app.changed(); }, min: 1, max: LMAX / 2, step: 0.1, bigStep: 1, perRev: 5, digits: 1, unit: 'cm' },
         { type: 'button', label: '拨弦', onClick: () => this.excite('string') },
       ],
@@ -146,6 +162,15 @@ export class MusicExperiment {
         { type: 'button', label: '同时敲 A 和 B', onClick: () => this.excite('forks') },
       ],
     }));
+    const pm = MAT.metal();
+    for (let i = 0; i < 6; i++) {
+      const pg = new THREE.Group(); pg.add(mesh(new THREE.CylinderGeometry(2.4, 2.4, 1.5, 24), pm.clone(), 0, 0.75, 0)); pg.add(mesh(new THREE.BoxGeometry(0.7, 1.52, 2.5), MAT.black(), 0, 0.75, 1.3));
+      app.addComponent(new Component({
+        key: `k${i + 1}`, name: `1 kg 槽码 ${i + 1}`, group: '1 kg 槽码', zone: 'slot', defaultSlot: 'mw0', object: pg, labelY: 3, showLabel: false,
+        icon: SVG('<rect x="12" y="14" width="40" height="12" rx="2" fill="currentColor"/><rect x="30" y="14" width="4" height="7" fill="#fff"/><text x="32" y="38" font-size="9" text-anchor="middle" fill="currentColor">1 kg</text>'),
+        desc: '1 kg 槽码（实际质量有约 ±0.1% 的偏差）。拖到弦线末端的砝码钩上增加张力，拖回器材柜就是取下。',
+      }));
+    }
     // 传声器与声卡示波器
     const sg = new THREE.Group();
     sg.add(mesh(new THREE.CylinderGeometry(2.2, 2.6, 0.8, 20), dark, 0, 0.4, 0));
@@ -174,7 +199,6 @@ export class MusicExperiment {
     this.bB.position.x = xB;
     this.wire.scale.y = 53 - -50; this.wire.position.set(1.5, Y0 + 0.05, 0);
     this.pick.position.set(XA + this.x0, Y0 + 1.8, 0);
-    if (this._m !== this.m) { this._m = this.m; this.wts.clear(); for (let k = 0; k < this.m; k++) this.wts.add(mesh(new THREE.CylinderGeometry(2.4, 2.4, 1.5, 24), MAT.metal(), 0, -k * 1.6, 0)); }
     if (this.sl) this.sl.position.set(0.9, 9.5 + this.s * 0.25, 0);
     const pk = this.peak();
     const s = pk ? pk.f.toFixed(1) : '----';
@@ -280,12 +304,13 @@ export class MusicExperiment {
   stringCapOK() {
     const a = this.app, c = this.cap;
     if (!c || c.kind !== 'string') return a.toast('先拨弦，让声卡采集一次弦的声音', 'warn'), false;
-    if (Math.abs(c.L - this.L) > 1e-9 || c.m !== this.m || Math.abs(c.x0 - this.x0) > 1e-9) return a.toast('弦长、砝码或拨弦位置改过了，重新拨一次弦', 'warn'), false;
+    if (Math.abs(c.L - this.L) > 1e-9 || Math.abs(c.T - this.T) > 1e-9 || Math.abs(c.x0 - this.x0) > 1e-9) return a.toast('弦长、砝码或拨弦位置改过了，重新拨一次弦', 'warn'), false;
     return true;
   }
   recScale(t) {
     if (!this.stringCapOK()) return;
     const a = this.app, f = this.cap.comps[0].f;
+    if (this.m !== 7) a.toast(`现在挂的砝码是 ${this.m} kg，不是 7 kg：数据处理按 7 kg 算张力，线密度会算错`, 'warn');
     let best = -1, bc = Infinity;
     t.rows.forEach((r, i) => { const c = cents(f, r.ft); if (Math.abs(c) < Math.abs(bc)) { bc = c; best = i; } });
     if (Math.abs(bc) > 40) a.toast(`基频 ${f.toFixed(1)} Hz 离 C 大调的任何一个音都很远，调琴码 B`, 'warn');
@@ -323,14 +348,14 @@ export class MusicExperiment {
     return [
       {
         title: '调出 C 大调音阶',
-        html: '<p>挂 7 kg 砝码。从 C4 开始：拨弦，看频谱上的峰值读数，按 $f\\propto1/L$ 估算该移多少，移动琴码 B 再拨，直到基频与标准频率相差不到 5 音分。依次调出 C4 到 C5 的 8 个音，每个音记下弦长和基频。打开“扬声器”可以听到声音。</p>',
+        html: '<p>从器材柜把 1 kg 槽码拖到弦线末端的砝码钩上，连同砝码钩共 7 kg。从 C4 开始：拨弦，看频谱上的峰值读数，按 $f\\propto1/L$ 估算该移多少，移动琴码 B 再拨，直到基频与标准频率相差不到 5 音分。依次调出 C4 到 C5 的 8 个音，每个音记下弦长和基频。打开“扬声器”可以听到声音。</p>',
         hint: '要升高一个半音，弦长要缩短到原来的 2^(−1/12) ≈ 0.944 倍。可以先由第一个音算出 2Lf，再估算其他音的弦长。',
         status: () => `已调好 ${scaleDone()} / 8 个音`,
         check: () => scaleDone() >= 8,
-        diagnose: () => (this.m !== 7 ? [{ msg: `现在挂的是 ${this.m} kg 砝码；本步要求 7 kg，张力太小时 C4 的弦长超出导轨。`, fix: { label: '换 7 kg', run: async () => { this.m = 7; } } }] : []),
+        diagnose: () => (this.m !== 7 ? [{ msg: `现在挂的是 ${this.m} kg 砝码；本步要求 7 kg，张力太小时 C4 的弦长超出导轨。`, fix: { label: '加到 7 kg', run: async () => { await this.setMassTo(7); } } }] : []),
         auto: async () => {
           app.showTable(0); await app.view('弦音计');
-          app.select(app.comp('sono')); this.m = 7; app.renderInspector();
+          await this.setMassTo(7); app.renderInspector();
           for (const n of MAJOR) {
             const i = tab('scale').rows.findIndex((r) => r.note.startsWith(n.name));
             if (tab('scale').rows[i].L > 0) continue;
@@ -349,7 +374,7 @@ export class MusicExperiment {
         check: () => tab('timbre').rows.length >= 3 && tab('timbre').rows.some((r) => Math.abs(r.r - 1 / 3) < 0.01 || Math.abs(r.r - 0.5) < 0.01),
         auto: async () => {
           app.showTable(1); await app.view('弦音计');
-          if (this.m !== 7) { this.m = 7; }
+          if (this.m !== 7) await this.setMassTo(7);
           const L = Math.round(this.Lfor(noteFreq(0)) * 100) / 100;
           if (Math.abs(this.L - L) > 0.05 && !tab('timbre').rows.length) await this.adj('sono', 'L', L);
           app.select(app.comp('scope')); this.sp = 2; app.renderInspector();
@@ -404,7 +429,7 @@ export class MusicExperiment {
     if (S.length < 3 && Tm.length < 1 && B.length < 1) return { html: '<p>请先测量并记录数据。</p>', ok: false };
     let html = ''; const answers = [], plots = [];
     if (S.length >= 3) {
-      const v = S.map((r) => (2 * r.L * r.f) / 100), vm = mean(v), uv = S.length > 1 ? (tFactor(S.length) * stdev(v)) / Math.sqrt(S.length) : 0, T = 7 * this.mErr[7] * G, muM = T / (vm * vm);
+      const v = S.map((r) => (2 * r.L * r.f) / 100), vm = mean(v), uv = S.length > 1 ? (tFactor(S.length) * stdev(v)) / Math.sqrt(S.length) : 0, T = 7 * G, muM = T / (vm * vm);
       const c4 = S.find((r) => r.note.startsWith('C4'));
       html += `<h3>1. 音调：C 大调音阶</h3><table><tr><th>音</th><th>L/cm</th><th>f/Hz</th><th>2Lf /(m/s)</th>${c4 ? '<th>L(C4)/L</th><th>平均律 2^(k/12)</th><th>纯律</th><th>平均律−纯律 /音分</th>' : ''}</tr>
         ${S.map((r) => { const n = MAJOR.find((x) => r.note.startsWith(x.name)), j = n.just[0] / n.just[1]; return `<tr><td>${r.note}</td><td>${r.L.toFixed(2)}</td><td>${r.f.toFixed(1)}</td><td>${((2 * r.L * r.f) / 100).toFixed(2)}</td>${c4 ? `<td>${(c4.L / r.L).toFixed(4)}</td><td>${(2 ** (n.k / 12)).toFixed(4)}</td><td>${n.just[0]}/${n.just[1]} = ${j.toFixed(4)}</td><td>${(1200 * Math.log2(2 ** (n.k / 12) / j)).toFixed(1)}</td>` : ''}</tr>`; }).join('')}</table>

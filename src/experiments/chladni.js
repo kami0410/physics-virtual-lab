@@ -29,11 +29,36 @@ export class ChladniExperiment {
     this.E = rand(196, 210) * 1e9;
     const mk = (name, h0) => { const h = h0 * (1 + gauss(0.006)); return { name, h0, h, hm: Math.round((h + gauss(0.0015e-3)) * 1e6) / 1e6, zeta: rand(0.0035, 0.005), eps: [] }; };
     this.plates = { A: mk('钢板 A', 0.8e-3), B: mk('钢板 B', 1.0e-3) };
-    this.pk = 'A'; this.on = false; this.f = 100; this.drive = 4; this.snd = false;
+    this.pk = null; this.on = false; // pk：振动器上装的是哪块板（'A' | 'B' | null），由拖放决定 this.f = 100; this.drive = 4; this.snd = false;
     this.sx = new Float32Array(NSAND); this.sy = new Float32Array(NSAND); this.sand = 0;
     this.amp = new Float32Array(GN * GN); this._key = ''; this.acc = 0; this.dom = null;
   }
-  get plate() { return this.plates[this.pk]; }
+  get plate() { return this.plates[this.pk] || { name: '振动器上没有钢板', hm: 0 }; }
+  /** 振动器推杆上装的板 */
+  mounted() { const z = this.app.zones && this.app.zones.find((q) => q.id === 'mount'); return z && z.occupant ? z.occupant.key.slice(1) : null; }
+  syncPlates() {
+    this.pk = this.mounted();
+    for (const k of ['A', 'B']) { const c = this.app.comp('p' + k); if (c) c.plateMesh.material[2] = this.pk === k ? this.topMat : c.plainTop; }
+    this._key = '';
+  }
+  canPlace(comp, o = {}) {
+    const sl = o.slot ?? comp.defaultSlot;
+    if (sl === 'mount' && this.on && this.drive > 0) return '推杆正在振动，拧不上螺钉：先把信号发生器关掉';
+    return null;
+  }
+  onPlace(c) { if (c && c.key[0] === 'p') { this.syncPlates(); this.app.changed(); } }
+  onSlotChange(c, from) { if (c && c.key[0] === 'p') { if (from === 'mount') this.dropSand(); this.syncPlates(); this.app.changed(); } }
+  onRemove(c) { if (c && c.key[0] === 'p') { if (this.app.slotOf(c.key) === 'mount' || this.pk === c.key.slice(1)) this.dropSand(); this.syncPlates(); } }
+  dropSand() { if (this.sand) this.app.toast('板一拿下来，上面的沙全撒了', 'warn'); this.sweepOff(); }
+  /** 自动操作：把 pk 板装到振动器上（另一块先放回台面） */
+  async mountPlate(pk) {
+    const a = this.app;
+    if (this.mounted() === pk) return;
+    if (this.on) { a.select(a.comp('gen')); this.on = false; a.renderInspector(); await a.wait(200); }
+    const cur = this.mounted(); if (cur) { a.moveSlot(a.comp('p' + cur), 'rest' + cur); await a.wait(200); }
+    await a.autoPut('p' + pk, 'mount');
+    this.syncPlates();
+  }
   /** 当前板第 n 个模式的固有频率（Hz） */
   fn(n, pk = this.pk) { const p = this.plates[pk]; return plateFreq(this.modes[n].lam, { L: L0, h: p.h, E: this.E, rho: RHO, nu: NU }); }
 
@@ -50,7 +75,7 @@ export class ChladniExperiment {
     if (key === this._key) return;
     this._key = key;
     const amp = this.amp, p = this.plate;
-    if (!this.on || this.drive <= 0) { amp.fill(0); this.acc = 0; this.dom = null; return; }
+    if (!this.on || this.drive <= 0 || !this.pk) { amp.fill(0); this.acc = 0; this.dom = null; return; }
     const w = 2 * Math.PI * this.f, ab = this.drive * 1.5, ub = ab / (w * w); // 振动器：加速度幅值与频率无关
     const re = new Float64Array(GN * GN).fill(ub), im = new Float64Array(GN * GN);
     let best = null;
@@ -74,6 +99,7 @@ export class ChladniExperiment {
     return (a[j * GN + i] * (1 - fu) + a[j * GN + i + 1] * fu) * (1 - fv) + (a[(j + 1) * GN + i] * (1 - fu) + a[(j + 1) * GN + i + 1] * fu) * fv;
   }
   sprinkle() {
+    if (!this.pk) { this.app.toast('振动器上还没装钢板，沙会撒在台上', 'warn'); return; }
     for (let i = 0; i < NSAND; i++) {
       let x, y; do { x = rand(-0.97, 0.97); y = rand(-0.97, 0.97); } while (x * x + y * y < 0.004);
       this.sx[i] = x; this.sy[i] = y;
@@ -139,15 +165,29 @@ export class ChladniExperiment {
     this.ctex = new THREE.CanvasTexture(this.tex); this.ctex.colorSpace = THREE.SRGBColorSpace;
     const top = new THREE.MeshStandardMaterial({ map: this.ctex, roughness: 0.55, metalness: 0.3 });
     const side = MAT.paint(0x1f2326);
-    this.plateMesh = new THREE.Mesh(new THREE.BoxGeometry(24, 0.25, 24), [side, side, top, side, side, side]);
-    this.plateMesh.position.set(0, 13.9, 0); this.plateMesh.castShadow = true; g.add(this.plateMesh);
-    g.add(mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.5, 6), MAT.chrome(), 0, 14.2, 0));
+    this.topMat = top;
+    // 两块钢板：从器材柜拖到振动器推杆上（中心螺钉固定），不用的放在台面上
+    app.addSlot({ id: 'mount', pos: new THREE.Vector3(0, 13.78, 0), accepts: ['pA', 'pB'], label: '振动器推杆（中心螺钉）', r: 3, snap: 10 });
+    app.addSlot({ id: 'restA', pos: new THREE.Vector3(36, 0.02, 18), accepts: ['pA'], label: '台面', r: 6, snap: 12 });
+    app.addSlot({ id: 'restB', pos: new THREE.Vector3(36, 0.02, -12), accepts: ['pB'], label: '台面', r: 6, snap: 12 });
+    for (const k of ['A', 'B']) {
+      const th = k === 'A' ? 0.22 : 0.28, pg = new THREE.Group(), plain = MAT.paint(0x24282b);
+      const pm = new THREE.Mesh(new THREE.BoxGeometry(24, th, 24), [side, side, plain, side, side, side]); pm.position.y = th / 2; pm.castShadow = true; pg.add(pm);
+      const c = new Component({
+        key: 'p' + k, name: `钢板 ${k}`, zone: 'slot', defaultSlot: 'mount', object: pg, labelY: 3,
+        icon: SVG(`<rect x="12" y="${k === 'A' ? 16 : 15}" width="40" height="${k === 'A' ? 4 : 6}" fill="currentColor"/>`),
+        desc: `边长 240.0 mm 的方形钢板，千分尺测得厚 ${(this.plates[k].hm * 1e3).toFixed(3)} mm，板面涂黑。拖到振动器推杆上用中心螺钉固定，拖回台面或器材柜就是卸下（板上的沙会撒掉）。`,
+      });
+      c.plateMesh = pm; c.plainTop = plain;
+      app.addComponent(c);
+    }
+    g.add(mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.5, 6), MAT.chrome(), 0, 14.25, 0));
     app.addComponent(new Component({
-      key: 'rig', name: '振动器与钢板', zone: 'none', fixed: true, required: true, object: g, labelY: 20,
+      key: 'rig', name: '电磁振动器', zone: 'none', fixed: true, required: true, object: g, labelY: 20,
       icon: SVG('<rect x="14" y="4" width="36" height="22" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M14 4 L50 26 M50 4 L14 26" stroke="currentColor" stroke-dasharray="2 2"/><rect x="26" y="28" width="12" height="9" fill="currentColor" opacity=".5"/>'),
       desc: `方形钢板边长 240.0 mm，中心用螺钉固定在电磁振动器的推杆上，四边自由。两块板用同一种钢材，厚度用千分尺测得：A 板 ${(this.plates.A.hm * 1e3).toFixed(3)} mm，B 板 ${(this.plates.B.hm * 1e3).toFixed(3)} mm。钢的密度 7.85 g/cm³，泊松比 0.29。板面涂黑，撒上细沙（白色）便于观察。`,
       controls: () => [
-        { type: 'segment', label: '装在振动器上的钢板', options: [{ value: 'A', label: `A（${(this.plates.A.hm * 1e3).toFixed(2)} mm）` }, { value: 'B', label: `B（${(this.plates.B.hm * 1e3).toFixed(2)} mm）` }], get: () => this.pk, set: (v) => { if (v !== this.pk) { this.pk = v; this.sweepOff(); app.toast('换了钢板，板上没有沙了，重新撒沙', 'ok'); } } },
+        { type: 'readout', label: '推杆上装的', get: () => (this.pk ? `钢板 ${this.pk}（${(this.plates[this.pk].hm * 1e3).toFixed(2)} mm）` : '没有板：从器材柜拖一块上来') },
         { type: 'button', label: '均匀撒一层沙', onClick: () => this.sprinkle() },
         { type: 'button', label: '把沙扫掉', onClick: () => this.sweepOff() },
         { type: 'readout', label: '板上的沙粒', get: () => (this.sand ? `约 ${Math.round(this.sand / 60)} mg（${((this.sand / NSAND) * 100).toFixed(0)}%）` : '没有沙') },
@@ -218,7 +258,7 @@ export class ChladniExperiment {
     this.drawSand(g, (W - S) / 2, (H - S) / 2, S, Math.max(1, W / 260));
     this.drawSandTex();
     const p = this.plate, d = this.dom;
-    v.foot(!this.on ? '信号发生器没有打开' : !this.sand ? '板上没有沙：点“均匀撒一层沙”' : this.acc < 0.6 ? `f = ${this.f.toFixed(1)} Hz：不在共振频率上，沙粒不动` : d && d.r > 0.9 ? `f = ${this.f.toFixed(1)} Hz：共振，沙粒聚向节线（${p.name}）` : `f = ${this.f.toFixed(1)} Hz：接近共振，沙在跳动；微调频率使图形最清晰`);
+    v.foot(!this.pk ? '振动器上没有钢板' : !this.on ? '信号发生器没有打开' : !this.sand ? '板上没有沙：点“均匀撒一层沙”' : this.acc < 0.6 ? `f = ${this.f.toFixed(1)} Hz：不在共振频率上，沙粒不动` : d && d.r > 0.9 ? `f = ${this.f.toFixed(1)} Hz：共振，沙粒聚向节线（${p.name}）` : `f = ${this.f.toFixed(1)} Hz：接近共振，沙在跳动；微调频率使图形最清晰`);
   }
   drawAtlas() {
     const v = this.av, W = v.W, H = v.H, cv = (this.atlasCv = document.createElement('canvas'));
@@ -268,6 +308,7 @@ export class ChladniExperiment {
   rec(t) {
     this.response();
     const a = this.app, d = this.dom;
+    if (!this.pk) return a.toast('振动器上没有钢板', 'warn');
     if (!this.on || this.drive <= 0) return a.toast('信号发生器没有打开', 'warn');
     if (!this.sand) return a.toast('板上没有沙，看不到图形，先撒沙', 'warn');
     if (!d || d.r < 0.5) return a.toast('现在不在共振频率上，沙粒不动、没有图形', 'warn');
@@ -314,12 +355,12 @@ export class ChladniExperiment {
     return [
       {
         title: '打开信号源，撒沙',
-        html: '<p>装上 A 板，打开信号发生器，输出幅度 4 左右，在板上均匀撒一层细沙。</p>',
+        html: '<p>从器材柜把 A 板拖到振动器推杆上，打开信号发生器，输出幅度 4 左右，在板上均匀撒一层细沙。</p>',
         check: () => this.on && this.drive >= 1 && this.sand > NSAND * 0.5 && this.pk === 'A',
         status: () => `${this.on ? `${this.f.toFixed(1)} Hz` : '信号源关'}，${this.sand ? '已撒沙' : '没有沙'}，${this.plate.name}`,
-        diagnose: () => (this.pk !== 'A' ? [{ msg: '先用 A 板。', fix: { label: '换成 A 板', run: async () => { this.pk = 'A'; this.sweepOff(); } } }] : diag()),
+        diagnose: () => (this.pk !== 'A' ? [{ msg: '先把 A 板装到振动器上。', fix: { label: '装上 A 板', run: () => this.mountPlate('A') } }] : diag()),
         auto: async () => {
-          app.select(app.comp('rig')); if (this.pk !== 'A') { this.pk = 'A'; this.sweepOff(); }
+          await this.mountPlate('A');
           this.sprinkle(); this._fresh = true;
           app.select(app.comp('gen')); this.on = true; this.drive = 4; app.renderInspector(); await this.setF(40);
           await app.view('俯视');
@@ -333,7 +374,7 @@ export class ChladniExperiment {
         check: () => new Set(rows('A').map((r) => Math.round(r._k))).size >= 8,
         diagnose: diag,
         auto: async () => {
-          if (this.pk !== 'A') { this.pk = 'A'; this.sweepOff(); }
+          if (this.pk !== 'A') { await this.mountPlate('A'); this.sprinkle(); }
           if (!this.on) { this.on = true; this.drive = 4; }
           app.showTable(0); await app.view('俯视');
           for (const i of this.strong('A', 9)) {
@@ -345,12 +386,12 @@ export class ChladniExperiment {
       },
       {
         title: '换 B 板，比较同一图形的频率',
-        html: '<p>换上较厚的 B 板，找出至少 3 个在 A 板上已经记录过的图形，记下它们的共振频率。</p>',
+        html: '<p>关掉信号源，把 A 板卸下放回台面，再把较厚的 B 板拖到推杆上，找出至少 3 个在 A 板上已经记录过的图形，记下它们的共振频率。</p>',
         status: () => { const ka = new Set(rows('A').map((r) => Math.round(r._k))); return `B 板上已找到 ${rows('B').filter((r) => ka.has(Math.round(r._k))).length} 个与 A 板相同的图形`; },
         check: () => { const ka = new Set(rows('A').map((r) => Math.round(r._k))); return rows('B').filter((r) => ka.has(Math.round(r._k))).length >= 3; },
-        diagnose: () => (this.pk !== 'B' ? [{ msg: '振动器上装的还是 A 板。', fix: { label: '换成 B 板并撒沙', run: async () => { this.pk = 'B'; this.sprinkle(); } } }] : diag()),
+        diagnose: () => (this.pk !== 'B' ? [{ msg: '振动器上装的不是 B 板：关掉信号源，卸下 A 板放回台面，把 B 板拖到推杆上。', fix: { label: '换成 B 板并撒沙', run: async () => { await this.mountPlate('B'); this.sprinkle(); } } }] : diag()),
         auto: async () => {
-          app.select(app.comp('rig')); if (this.pk !== 'B') { this.pk = 'B'; this.sweepOff(); }
+          await this.mountPlate('B');
           if (!this.on) { this.on = true; this.drive = 4; }
           this.sprinkle(); this._fresh = true;
           const ka = new Set(rows('A').map((r) => Math.round(r._k)));

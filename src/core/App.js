@@ -246,12 +246,69 @@ export class App {
   addRail({ id = 'rail', origin, dir = new THREE.Vector3(1, 0, 0), min = 0, max = 100, accepts = null }) {
     this.zones.push({ type: 'rail', id, origin, dir: dir.clone().normalize(), min, max, accepts });
   }
-  addSlot({ id, pos, rotY = 0, accepts = null, label = '' }) {
-    const marker = new THREE.Mesh(new THREE.RingGeometry(5, 6.2, 40), new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.0, side: THREE.DoubleSide, depthWrite: false }));
+  addSlot({ id, pos, rotY = 0, accepts = null, label = '', r = 6.2, snap = 35, stack = null, level = 0 }) {
+    // stack：同一组叠放位置（砝码托上的一摞槽码等）——放上去总是落在最上面，取走中间的一个，上面的会落下来
+    // r：提示圈半径（挂钩、小孔这类小挂点用小圈）；snap：拖动时离多近就吸附到这里（cm）
+    const marker = new THREE.Mesh(new THREE.RingGeometry(r * 0.8, r, 40), new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.0, side: THREE.DoubleSide, depthWrite: false }));
     marker.rotation.x = -Math.PI / 2;
     marker.position.copy(pos).add(new THREE.Vector3(0, 0.15, 0));
     this.stage.scene.add(marker);
-    this.zones.push({ type: 'slot', id, pos, rotY, accepts, label, marker, occupant: null });
+    this.zones.push({ type: 'slot', id, pos, rotY, accepts, label, marker, occupant: null, snap, stack, level });
+  }
+  /** 叠放位置：返回这一摞里最低的空位（不是叠放位置时原样返回） */
+  stackFree(z) {
+    if (!z || !z.stack) return z;
+    const zs = this.zones.filter((q) => q.stack === z.stack).sort((a, b) => a.level - b.level);
+    return zs.find((q) => !q.occupant) || null;
+  }
+  /** 叠放：取走中间的一个后，上面的依次落下来 */
+  compactStack(stack) {
+    const zs = this.zones.filter((q) => q.stack === stack).sort((a, b) => a.level - b.level);
+    const occ = zs.map((q) => q.occupant).filter(Boolean);
+    zs.forEach((q, i) => {
+      const c = occ[i] || null; q.occupant = c;
+      if (c && c.slot !== q.id) { c.slot = q.id; c.root.position.copy(q.pos); c.root.rotation.y = q.rotY; }
+    });
+  }
+  /** 一摞里现在有哪些器材（从下往上） */
+  stackOf(stack) { return this.zones.filter((q) => q.stack === stack).sort((a, b) => a.level - b.level).map((q) => q.occupant).filter(Boolean); }
+  /** 器材 key 现在放在哪个挂点 / 孔位（没放上时为 null） */
+  slotOf(key) { const c = this.comps.get(key); return c && c.placed ? c.slot : null; }
+  /** 把已放好的器材从一个挂点移到另一个挂点（在场景里拖动，或自动操作调用） */
+  moveSlot(comp, id, { silent = false } = {}) {
+    if (!comp.placed || comp.slot === id) return comp.placed;
+    let z = this.zones.find((q) => q.type === 'slot' && q.id === id);
+    if (!z || !this.zoneFor(comp).includes(z)) return false;
+    const cur = this.zones.find((q) => q.id === comp.slot);
+    if (z.stack && cur && cur.stack === z.stack) return true; // 同一摞里挪来挪去没有意义
+    if (z.stack) { z = this.stackFree(z); if (!z) { if (!silent) this.toast('那里已经放满了', 'warn'); return false; } id = z.id; }
+    if (z.occupant && z.occupant !== comp) { if (!silent) this.toast(`那里已经有「${z.occupant.name}」了`, 'warn'); return false; }
+    if (this.exp.canPlace) { const err = this.exp.canPlace(comp, { slot: id, moving: true }); if (err) { if (!silent) this.toast(err, 'warn'); return false; } }
+    if (this.exp.canRemove) { const err = this.exp.canRemove(comp, { to: id }); if (err) { if (!silent) this.toast(err, 'warn'); return false; } } // 原来的位置拿不出来（被压着、夹着……）
+    const from = comp.slot, old = this.zones.find((q) => q.id === from);
+    if (old) old.occupant = null;
+    z.occupant = comp; comp.slot = id;
+    comp.root.position.copy(z.pos); comp.root.rotation.y = z.rotY;
+    if (old && old.stack) this.compactStack(old.stack);
+    if (!this.running) this.tutor && this.tutor.event(`把「${comp.name}」移到${z.label || id}`);
+    if (this.exp.onSlotChange) this.exp.onSlotChange(comp, from); else this.exp.onPlace && this.exp.onPlace(comp);
+    if (!silent && z.label) this.toast(`${comp.name} → ${z.label}`, 'ok');
+    this.renderInspector(); this.changed();
+    return true;
+  }
+  /** 拖动中：找离指针最近、能接收 comp 的空挂点 */
+  nearSlot(e, comp) {
+    let best = null;
+    for (const z0 of this.zoneFor(comp)) {
+      if (z0.type !== 'slot') continue;
+      if (z0.stack && comp.slot && this.zones.find((q) => q.id === comp.slot && q.stack === z0.stack)) continue;
+      const z = z0.stack ? this.stackFree(z0) : z0;
+      if (!z || (z.occupant && z.occupant !== comp)) continue;
+      const p = this.stage.hitPlane(e, z0.pos.y); if (!p) continue;
+      const d = p.distanceTo(z0.pos);
+      if (d < (z0.snap ?? 35) && (!best || d < best.dist)) best = { slot: z.id, dist: d, z };
+    }
+    return best;
   }
 
   /** 光学平台：在“自己摆”模式下，插槽类仪器可以放在台面任意位置、任意角度 */
@@ -384,7 +441,8 @@ export class App {
       this.setPose(comp, p.x, p.z, p.rot);
     } else if (comp.zone === 'slot') {
       const zs = this.zoneFor(comp);
-      const z = zs.find((z) => z.id === (slot ?? comp.defaultSlot)) || zs.find((z) => !z.occupant);
+      let z = zs.find((z) => z.id === (slot ?? comp.defaultSlot)) || zs.find((z) => !z.occupant);
+      if (z && z.stack) z = this.stackFree(z) || z;
       if (!z) { this.toast('没有可放置的位置', 'warn'); return false; }
       if (z.occupant && z.occupant !== comp) { this.toast(`该位置已放置「${z.occupant.name}」`, 'warn'); return false; }
       z.occupant = comp; comp.slot = z.id;
@@ -410,8 +468,9 @@ export class App {
 
   remove(comp) {
     if (!comp.placed || comp.fixed) return;
+    if (this.exp.canRemove) { const err = this.exp.canRemove(comp, { to: null }); if (err) { this.toast(err, 'warn'); return; } }
     if (!this.running) this.tutor && this.tutor.event(`把「${comp.name}」取下放回器材柜`);
-    if (comp.slot) { const z = this.zones.find((z) => z.id === comp.slot); if (z) z.occupant = null; comp.slot = null; }
+    if (comp.slot) { const z = this.zones.find((z) => z.id === comp.slot); if (z) z.occupant = null; comp.slot = null; if (z && z.stack) this.compactStack(z.stack); }
     this.stage.scene.remove(comp.root);
     if (comp.labelObj) comp.labelObj.element.remove(); // CSS2DRenderer 不会清理已脱离场景的标签
     comp.placed = false;
@@ -423,7 +482,7 @@ export class App {
   }
 
   renderShelf() {
-    const items = [...this.comps.values()].filter((c) => !c.fixed);
+    const items = [...this.comps.values()].filter((c) => !c.fixed && !c.noShelf);
     // 实验台上还一件仪器都没有：在三维视图中央给出起手提示
     const bare = items.length > 0 && ![...this.comps.values()].some((c) => c.placed);
     let tip = this.vp.querySelector('.vp-empty');
@@ -431,9 +490,17 @@ export class App {
     if (tip) tip.hidden = !bare;
     this.shelfEl.innerHTML = '';
     if (!items.length) { this.shelfEl.innerHTML = '<div class="empty-tip" style="grid-column:1/3">本实验主要仪器已就位。</div>'; return; }
-    for (const c of items) {
+    // 同类器材（一盒砝码、一组槽码）合成一格：显示柜里还剩几个，拖出来的是下一个
+    const seen = new Set();
+    for (const c0 of items) {
+      let c = c0, cnt = '';
+      if (c0.group) {
+        if (seen.has(c0.group)) continue; seen.add(c0.group);
+        const mem = items.filter((q) => q.group === c0.group), left = mem.filter((q) => !q.placed);
+        c = left[0] || mem[0]; cnt = `<small class="cnt">柜里 ${left.length} / ${mem.length}</small>`;
+      }
       const it = h('div', 'shelf-item' + (c.placed ? ' placed' : '') + (c.required && !c.placed ? ' req' : ''));
-      it.innerHTML = `<div class="ic">${c.icon || ''}</div><div class="nm">${c.name}</div>`;
+      it.innerHTML = `<div class="ic">${c.icon || ''}</div><div class="nm">${c.group || c.name}${cnt}</div>`;
       it.title = c.desc || c.name;
       if (!c.placed) {
         // 触屏上拖拽和滚动器材柜冲突：轻点即放到默认位置，再到场景里拖动
@@ -449,6 +516,7 @@ export class App {
     if (this.selected && this.selected !== comp) this.selected.setHighlight(false);
     this.selected = comp;
     if (comp) comp.setHighlight(true);
+    if (comp && this.exp && this.exp.onSelect) this.exp.onSelect(comp);
     this.updateRing();
     if (comp && this.isPhone && !this.running && this.page.dataset.mt !== 'insp') this.mobileTab('insp');
     this.renderInspector();
@@ -464,8 +532,8 @@ export class App {
       this.inspEl.append(h('div', 'empty-tip', '在三维场景中<b>单击</b>某个仪器即可在此处调节它；导轨上的器材可直接<b>拖动</b>改变位置。<br>鼠标左键旋转视角、右键平移、滚轮缩放。'));
     } else {
       const t = h('div', 'insp-title', `<b>${c.name}</b>`);
-      if (!c.fixed) {
-        const rb = h('button', 'btn small', '放回器材架');
+      if (!c.fixed && !c.noShelf) {
+        const rb = h('button', 'btn small', '放回器材柜');
         rb.onclick = () => this.remove(c);
         t.append(rb);
       }
@@ -544,6 +612,13 @@ export class App {
       }
       return;
     }
+    if (c.zone === 'slot' && !c.fixed && c.movable !== false && !this.running && c.slot) {
+      // 挂点 / 孔位上的器材：拖到另一个挂点就换位置，拖回器材柜就取下
+      this.drag = { comp: c, reslot: true, home: c.root.position.clone(), rotY: c.root.rotation.y, target: null, sx: e.clientX, sy: e.clientY };
+      this.stage.controls.enabled = false;
+      this.zones.forEach((z) => { if (z.marker && this.zoneFor(c).includes(z)) z.marker.material.opacity = z.occupant && z.occupant !== c ? 0.15 : 0.6; });
+      return;
+    }
     if (c.zone === 'rail' && c.movable && !this.running) {
       const z = this.zones.find((z) => z.type === 'rail' && z.id === (c.rail || 'rail'));
       const p = this.stage.hitPlane(e, z.origin.y);
@@ -562,6 +637,12 @@ export class App {
       if (!p) return;
       if (d.free) this.setPose(c, Math.round((p.x - d.off[0]) * 10) / 10, Math.round((p.z - d.off[1]) * 10) / 10);
       else { const a = Math.atan2(-(p.z - c.tz), p.x - c.tx); this.setPose(c, c.tx, c.tz, Math.round((d.r0 + ((a - d.a0) * 180) / Math.PI) * 10) / 10); }
+      return;
+    }
+    if (this.drag && this.drag.reslot) {
+      const d = this.drag, t = this.nearSlot(e, d.comp);
+      d.target = t;
+      if (t) { d.comp.root.position.copy(t.z.pos); d.comp.root.rotation.y = t.z.rotY; } else { d.comp.root.position.copy(d.home); d.comp.root.rotation.y = d.rotY; }
       return;
     }
     if (this.drag) {
@@ -584,12 +665,21 @@ export class App {
       if (this._hover && this._hover !== this.selected) this._hover.setHighlight(false);
       this._hover = c;
       if (c) c.setHighlight(true);
-      this.stage.renderer.domElement.style.cursor = c ? ((c.zone === 'rail' && c.movable) || this.isFree(c) ? 'grab' : 'pointer') : '';
+      this.stage.renderer.domElement.style.cursor = c ? ((c.zone === 'rail' && c.movable) || this.isFree(c) || (c.zone === 'slot' && !c.fixed && c.slot) ? 'grab' : 'pointer') : '';
     }
   }
 
   onUp(e) {
     if (this.drag && this.drag.fromShelf) return this.endShelfDrag(e);
+    if (this.drag && this.drag.reslot) {
+      const d = this.drag; this.drag = null; this.stage.controls.enabled = true;
+      this.zones.forEach((z) => z.marker && (z.marker.material.opacity = 0));
+      d.comp.root.position.copy(d.home); d.comp.root.rotation.y = d.rotY;
+      const shelf = this.shelfEl && this.shelfEl.closest('.m-shelf'), over = document.elementFromPoint(e.clientX, e.clientY);
+      if (shelf && over && shelf.contains(over)) { const c = d.comp; if (c.noShelf) { this.toast(`「${c.name}」不放进器材柜，放回${c.home || '原处'}`, 'warn'); return; } this.remove(c); if (!c.placed) this.toast(`已取下：${c.name}`, 'ok'); return; }
+      if (d.target && d.target.slot !== d.comp.slot) this.moveSlot(d.comp, d.target.slot);
+      return;
+    }
     if (this.drag) { this.drag = null; this.stage.controls.enabled = true; return; }
     if (this._clickEmpty && this._downXY && e.target === this.stage.renderer.domElement) {
       const d = Math.hypot(e.clientX - this._downXY[0], e.clientY - this._downXY[1]);
@@ -606,6 +696,7 @@ export class App {
   }
   moveShelfDrag(e) {
     const d = this.drag;
+    d.overScene = e.target === this.stage.renderer.domElement;
     if (!d.moved && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 6) d.moved = true;
     if (!d.moved) return;
     const comp = d.comp;
@@ -630,9 +721,9 @@ export class App {
         const perp = rel.clone().addScaledVector(z.dir, -t).length();
         if (perp < 40 && t > z.min - 20 && t < z.max + 20) { d.target = { pos: Math.min(z.max, Math.max(z.min, Math.round(t * 10) / 10)) }; break; }
       } else {
-        const p = this.stage.hitPlane(e, z.pos.y);
-        if (p && p.distanceTo(z.pos) < 35 && !z.occupant) {
-          if (!d.target || p.distanceTo(z.pos) < d.target.dist) d.target = { slot: z.id, dist: p.distanceTo(z.pos), z };
+        const p = this.stage.hitPlane(e, z.pos.y), zf = z.stack ? this.stackFree(z) : z;
+        if (p && zf && p.distanceTo(z.pos) < (z.snap ?? 35) && !zf.occupant) {
+          if (!d.target || p.distanceTo(z.pos) < d.target.dist) d.target = { slot: zf.id, dist: p.distanceTo(z.pos), z: zf };
         }
       }
     }
@@ -652,7 +743,9 @@ export class App {
     const comp = d.comp;
     if (!comp.placed && comp.root.parent) this.stage.scene.remove(comp.root);
     if (!d.moved) { if (this.place(comp)) this.select(comp); return; }
-    if (d.target) { if (this.place(comp, d.target)) this.select(comp); }
+    if (d.target) { if (this.place(comp, d.target)) this.select(comp); return; }
+    // 没有固定位置的仪器（主机、电源等）：拖进场景就放到台上它该在的地方
+    if (comp.zone === 'none' && d.overScene) { if (this.place(comp)) this.select(comp); }
   }
 
   /** 选中自由摆放的仪器时，在底座周围显示转动圆环 */
@@ -896,6 +989,24 @@ export class App {
     c.root.position.copy(p1);
     this.select(c);
     await this.wait(200);
+  }
+  /** 自动操作：把器材放到 / 移到某个挂点、孔位或托盘（带移动动画） */
+  async autoPut(key, slot) {
+    this.checkAbort();
+    const c = this.comp(key);
+    if (c.placed && c.slot === slot) return true;
+    const z = this.zones.find((q) => q.type === 'slot' && q.id === slot);
+    if (!z) return false;
+    const p0 = c.placed ? c.root.position.clone() : z.pos.clone().add(new THREE.Vector3(0, 40, 30));
+    const ok = c.placed ? this.moveSlot(c, slot, { silent: true }) : this.place(c, { slot, exact: true, silent: true });
+    if (!ok) return false;
+    const p1 = c.root.position.clone(), mid = p0.clone().lerp(p1, 0.5).add(new THREE.Vector3(0, 10, 0));
+    const u = new THREE.Vector3(), w = new THREE.Vector3();
+    await this.tween(() => 0, (k) => { u.lerpVectors(p0, mid, k); w.lerpVectors(mid, p1, k); c.root.position.lerpVectors(u, w, k); }, 1, 600);
+    c.root.position.copy(p1);
+    this.select(c); this.changed();
+    await this.wait(150);
+    return true;
   }
   async moveTo(key, x, ms = 900) {
     const c = this.comp(key);

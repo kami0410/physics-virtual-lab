@@ -25,7 +25,7 @@ export class AirTrack {
     this.gates = gates.map((x) => ({ x, start: null, log: [] })); // log: {dt, glider, dir, t}
   }
   /** 一个滑块的加速度 */
-  acc(g) { return this.air ? -(this.b / g.m) * g.v - G * Math.sin(this.theta) : 0; }
+  acc(g) { return this.air ? -((this.b + (g.bx || 0)) / g.m) * g.v - G * Math.sin(this.theta) : 0; }
   /** 推进 dt 秒，内部步长 h */
   step(dt, h = 5e-4) {
     const n = Math.max(1, Math.ceil(dt / h)), hh = dt / n;
@@ -38,7 +38,7 @@ export class AirTrack {
     // 速度按指数衰减 + 重力分量精确积分（线性阻力的解析解）
     for (const g of gs) {
       if (g.held) continue;
-      const k = this.b / g.m, a = -G * Math.sin(this.theta), ek = Math.exp(-k * h);
+      const k = (this.b + (g.bx || 0)) / g.m, a = -G * Math.sin(this.theta), ek = Math.exp(-k * h); // bx：滑块自身附加的阻力（配重不对称时一侧擦着导轨）
       const v0 = g.v;
       if (k * h < 1e-9) { g.v = v0 + a * h; g.x += v0 * h + (a * h * h) / 2; continue; }
       const vInf = a / k;

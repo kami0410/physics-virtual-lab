@@ -7,7 +7,7 @@
 // 器件参数（灵敏度 S、饱和电流 I_s、理想因子 n、产生电流、零偏结电容）个体随机，模型见 physics/photodiode.js。
 import * as THREE from 'three';
 import { meta, thumb } from './photodiode.meta.js';
-import { benchTable } from '../core/circuit.js';
+import { benchTable, Circuit } from '../core/circuit.js';
 import { Component } from '../core/Component.js';
 import { MAT, mesh, meterBox } from '../core/Models.js';
 import { rand, clamp, relErr, pct, linFit } from '../core/Stats.js';
@@ -30,19 +30,52 @@ export class PhotodiodeExperiment {
     this.dev = { Iph: 0, Is: rand(1, 3) * 1e-9, n: rand(1.05, 1.2), Ig: rand(1, 2) * 1e-9, Rsh: rand(1.5, 4) * 1e9, T: 273.15 + Math.round(rand(20, 26) * 10) / 10 };
     this.Cj0 = rand(55, 75) * 1e-12; this.t0 = rand(2, 4) * 1e-9;
     this.cal = rand(-0.015, 0.015);
-    this.level = 0; this.pulse = false; this.mode = 'rev'; this.Us = 0; this.RL = 10; this.tb = 0.5;
+    this.level = 0; this.pulse = false; this.Us = 0; this.RL = 10; this.tb = 0.5;
   }
   get E() { return EMAX * (this.level / 100) ** GAM; }
   levelFor(Eread) { return clamp(100 * (Eread / (EMAX * (1 + this.cal))) ** (1 / GAM), 0, 100); }
   luxRead() { return Math.round(this.E * (1 + this.cal) * (this.pulse ? 0.5 : 1)); }
   devAt(E) { return { ...this.dev, Iph: this.S * E }; }
-  /** 当前接法下的电压（V）与电流（A），脉冲光时取平均 */
+  /** 由实际接线判断接法：rev 电源直接接二极管；load 电源经负载电阻接二极管；oc 只接电压表；open 没接成回路。
+   *  sign = +1 表示阴极接电源正极（反偏）/ 阳极接电压表正端，−1 表示接反 */
+  topo() {
+    if (!this.cir) return { mode: 'open', sign: 1 };
+    const n = this.cir.nets(), s = (a, b) => n(a) === n(b), K = 'box:K', A = 'box:A';
+    const sup = (x, y) => s(x, 'tester:S+') && s(y, 'tester:S-');
+    const viaRL = (x, y) => s(x, 'tester:S+') && ((s(y, 'tester:L1') && s('tester:L2', 'tester:S-')) || (s(y, 'tester:L2') && s('tester:L1', 'tester:S-')));
+    if (sup(K, A)) return { mode: 'rev', sign: 1 };
+    if (sup(A, K)) return { mode: 'rev', sign: -1 };
+    if (viaRL(K, A)) return { mode: 'load', sign: 1 };
+    if (viaRL(A, K)) return { mode: 'load', sign: -1 };
+    if (s(A, 'tester:V+') && s(K, 'tester:V-')) return { mode: 'oc', sign: 1 };
+    if (s(K, 'tester:V+') && s(A, 'tester:V-')) return { mode: 'oc', sign: -1 };
+    return { mode: 'open', sign: 1 };
+  }
+  get mode() { return this.topo().mode; }
+  /** 示波器是否接在负载电阻两端 */
+  scopeOnRL() { const n = this.cir.nets(), s = (a, b) => n(a) === n(b); return (s('scope:in', 'tester:L1') && s('scope:gnd', 'tester:L2')) || (s('scope:in', 'tester:L2') && s('scope:gnd', 'tester:L1')); }
+  /** 当前接法下的电压（V）与电流（A），脉冲光时取平均；接反时电源给二极管加的是正向电压 */
   state() {
-    const E = this.pulse ? this.E / 2 : this.E, d = this.devAt(E);
-    if (this.mode === 'oc') return { U: openVoltage(RIN, d), I: 0 };
-    const p = biasPoint(this.Us, this.mode === 'rev' ? RP : this.RL * 1e3, d);
+    const E = this.pulse ? this.E / 2 : this.E, d = this.devAt(E), t = this.topo();
+    if (t.mode === 'open') return { U: 0, I: 0 };
+    if (t.mode === 'oc') return { U: t.sign * openVoltage(RIN, d), I: 0 };
+    const p = biasPoint(t.sign * this.Us, t.mode === 'rev' ? RP : this.RL * 1e3, d);
     return { U: p.U, I: p.I };
   }
+  wireIssue() {
+    const t = this.topo();
+    if (t.mode === 'open') return ['二极管没有接成回路：电源“+”接阴极（红），“−”接阳极（黑）；测开路电压时只接电压表'];
+    if (t.sign < 0) return [t.mode === 'oc' ? '电压表正负端接反了，开路电压读成负值' : '二极管接反了：电源正极接在阳极上，成了正向偏置'];
+    if (t.mode === 'load' && !this.scopeOnRL()) return ['示波器没有接在负载电阻两端'];
+    return [];
+  }
+  /** 自动操作：按接法重新接线 */
+  async wireFor(mode) {
+    const L = { rev: [['box:K', 'tester:S+'], ['box:A', 'tester:S-']], oc: [['box:A', 'tester:V+'], ['box:K', 'tester:V-']], load: [['box:K', 'tester:S+'], ['box:A', 'tester:L1'], ['tester:L2', 'tester:S-'], ['scope:in', 'tester:L1'], ['scope:gnd', 'tester:L2']] }[mode];
+    await this.cir.rewire(L);
+  }
+  pointerDown(e) { return this.cir.pointerDown(e); }
+  pointerMove(e) { return this.cir.pointerMove(e); }
   fmtI(I) { const a = Math.abs(I); return a < 1e-6 ? `${(I * 1e9).toFixed(2)} nA` : a < 1e-5 ? `${(I * 1e6).toFixed(3)} μA` : `${(I * 1e6).toFixed(2)} μA`; }
   readI() { const I = this.state().I, a = Math.abs(I); return a < 1e-6 ? Math.round(I * 1e11) / 1e5 : a < 1e-5 ? Math.round(I * 1e9) / 1e3 : Math.round(I * 1e8) / 100; } // μA
   readU() { const U = this.state().U; return this.mode === 'oc' ? Math.round(U * 1e4) / 10 : Math.round(U * 100) / 100; } // 开路 mV，其余 V
@@ -77,7 +110,8 @@ export class PhotodiodeExperiment {
     box.add(mesh(new THREE.BoxGeometry(0.4, 1.6, 1.6), MAT.paint(0x3b2a12), 9.9, 7.3, 1.4));
     box.add(mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.5, 20), MAT.white(), 9.9, 7.3, -1.6).rotateZ(Math.PI / 2));
     const lux = (this.luxBox = meterBox(14, 8, 8, '照度计')); lux.group.position.set(-36, 0, 16); scene.add(lux.group);
-    app.addComponent(new Component({
+    const cir = (this.cir = new Circuit(app)), none = () => [];
+    cir.add({ key: 'box', short: '光敏二极管', elements: none, terms: { K: { pos: new THREE.Vector3(12, 1, 7.6), color: 0xb91c1c, label: '阴极 K' }, A: { pos: new THREE.Vector3(14.6, 1, 7.6), color: 0x1b1b1b, label: '阳极 A' } }, comp: new Component({
       key: 'box', name: '暗箱与光源', zone: 'none', fixed: true, required: true, object: box, labelY: 15,
       icon: SVG('<rect x="4" y="8" width="56" height="24"/><circle cx="14" cy="20" r="3"/><path d="M18 20h24" stroke-dasharray="3 2"/><rect x="46" y="15" width="4" height="10"/>'),
       desc: '暗箱里装有白光 LED 和硅光敏二极管，二极管旁边是照度计的探头，两者与 LED 距离相同。调节 LED 的驱动电流改变照度。LED 可以切换成 20 kHz 方波脉冲（占空比 50%），这时照度计显示的是平均照度。',
@@ -86,38 +120,40 @@ export class PhotodiodeExperiment {
         { type: 'segment', label: 'LED 驱动', options: [{ value: false, label: '连续' }, { value: true, label: '方波脉冲 20 kHz' }], get: () => this.pulse, set: (v) => { this.pulse = v; app.changed(); } },
         { type: 'readout', label: '照度计', get: () => `${this.luxRead()} lx${this.pulse ? '（平均）' : ''}` },
       ],
-    }));
+    }) });
     // 光电特性测试仪
     const vm = (this.vBox = meterBox(16, 9, 10, '电压表')); vm.group.position.set(6, 0, -10); scene.add(vm.group);
     const am = (this.aBox = meterBox(16, 9, 10, '微电流表')); am.group.position.set(24, 0, -10); scene.add(am.group);
     const tester = new THREE.Group().add(vm.group, am.group); scene.add(tester);
-    const wire = (pts, c) => new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(...p))), 32, 0.25, 6), MAT.paint(c));
-    scene.add(wire([[-25, 4, 0], [-14, 2, 2], [0, 2, -4], [6, 3, -5]], 0xb91c1c), wire([[-25, 3, -1], [-12, 1.5, 0], [10, 2, -2], [24, 3, -5]], 0x111827));
-    app.addComponent(new Component({
+    cir.add({ key: 'tester', short: '测试仪', elements: none, terms: {
+      'S+': { pos: new THREE.Vector3(18.5, 0, -4.8), color: 0xb91c1c, label: '电源 +（经微电流表）' }, 'S-': { pos: new THREE.Vector3(21, 0, -4.8), color: 0x1b1b1b, label: '电源 −' },
+      L1: { pos: new THREE.Vector3(26, 0, -4.8), color: 0x6b7280, label: 'R_L 端 1' }, L2: { pos: new THREE.Vector3(28.5, 0, -4.8), color: 0x6b7280, label: 'R_L 端 2' },
+      'V+': { pos: new THREE.Vector3(2, 0, -4.8), color: 0xb91c1c, label: '电压表 +' }, 'V-': { pos: new THREE.Vector3(4.5, 0, -4.8), color: 0x1b1b1b, label: '电压表 −' },
+    }, comp: new Component({
       key: 'tester', name: '光电特性测试仪', zone: 'none', fixed: true, required: true, object: tester, labelY: 12,
       icon: SVG('<rect x="4" y="8" width="26" height="22"/><rect x="34" y="8" width="26" height="22"/><path d="M9 19h16M39 19h16"/>'),
-      desc: `内含 0–12 V 可调直流电源、限流电阻 1 kΩ、负载电阻 1–50 kΩ、数字电压表（内阻 10 MΩ）和自动量程微电流表（分辨率 0.01 nA）。三种接法：反偏测电流；开路测电压（光伏工作方式）；接负载电阻 R_L，R_L 两端接示波器看脉冲响应。室温 ${(this.dev.T - 273.15).toFixed(1)} °C。`,
+      desc: `内含 0–12 V 可调直流电源、限流电阻 1 kΩ、负载电阻 1–50 kΩ、数字电压表（内阻 10 MΩ）和自动量程微电流表（分辨率 0.01 nA）。自己接线：电源“+”接阴极 K、“−”接阳极 A 为反偏（测电流，面板电压表显示二极管两端电压）；只把电压表“+”接阳极、“−”接阴极测开路电压；电源经负载电阻 R_L 接二极管、示波器接在 R_L 两端看脉冲响应。室温 ${(this.dev.T - 273.15).toFixed(1)} °C。`,
       controls: () => [
-        { type: 'segment', label: '接法', options: [{ value: 'rev', label: '反偏（测电流）' }, { value: 'oc', label: '开路（测电压）' }, { value: 'load', label: '负载 R_L + 示波器' }], get: () => this.mode, set: (v) => { this.mode = v; app.renderInspector(); app.changed(); } },
+        { type: 'readout', label: '按接线判断', get: () => ({ rev: '反偏（测电流）', oc: '开路（测电压）', load: '负载 R_L', open: '没接成回路' })[this.mode] + (this.topo().sign < 0 ? '，接反了' : '') },
         { type: 'knob', label: '反向偏压（电源）', get: () => this.Us, set: (v) => { this.Us = Math.round(clamp(v, 0, 12) * 100) / 100; app.changed(); }, min: 0, max: 12, step: 0.01, bigStep: 0.5, perRev: 2, digits: 2, unit: 'V' },
         { type: 'segment', label: '负载电阻 R_L', options: RLS.map((r) => ({ value: r, label: `${r} kΩ` })), get: () => this.RL, set: (v) => { this.RL = v; app.changed(); } },
         { type: 'readout', label: '电压表', get: () => (this.mode === 'oc' ? `${this.readU().toFixed(1)} mV` : `${this.readU().toFixed(2)} V`) },
         { type: 'readout', label: '微电流表', get: () => (this.mode === 'oc' ? '（开路）' : this.fmtI(this.state().I)) },
       ],
-    }));
+    }) });
     // 示波器
     const sc = new THREE.Group(); sc.position.set(48, 0, -8); scene.add(sc);
     sc.add(mesh(new THREE.BoxGeometry(26, 15, 14), MAT.paint(0xc9c6bd), 0, 7.5, 0));
     sc.add(mesh(new THREE.BoxGeometry(15, 10, 0.3), new THREE.MeshStandardMaterial({ color: 0x0b1a12, emissive: 0x0b2a18, emissiveIntensity: 0.6 }), -4, 8, 7.05));
     for (let i = 0; i < 6; i++) sc.add(mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.8, 16), MAT.black(), 7 + (i % 2) * 3, 12 - Math.floor(i / 2) * 3, 7.3).rotateX(Math.PI / 2));
-    app.addComponent(new Component({
+    cir.add({ key: 'scope', short: '示波器', elements: none, terms: { in: { pos: new THREE.Vector3(2, 0, 7.2), color: 0xb91c1c, label: 'CH1' }, gnd: { pos: new THREE.Vector3(4.5, 0, 7.2), color: 0x1b1b1b, label: '地' } }, comp: new Component({
       key: 'scope', name: '示波器', zone: 'none', fixed: true, object: sc, labelY: 17,
       desc: '数字示波器，接在负载电阻 R_L 两端。垂直灵敏度自动；扫描速度（时基）手动选择，触发在脉冲上升沿。自动测量"上升时间"（10%–90%），分辨率为一格的 1/50，上升沿至少要占 1.5 格才测得准。',
       controls: () => [
         { type: 'segment', label: '时基', options: TBS.map((t) => ({ value: t, label: t < 1 ? `${Math.round(t * 1000)} ns` : `${t} μs` })), get: () => this.tb, set: (v) => { this.tb = v; app.changed(); } },
-        { type: 'readout', label: '上升时间', get: () => (this.mode === 'load' && this.pulse && this.E > 0.5 ? `${this.trRead().toFixed(3)} μs` : '----') },
+        { type: 'readout', label: '上升时间', get: () => (this.mode === 'load' && this.scopeOnRL() && this.pulse && this.E > 0.5 ? `${this.trRead().toFixed(3)} μs` : '----') },
       ],
-    }));
+    }) });
     this.view = app.addView({ id: 'scope', title: '示波器（R_L 两端电压）', w: 300, h: 220, res: 1.6 });
   }
   update() {
@@ -190,7 +226,8 @@ export class PhotodiodeExperiment {
   }
   needCont(mode) {
     const a = this.app;
-    if (this.mode !== mode) { a.toast(mode === 'rev' ? '接法要选"反偏（测电流）"' : '接法要选"开路（测电压）"', 'warn'); return false; }
+    if (this.mode !== mode) { a.toast(mode === 'rev' ? '现在的接线不是反偏：电源“+”接阴极、“−”接阳极' : '现在的接线不是开路：拆掉电源线，只把电压表接在二极管两端', 'warn'); return false; }
+    const wi = this.wireIssue(); if (wi.length) a.toast(wi.join('；'), 'warn');
     if (this.pulse) { a.toast('LED 现在是脉冲光，电表读的是平均值：改成连续光', 'warn'); return false; }
     return true;
   }
@@ -216,7 +253,8 @@ export class PhotodiodeExperiment {
   }
   recTr(t) {
     const a = this.app;
-    if (this.mode !== 'load') return a.toast('接法要选"负载 R_L + 示波器"', 'warn');
+    if (this.mode !== 'load') return a.toast('现在的接线不是负载接法：电源经负载电阻 R_L 接二极管', 'warn');
+    if (!this.scopeOnRL()) return a.toast('示波器没有接在 R_L 两端，屏上没有信号', 'warn');
     if (!this.pulse) return a.toast('LED 要切换成方波脉冲', 'warn');
     if (this.E < 0.5) return a.toast('光源强度为零，没有信号', 'warn');
     const r = this.pulseResp();
@@ -233,7 +271,7 @@ export class PhotodiodeExperiment {
   }
 
   // ======================= 自动操作 =======================
-  async seg(comp, key, v) { const a = this.app; a.select(a.comp(comp)); if (this[key] !== v) { this[key] = v; a.renderInspector(); a.changed(); await a.wait(120); } }
+  async seg(comp, key, v) { const a = this.app; a.select(a.comp(comp)); if (key === 'mode') { if (this.mode !== v || this.wireIssue().length) await this.wireFor(v); a.renderInspector(); return; } if (this[key] !== v) { this[key] = v; a.renderInspector(); a.changed(); await a.wait(120); } }
   async adj(comp, key, to, ms = 250) { const a = this.app; a.select(a.comp(comp)); if (Math.abs(this[key] - to) > 1e-9) await a.tween(() => this[key], (v) => (this[key] = v), to, ms); this[key] = to; a.changed(); await a.wait(60); }
   async lux(E) { await this.adj('box', 'level', Math.round(this.levelFor(E) * 10) / 10); }
   steps() {
@@ -242,7 +280,7 @@ export class PhotodiodeExperiment {
     return [
       {
         title: '暗电流与反向伏安特性',
-        html: '<p>接法选"反偏"，LED 连续。先把光源关到 0，测暗电流随反向电压（0–10 V）的变化；再在 100、300、500 lx 左右各测一组伏安特性。</p>',
+        html: '<p>自己接成反偏：测试仪电源“+”接阴极 K（红）、“−”接阳极 A（黑）。LED 连续。先把光源关到 0，测暗电流随反向电压（0–10 V）的变化；再在 100、300、500 lx 左右各测一组伏安特性。</p>',
         hint: '暗电流只有几个纳安，随反向电压略有增大（耗尽层变宽，产生电流增加）；有光照时电流几乎不随电压变化——光电流只取决于照度。',
         status: () => `已测 ${rows('vi').length} 点，${Es().length} 个照度`,
         check: () => rows('vi').length >= 16 && Es().length >= 3 && Es().includes(0),
@@ -278,7 +316,7 @@ export class PhotodiodeExperiment {
       },
       {
         title: '开路电压',
-        html: '<p>接法改为"开路"，在 10–1000 lx 范围内取几个照度（每个数量级 2–3 个），测开路电压。</p>',
+        html: '<p>拆掉电源线，只把电压表“+”接阳极、“−”接阴极（开路），在 10–1000 lx 范围内取几个照度（每个数量级 2–3 个），测开路电压。</p>',
         hint: '开路电压随照度增大而增大，但越来越慢：照度增大 10 倍，开路电压只增加几十毫伏。',
         status: () => `已测 ${rows('voc').length} 个照度`,
         check: () => rows('voc').length >= 5,
@@ -295,7 +333,7 @@ export class PhotodiodeExperiment {
       },
       {
         title: '时间响应',
-        html: '<p>接法改为"负载 R_L + 示波器"，LED 换成方波脉冲，反向偏压 5 V，光源调弱（输出幅度不超过 0.3 V）。依次取 R_L = 1、2、5、10、20、50 kΩ，选合适的时基，读出上升时间。</p>',
+        html: '<p>改接成：电源“+”接阴极，阳极经负载电阻 R_L 回到电源“−”，示波器接在 R_L 两端。LED 换成方波脉冲，反向偏压 5 V，光源调弱（输出幅度不超过 0.3 V）。依次取 R_L = 1、2、5、10、20、50 kΩ，选合适的时基，读出上升时间。</p>',
         hint: '上升时间主要由 R_L 和总电容（结电容 + 示波器输入电容）的时间常数决定：t_r ≈ 2.2 R_L C。',
         status: () => `已测 ${rows('tr').length} 个负载`,
         check: () => rows('tr').length >= 4,

@@ -31,10 +31,40 @@ export class PendulumExperiment {
     this.amp0 = 4; // 释放时的摆角（°）
     this.cal = new Caliper({ zero: Math.round(rand(-2, 2)) * 0.02 });
     this.tape = new Tape({ label: '悬点到球顶' });
-    this.tool = 'd'; this.ballIn = false;
+    this.tool = 'd'; // 读数窗显示哪件量具：'d' 游标卡尺，'l' 米尺
     this.cal.setObject(null); this.cal.open = 0;
     this.sw = new Stopwatch(); this.cross = 0; this.lastCross = -1e9; this.auto = null; this.startInfo = null;
     this.timeScale = 1; this.assist = false;
+  }
+  /** 游标卡尺是否夹着摆球 */
+  get ballIn() { return !!(this.app.slotOf && this.app.slotOf('cal') === 'calBall'); }
+  get tapeOn() { return !!(this.app.slotOf && this.app.slotOf('tape') === 'tapeHang'); }
+  canPlace(comp, o = {}) {
+    const sl = o.slot ?? comp.defaultSlot;
+    if (sl === 'calBall') {
+      if (this.moving) return '摆球还在摆动，先用手止住再用卡尺夹';
+      if (this.cal.open < this.dBall) return `量爪开口只有 ${this.cal.open.toFixed(1)} mm，比摆球小，夹不进去：先把尺框拉开`;
+    }
+    return null;
+  }
+  onPlace(c) {
+    if (!c) return;
+    if (c.key === 'cal') { this.tool = 'd'; this.cal.setObject(this.ballIn ? this.dBall : null); }
+    if (c.key === 'tape') { if (this.tapeOn) { this.tool = 'l'; this.tape.measure(this.l, { sigma: 0.04 }); } }
+    this.app.changed();
+  }
+  onSlotChange(c) { this.onPlace(c); }
+  onRemove(c) {
+    if (c && c.key === 'cal') { this.cal.setObject(null); if (this.tapeOn) this.tool = 'l'; }
+    if (c && c.key === 'tape' && this.app.comp('cal').placed) this.tool = 'd';
+  }
+  onSelect(c) { if (c.key === 'cal') this.tool = 'd'; else if (c.key === 'tape') this.tool = 'l'; }
+  /** 自动操作：卡尺夹 / 不夹摆球 */
+  setBallIn(v) {
+    const a = this.app, c = a.comp('cal'), slot = v ? 'calBall' : 'calRest';
+    if (v) { this.stopBall(); if (this.cal.open < this.dBall) this.cal.open = this.dBall + 5; }
+    if (c.placed) a.moveSlot(c, slot, { silent: true }); else a.place(c, { slot, silent: true });
+    this.onPlace(c);
   }
   Leq() { const r = this.dBall / 2000, L = this.l / 100 + r; return equivLength(L, r); }
   setLength(v) {
@@ -46,6 +76,7 @@ export class PendulumExperiment {
 
   // ======================= 运动 =======================
   release() {
+    if (this.ballIn) { this.app.toast('游标卡尺还夹着摆球，拉不开：先把卡尺拿开', 'warn'); return; }
     this.p.Leq = this.Leq();
     this.p.th = this.amp0 * D2R; this.p.w = 0;
     this.app.changed();
@@ -115,6 +146,29 @@ export class PendulumExperiment {
         { type: 'button', label: '用手止住摆球', onClick: () => this.stopBall() },
       ],
     }));
+    // 游标卡尺、米尺：从器材柜拿出来。卡尺拖到摆球上就是夹住摆球，米尺拖到悬点旁就是挂好量摆线长
+    const cal = new THREE.Group();
+    cal.add(mesh(new THREE.BoxGeometry(20, 0.25, 1.6), MAT.chrome(), 4, 0, 0));
+    cal.add(mesh(new THREE.BoxGeometry(0.8, 0.25, 3.6), MAT.chrome(), -1.4, 0, -1.6));
+    cal.add(mesh(new THREE.BoxGeometry(3, 0.4, 2), MAT.alu(), 2.6, 0.05, 0));
+    cal.add(mesh(new THREE.BoxGeometry(0.8, 0.25, 3.6), MAT.chrome(), 1.4, 0, -1.6));
+    app.addSlot({ id: 'calRest', pos: new THREE.Vector3(30, 2.55, 22), accepts: ['cal'], label: '台面', r: 4, snap: 10 });
+    app.addSlot({ id: 'calBall', pos: new THREE.Vector3(0, YS - this.l - this.dBall / 20, 1.6), accepts: ['cal'], label: '夹住摆球', r: 2, snap: 6 });
+    app.addComponent(new Component({
+      key: 'cal', name: '游标卡尺', zone: 'slot', defaultSlot: 'calRest', object: cal, labelY: 3,
+      icon: SVG('<path d="M4 14h56v6H4z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 14V4h4v10M22 20v10h4V20" fill="none" stroke="currentColor" stroke-width="1.5"/>'),
+      desc: '分度值 0.02 mm。放在台面上合拢量爪读零点；拉开尺框后拖到静止的摆球上，夹住摆球测直径。',
+      controls: () => [{ type: 'readout', label: '量爪间', get: () => (this.ballIn ? '摆球' : '空着') }, ...this.cal.controls(() => app.changed())],
+    }));
+    const tp = new THREE.Group();
+    tp.add(mesh(new THREE.BoxGeometry(2.4, 120, 0.2), MAT.paint(0xe9dfb8), 0, -60, 0));
+    app.addSlot({ id: 'tapeRest', pos: new THREE.Vector3(-56, 2.55, 32), accepts: ['tape'], label: '台面', r: 4, snap: 10 });
+    app.addSlot({ id: 'tapeHang', pos: new THREE.Vector3(3, YS, 1.5), accepts: ['tape'], label: '悬点旁（零点对准悬点）', r: 2.5, snap: 8 });
+    app.addComponent(new Component({
+      key: 'tape', name: '米尺', zone: 'slot', defaultSlot: 'tapeHang', object: tp, labelY: 2,
+      icon: SVG('<rect x="6" y="15" width="52" height="10" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 15v4M20 15v6M28 15v4M36 15v6M44 15v4M52 15v6" stroke="currentColor"/>'),
+      desc: '1 m 钢直尺。拖到悬点旁挂好（零点对准悬点），读球顶处的刻度得摆线长 l。',
+    }));
     this.pv = app.addView({ id: 'swing', title: '摆动（正视）与秒表', w: 230, h: 300, res: 1.6 });
     this.gv = app.addView({ id: 'tool', title: '量具读数', w: 330, h: 150, res: 1.8 });
   }
@@ -123,6 +177,10 @@ export class PendulumExperiment {
     this.string.scale.y = this.l; this.string.position.y = -this.l / 2;
     this.ballM.position.y = -L;
     this.arm.rotation.z = this.p.th;
+    // 米尺平放在台面上；卡尺夹摆球的位置跟着摆长走
+    const tc = this.app.comp('tape'); if (tc && tc.placed) tc.root.rotation.z = this.app.slotOf('tape') === 'tapeRest' ? Math.PI / 2 : 0;
+    const zb = this.app.zones.find((q) => q.id === 'calBall');
+    if (zb) { zb.pos.set(0, YS - L, 1.6); zb.marker && zb.marker.position.set(0, YS - L + 0.15, 1.6); if (this.ballIn && !(this.app.drag && this.app.drag.comp === zb.occupant)) zb.occupant.root.position.copy(zb.pos); }
     this.drawSwing(); this.drawTool();
   }
   drawSwing() {
@@ -149,29 +207,32 @@ export class PendulumExperiment {
     else foot = '摆球静止。拉开一个小角度后释放';
     v.foot(foot);
   }
+  /** 自动操作：拿起某件量具（米尺挂到悬点旁，卡尺拿到台上） */
   setTool(t) {
+    const a = this.app;
+    if (t === 'l' && !this.tapeOn) { const c = a.comp('tape'); if (c.placed) a.moveSlot(c, 'tapeHang', { silent: true }); else a.place(c, { slot: 'tapeHang', silent: true }); }
+    if (t === 'd' && !a.comp('cal').placed) a.place(a.comp('cal'), { slot: 'calRest', silent: true });
     this.tool = t;
     if (t === 'l') this.tape.measure(this.l, { sigma: 0.04 });
     else this.cal.setObject(this.ballIn ? this.dBall : null);
   }
   drawTool() {
     const v = this.gv, g = v.ctx, W = v.W, H = v.H, o = { assist: this.assist };
+    const has = this.tool === 'l' ? this.tapeOn : this.app.comp('cal').placed;
+    if (!has) { g.fillStyle = '#20262b'; g.fillRect(0, 0, W, H); v.foot(this.tool === 'l' ? '米尺还没挂好：从器材柜拖到悬点旁' : '台上还没有游标卡尺：从器材柜拿出来'); return; }
     if (this.tool === 'l') { if (Math.abs(this.tape.value - this.l) > 1e-9) this.tape.measure(this.l, { sigma: 0.04 }); this.tape.draw(g, W, H, { ...o, mark: '球顶' }); v.foot('米尺：零点对准悬点（夹线器下沿），读球顶处的刻度'); return; }
     this.cal.draw(g, W, H, o);
     const p = this.cal.problem();
-    v.foot(`游标卡尺：${this.ballIn ? '夹住摆球（取下摆球后测直径）' : '两量爪合拢读零点'}${p ? ' —— ' + p : ''}`);
+    v.foot(`游标卡尺：${this.ballIn ? '夹住摆球' : '两量爪合拢读零点'}${p ? ' —— ' + p : ''}`);
   }
   globalControls() {
     const a = this.app, rer = () => { a.renderInspector(); a.changed(); };
     const out = [
       { type: 'button', label: this.sw.run ? '秒表：停止' : '秒表：开始', onClick: () => { if (this.sw.run) this.swStop(); else this.swStart(); rer(); } },
       { type: 'button', label: '秒表：清零', onClick: () => { this.sw.reset(); a.changed(); } },
-      { type: 'segment', label: '量具', get: () => this.tool, set: (v) => { this.setTool(v); rer(); }, options: [{ label: '游标卡尺', value: 'd' }, { label: '米尺', value: 'l' }] },
+      { type: 'readout', label: '读数窗', get: () => (this.tool === 'l' ? '米尺（单击仪器切换）' : '游标卡尺（单击仪器切换）') },
     ];
-    if (this.tool === 'd') {
-      out.push({ type: 'segment', label: '量爪间', get: () => this.ballIn, set: (v) => { this.ballIn = v; this.cal.setObject(v ? this.dBall : null); a.changed(); }, options: [{ label: '空（读零点）', value: false }, { label: '夹摆球', value: true }] });
-      out.push(...this.cal.controls(() => a.changed()));
-    } else out.push({ type: 'button', label: '重新量一次', onClick: () => { this.setTool('l'); a.changed(); } });
+    if (this.tool === 'l' && this.tapeOn) out.push({ type: 'button', label: '米尺重新对一次零点再读', onClick: () => { this.tape.measure(this.l, { sigma: 0.04 }); a.changed(); } });
     out.push(
       { type: 'segment', label: '时间流速', get: () => this.timeScale, set: (v) => (this.timeScale = v), options: [{ label: '×1', value: 1 }, { label: '×2', value: 2 }, { label: '×4', value: 4 }] },
       { type: 'toggle', label: '读数辅助（显示数值）', get: () => this.assist, set: (v) => (this.assist = v) },
@@ -224,7 +285,8 @@ export class PendulumExperiment {
   }
   recD(t) {
     const a = this.app;
-    if (this.tool !== 'd') return a.toast('先在“量具”中选游标卡尺', 'warn');
+    if (!a.comp('cal').placed) return a.toast('台上还没有游标卡尺', 'warn');
+    if (this.tool !== 'd') this.tool = 'd';
     const p = this.cal.problem();
     if (p) a.toast(p, 'warn');
     let i = 0;
@@ -233,7 +295,8 @@ export class PendulumExperiment {
   }
   recL(t) {
     const a = this.app;
-    if (this.tool !== 'l') return a.toast('先在“量具”中选米尺', 'warn');
+    if (!this.tapeOn) return a.toast('米尺还没挂到悬点旁', 'warn');
+    if (this.tool !== 'l') this.tool = 'l';
     if (this.moving) a.toast('摆还在摆动，量摆线长前应先让它静止', 'warn');
     t.addRow({ l: Math.round(this.tape.reading * 100) / 100 });
   }
@@ -258,6 +321,7 @@ export class PendulumExperiment {
   async knob(get, set, to, ms = 400) { await this.app.tween(get, set, to, ms); set(to); this.app.changed(); }
   async timeOnce(table, btn) {
     const a = this.app;
+    if (this.ballIn) this.setBallIn(false);
     this.release(); await a.wait(600);
     this.sw.reset(); this.auto = { phase: 'arm', N: NP };
     if (!(await a.until(() => !this.auto))) { this.auto = null; return; }
@@ -280,13 +344,13 @@ export class PendulumExperiment {
     return [
       {
         title: '用游标卡尺测摆球直径',
-        html: '<p>先合拢量爪读零点，再取下摆球，在不同方向上测三次直径。</p>',
+        html: '<p>从器材柜拿出游标卡尺，先合拢量爪读零点；再拉开尺框，<b>把卡尺拖到静止的摆球上</b>夹住摆球，在不同方向上测三次直径。</p>',
         check: () => app.table('ball').rows.every((r) => has(r, 'r')),
         auto: async () => {
-          app.showTable(0); this.setTool('d'); this.ballIn = false; this.cal.setObject(null); app.renderInspector();
+          app.showTable(0); this.setTool('d'); this.setBallIn(false); app.renderInspector();
           await this.knob(() => this.cal.open, (v) => this.cal.push(v), 0);
           await app.record('ball', 0);
-          this.ballIn = true; this.cal.setObject(this.dBall); app.renderInspector();
+          this.cal.open = this.dBall + 5; this.setBallIn(true); app.renderInspector();
           for (let k = 0; k < 3; k++) { this.cal.open = this.dBall + 5; await this.knob(() => this.cal.open, (v) => this.cal.push(v), this.dBall - 1, 300); await app.record('ball', 0); }
         },
       },

@@ -26,11 +26,33 @@ export class MaglevExperiment {
     this.p = { A: 9e-4, N: 600, i0: rand(2.3, 2.7), delta: rand(3.5, 4.5) * 1e-3 };
     this.m = Math.round((force(rand(6.2, 6.6) * 1e-3, 0, this.p) / GRAV) * 1000) / 1000; // kg，称量值即真值
     this.mode = 'static'; this.gStat = 8; this.iStat = 0; // mm、A
-    this.cmode = 'pos'; this.Kp = 0.8; this.Kd = 1.0; this.gset = 6; this.dm = 0;
+    this.cmode = 'pos'; this.Kp = 0.8; this.Kd = 1.0; this.gset = 6;
     this.s = { g: GMAX, v: 0, i: 0, I: 0, gs: GMAX }; this.contact = 1; this.ramp = false;
     this.trace = []; this.tt = 0; this.calm = 0; this.ring = null; this.cap = null; this.nz = 0;
   }
+  /** 浮子下面挂的砝码（g），由拖放决定 */
+  get dm() { return this.app.stackOf ? 50 * this.app.stackOf('fw').length : 0; }
   get mt() { return this.m + this.dm / 1000; }
+  onPlace() { this.ring = null; this.calm = 0; this.app.renderInspector(); this.app.changed(); }
+  onSlotChange() { this.onPlace(); }
+  onRemove() { this.onPlace(); }
+  /** 砝码挂点跟着浮子走 */
+  syncFw() {
+    const a = this.app, v = new THREE.Vector3();
+    this.flo.updateMatrixWorld(true);
+    for (const z of a.zones) {
+      const m = /^fw(\d)$/.exec(z.id); if (!m) continue;
+      this.flo.localToWorld(v.set(0, -2.2 - +m[1] * 0.8, 0)); z.pos.copy(v);
+      if (z.marker) z.marker.position.copy(v).y += 0.15;
+      if (z.occupant && !(a.drag && a.drag.comp === z.occupant)) z.occupant.root.position.copy(v);
+    }
+  }
+  /** 自动操作：挂到 v 克 */
+  async setDm(v) {
+    const a = this.app, n = Math.round(v / 50);
+    while (this.app.stackOf('fw').length > n) { a.remove(a.stackOf('fw').pop()); await a.wait(80); }
+    for (let k = 1; k <= 4 && this.app.stackOf('fw').length < n; k++) if (!a.comp('mw' + k).placed) await a.autoPut('mw' + k, 'fw0');
+  }
   ctrl() { const Kp = this.Kp * 1000; return { mode: this.cmode, Kp, Kd: this.Kd, Ki: Kp / 5, Kz: 3e-3, imax: 3, tau: 3e-4 }; }
   // ---------- 读数 ----------
   Fread() { return Math.round((force(this.gStat / 1000, this.iStat, this.p) + this.nz * 0.0006) * 1000) / 1000; }
@@ -89,8 +111,16 @@ export class MaglevExperiment {
     this.flo = new THREE.Group(); rig.add(this.flo);
     this.flo.add(mesh(new THREE.BoxGeometry(15, 1.4, 4), MAT.paint(0x7d8a96), 0, -0.7, 0));
     this.flo.add(mesh(new THREE.CylinderGeometry(0.3, 0.3, 4, 8), fr, 0, -3.2, 0));
-    this.wts = [];
-    for (let k = 0; k < 4; k++) { const w = mesh(new THREE.CylinderGeometry(1.4, 1.4, 0.7, 24), MAT.chrome(), 0, -2.2 - k * 0.8, 0); this.wts.push(w); this.flo.add(w); }
+    // 附加砝码：从器材柜拖到浮子下面的挂钩上，一个一个往下挂
+    for (let k = 0; k < 4; k++) app.addSlot({ id: `fw${k}`, pos: new THREE.Vector3(0, 0, 0), accepts: ['mw1', 'mw2', 'mw3', 'mw4'], label: '浮子下的挂钩', r: 2, snap: 6, stack: 'fw', level: k });
+    for (let k = 1; k <= 4; k++) {
+      const wg = new THREE.Group(); wg.add(mesh(new THREE.CylinderGeometry(1.4, 1.4, 0.7, 24), MAT.chrome()));
+      app.addComponent(new Component({
+        key: 'mw' + k, name: `50 g 砝码 ${k}`, group: '50 g 砝码', zone: 'slot', defaultSlot: 'fw0', object: wg, labelY: 2, showLabel: false,
+        icon: SVG('<rect x="20" y="14" width="24" height="12" rx="2" fill="currentColor"/>'),
+        desc: '50 g 砝码，挂在浮子下面增加负载。悬浮时挂上去，浮子要重新找平衡；零功率方式下气隙会自动变小。',
+      }));
+    }
     this.floY = (gmm) => TOP - 2.5 - gmm * G2U;
     // 托架与测微台
     rig.add(mesh(new THREE.BoxGeometry(18, 0.8, 5), MAT.paint(0x3a3f44), 0, this.floY(12) - 1.8, 0));
@@ -110,7 +140,7 @@ export class MaglevExperiment {
           { type: 'knob', label: '线圈电流（恒流源）', get: () => this.iStat, set: (v) => { this.iStat = Math.round(clamp(v, -2, 2) * 1000) / 1000; app.changed(); }, min: -2, max: 2, step: 0.001, bigStep: 0.1, perRev: 0.5, digits: 3, unit: 'A' },
           { type: 'readout', label: '吸力 F', get: () => `${this.Fread().toFixed(3)} N` },
         ] : [
-          { type: 'segment', label: '附加砝码', options: DMS.map((d) => ({ value: d, label: `${d} g` })), get: () => this.dm, set: (v) => { this.dm = v; this.ring = null; this.calm = 0; app.changed(); } },
+          { type: 'readout', label: '附加砝码', get: () => `${this.dm} g` },
           { type: 'button', label: '重新起浮', onClick: () => { this.liftOff(); app.changed(); } },
           { type: 'button', label: '轻敲浮子（测振荡）', onClick: () => this.tap() },
         ]),
@@ -139,7 +169,7 @@ export class MaglevExperiment {
   update() {
     const lev = this.mode === 'lev', gmm = lev ? this.s.g * 1000 : this.gStat;
     this.flo.position.y = this.floY(gmm);
-    this.wts.forEach((w, k) => (w.visible = lev && this.dm >= (k + 1) * 50));
+    this.syncFw();
     this.stand.visible = !lev; this.stand.position.y = this.floY(gmm) - 2.8;
     const g = lev ? (this.contact === -1 ? '吸附' : this.contact === 1 && !this.ramp ? '落下' : this.gRead().toFixed(3)) : this.gStat.toFixed(2);
     if (g !== this._g) { this._g = g; this.gBox.setText(g, /\d/.test(g) ? 'mm' : '', lev ? (this.cmode === 'pos' ? '悬浮 · 定位' : '悬浮 · 零功率') : '测微台'); }
@@ -271,9 +301,9 @@ export class MaglevExperiment {
           app.showTable(2); await app.view('全景'); await this.seg('ctrl', 'cmode', 'zp'); await this.toLev();
           for (const dm of DMS) {
             if (rows('zp').some((r) => r.dm === dm)) continue;
-            await this.seg('rig', 'dm', dm); await app.until(() => this.steady(), 30000); await app.record('zp', 0);
+            await this.setDm(dm); await app.until(() => this.steady(), 30000); await app.record('zp', 0);
           }
-          await this.seg('rig', 'dm', 0);
+          await this.setDm(0);
         },
       },
       {
@@ -284,7 +314,7 @@ export class MaglevExperiment {
         check: () => rows('osc').length >= 4,
         auto: async () => {
           app.showTable(3); await app.view('全景');
-          await this.seg('rig', 'dm', 0); await this.adj('ctrl', 'gset', 6, 200);
+          await this.setDm(0); await this.adj('ctrl', 'gset', 6, 200);
           const Kd0 = rows('osc')[0]?._Kd ?? 1.0;
           await this.adj('ctrl', 'Kd', Kd0, 200);
           if (this.cmode !== 'pos') { app.select(app.comp('ctrl')); this.cmode = 'pos'; this.calm = 0; this.s.I = this.s.i / this.ctrl().Ki; this.s.gs = this.s.g; app.renderInspector(); app.changed(); }

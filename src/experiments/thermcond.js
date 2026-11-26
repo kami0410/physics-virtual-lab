@@ -38,9 +38,9 @@ export class ThermCondExperiment {
     });
     this.sim.set = 60;
     this.sensErr = [gauss(0.08), gauss(0.08)];
-    this.cal = new Caliper({ range: 150 }); this.tool = 'hB'; this.hpos = 0; this.setTool('hB');
-    // 样品 B 叠放时不一定放正：随机错开几毫米，要学生自己推正
-    this.Bon = true; this.Adown = true; this.eB = (Math.random() < 0.5 ? -1 : 1) * rand(3, 8); this.syncMode();
+    this.cal = new Caliper({ range: 150 }); this.hpos = 0;
+    // 样品 B 在器材柜里；放到散热盘上时不一定放正：随机错开几毫米，要学生自己推正
+    this.Adown = true; this.eB = 0; this.sim.mode = 'AP'; this.sim.fc = 1; // 开始时两铜盘直接贴着（样品还在柜里）
     this.timeScale = 10; this.hist = []; this.coolT0 = null; this.peakP = -Infinity; this.assist = false; this.cap = 120;
   }
 
@@ -67,18 +67,64 @@ export class ThermCondExperiment {
     const m = !this.Adown ? 'P' : this.Bon ? 'stack' : 'AP';
     if (m !== s.mode) this.setMode(m, true);
   }
+  /** 样品 B 是否夹在两盘之间（由拖放决定） */
+  get Bon() { return !!(this.app.slotOf && this.app.slotOf('smp') === 'onP'); }
+  /** 卡尺夹着的是什么：'hB' | 'DB' | 'DP' | 'hP' | null（同时更新 hpos） */
+  get tool() {
+    const sl = this.app.slotOf ? this.app.slotOf('cal') : null;
+    if (!sl || sl === 'calRest') return null;
+    if (sl.startsWith('calHB')) { this.hpos = +sl[5]; return 'hB'; }
+    return sl.slice(3);
+  }
+  sizeOf(t, hp = this.hpos) { return { hB: this.geo.hB * 1000 + this.hBvar[hp], DB: this.geo.RB * 2000, DP: this.geo.RP * 2000, hP: this.geo.hP * 1000 }[t]; }
+  canPlace(comp, o = {}) {
+    const sl = o.slot ?? comp.defaultSlot;
+    if (comp.key === 'smp' && sl === 'onP' && this.Adown) return '发热盘 A 压在散热盘上，样品放不进去：先抬起发热盘';
+    if (comp.key === 'cal' && sl && sl !== 'calRest') {
+      const t = sl.startsWith('calHB') ? 'hB' : sl.slice(3);
+      if ((t === 'hB' || t === 'DB') && this.app.slotOf('smp') !== 'bRest') return '样品不在台面上，卡尺够不着：先把样品放到台面上再量';
+      if ((t === 'DP' || t === 'hP') && this.Bon) return '散热盘上叠着样品和发热盘，卡尺卡不进去：先把样品拿出来';
+      const sz = this.sizeOf(t, t === 'hB' ? +sl[5] : 0);
+      if (this.cal.open < sz) return `量爪开口只有 ${this.cal.open.toFixed(1)} mm，比要量的 ${sz.toFixed(0)} mm 小，夹不进去：先把尺框拉开`;
+    }
+    return null;
+  }
+  canRemove(comp) {
+    if (comp.key === 'smp' && this.Bon && this.Adown) return '样品被发热盘压着，抽不出来：先抬起发热盘 A';
+    if (comp.key === 'smp' && ['hB', 'DB'].includes(this.tool)) return '游标卡尺还夹着样品：先把卡尺拿开';
+    return null;
+  }
+  onPlace(c) {
+    if (!c) return;
+    if (c.key === 'smp') { if (this.Bon) this.eB = (Math.random() < 0.5 ? -1 : 1) * rand(2, 7); if (!this._quiet) this.syncMode(); }
+    if (c.key === 'cal') { const t = this.tool; this.cal.setObject(t ? this.sizeOf(t) : null); }
+    this.app.renderInspector(); this.app.changed();
+  }
+  onSlotChange(c) { this.onPlace(c); }
+  onRemove(c) { if (c && c.key === 'smp' && !this._quiet) this.syncMode(); if (c && c.key === 'cal') this.cal.setObject(null); }
+  /** 自动操作：样品放到散热盘上（on）或台面上 */
   setB(on) {
-    if (on === this.Bon) return;
-    this.Bon = on;
-    if (on) this.eB = (Math.random() < 0.5 ? -1 : 1) * rand(2, 7); // 重新放上去，又不一定放正
-    this.syncMode(); this.app.renderInspector(); this.app.changed();
+    if (on === this.Bon && this.app.comp('smp').placed) return;
+    const a = this.app, c = a.comp('smp'), sl = on ? 'onP' : 'bRest';
+    this._quiet = true;
+    if (c.placed) a.moveSlot(c, sl, { silent: true }); else a.place(c, { slot: sl, silent: true });
+    this._quiet = false;
+  }
+  /** 自动操作：卡尺夹到 t（'hB' 用 hpos 选位置；null 放回台面），先把尺框拉开 */
+  setTool(t) {
+    const a = this.app, c = a.comp('cal'), sl = !t ? 'calRest' : t === 'hB' ? `calHB${this.hpos}` : 'cal' + t;
+    if (t) { if (t === 'hB' || t === 'DB') { if (this.Adown && this.Bon) this.setA(false); this.setB(false); } this.cal.open = Math.min(150, this.sizeOf(t) + 4); }
+    if (c.placed) a.moveSlot(c, sl, { silent: true }); else a.place(c, { slot: sl, silent: true });
   }
   setA(down) { if (down === this.Adown) return; this.Adown = down; this.syncMode(); this.app.renderInspector(); this.app.changed(); }
   pushB(e) { this.eB = clamp(e, -15, 15); this.syncMode(); }
   get alignText() { const e = Math.abs(this.eB); return !this.Bon ? '样品不在散热盘上' : e < 0.8 ? '三个盘的边缘对齐' : `样品一侧比铜盘边缘多出约 ${e.toFixed(0)} mm`; }
   setMode(m, fromParts = false) {
     const a = this.app, s = this.sim;
-    if (!fromParts) { this.Adown = m !== 'P'; if (m !== 'P') this.Bon = m === 'stack'; s.fc = this.Bon ? overlap(this.eB / 1000, this.geo.RB) : 1; }
+    if (!fromParts) {
+      if (m !== 'P' && this.Bon !== (m === 'stack')) { if (m === 'stack' && ['hB', 'DB'].includes(this.tool)) this.setTool(null); this.Adown = false; this.setB(m === 'stack'); }
+      this.Adown = m !== 'P'; s.fc = this.Bon ? overlap(this.eB / 1000, this.geo.RB) : 1;
+    }
     if (m === s.mode) return;
     if (m === 'P') { this.coolT0 = s.t; }
     if (m === 'AP') this.peakP = s.TP;
@@ -104,7 +150,33 @@ export class ThermCondExperiment {
     g.add(mesh(new THREE.BoxGeometry(30, 1.6, 26), MAT.paint(0x3b4652), 0, 0.8, 0));
     for (let k = 0; k < 3; k++) { const a = (k * 2 * Math.PI) / 3 + 0.5; g.add(mesh(new THREE.CylinderGeometry(0.35, 0.35, YP - 1.6, 10), MAT.chrome(), 4.6 * Math.cos(a), 1.6 + (YP - 1.6) / 2, 4.6 * Math.sin(a))); }
     this.P = mesh(new THREE.CylinderGeometry(R, R, hp, 48), cu(), 0, YP + hp / 2, 0); g.add(this.P);
-    this.B = mesh(new THREE.CylinderGeometry(R, R, hb, 48), new THREE.MeshStandardMaterial({ color: 0x2a2a2c, roughness: 0.9 }), 0, 0, 0); g.add(this.B);
+    // 样品 B（橡胶圆盘）：从器材柜拖到散热盘上；量尺寸时放在台面上
+    const bg = new THREE.Group(); bg.add(mesh(new THREE.CylinderGeometry(R, R, hb, 48), new THREE.MeshStandardMaterial({ color: 0x2a2a2c, roughness: 0.9 }), 0, hb / 2, 0));
+    app.addSlot({ id: 'onP', pos: new THREE.Vector3(0, YP + hp, 0), accepts: ['smp'], label: '散热盘 P 上（发热盘下）', r: 4, snap: 12 });
+    app.addSlot({ id: 'bRest', pos: new THREE.Vector3(26, 0, 16), accepts: ['smp'], label: '台面', r: 5, snap: 12 });
+    app.addComponent(new Component({
+      key: 'smp', name: '样品 B（橡胶盘）', zone: 'slot', defaultSlot: 'onP', object: bg, labelY: 3,
+      icon: SVG('<rect x="10" y="16" width="44" height="8" rx="2" fill="currentColor"/>'),
+      desc: '待测的橡胶圆盘。先放在台面上用游标卡尺量厚度和直径；然后抬起发热盘，把它拖到散热盘 P 上，再放下发热盘压紧。放上去不一定正，要用手推正。',
+      controls: () => (this.Bon ? [{ type: 'knob', label: '推动样品 B（左右）', get: () => this.eB, set: (v) => this.pushB(v), step: 0.1, bigStep: 1, perRev: 5, fmt: () => '用手推' }, { type: 'readout', label: '侧面看', get: () => this.alignText }] : []),
+    }));
+    // 游标卡尺：拖到要量的地方就是夹上去
+    const cg = new THREE.Group();
+    cg.add(mesh(new THREE.BoxGeometry(20, 0.25, 1.6), MAT.chrome(), 4, 0, 0));
+    cg.add(mesh(new THREE.BoxGeometry(0.8, 0.25, 3.6), MAT.chrome(), -1.4, 0, -1.6));
+    cg.add(mesh(new THREE.BoxGeometry(3, 0.4, 2), MAT.alu(), 2.6, 0.05, 0));
+    cg.add(mesh(new THREE.BoxGeometry(0.8, 0.25, 3.6), MAT.chrome(), 1.4, 0, -1.6));
+    app.addSlot({ id: 'calRest', pos: new THREE.Vector3(30, 0.15, 30), accepts: ['cal'], label: '台面', r: 4, snap: 10 });
+    [0, 1, 2].forEach((i) => { const an = 2.2 + i * 0.9; app.addSlot({ id: `calHB${i}`, pos: new THREE.Vector3(26 + (R + 0.4) * Math.cos(an), hb / 2, 16 + (R + 0.4) * Math.sin(an)), rotY: -an, accepts: ['cal'], label: `夹样品边缘（位置 ${i + 1}）量厚度`, r: 1.6, snap: 4 }); });
+    app.addSlot({ id: 'calDB', pos: new THREE.Vector3(26, hb + 0.4, 16 + R), accepts: ['cal'], label: '卡住样品两侧量直径', r: 1.6, snap: 4 });
+    app.addSlot({ id: 'calDP', pos: new THREE.Vector3(0, YP + hp + 0.3, R + 0.6), accepts: ['cal'], label: '卡住散热盘两侧量直径', r: 1.6, snap: 4 });
+    app.addSlot({ id: 'calhP', pos: new THREE.Vector3(-R - 0.4, YP + hp / 2, 0), rotY: Math.PI / 2, accepts: ['cal'], label: '夹散热盘边缘量厚度', r: 1.6, snap: 4 });
+    app.addComponent(new Component({
+      key: 'cal', name: '游标卡尺', zone: 'slot', defaultSlot: 'calRest', object: cg, labelY: 3,
+      icon: SVG('<path d="M4 14h56v6H4z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 14V4h4v10M22 20v10h4V20" fill="none" stroke="currentColor" stroke-width="1.5"/>'),
+      desc: '量程 150 mm，分度值 0.02 mm。在台面上合拢量爪读零点；拉开尺框后拖到样品或散热盘上要量的位置夹住，再推尺框使量爪贴紧读数。',
+      controls: () => [{ type: 'readout', label: '量爪间', get: () => ({ hB: `样品厚度（位置 ${this.hpos + 1}）`, DB: '样品直径', DP: '散热盘直径', hP: '散热盘厚度' })[this.tool] || '空着（可读零点）' }, ...this.cal.controls(() => app.changed())],
+    }));
     const A = (this.A = new THREE.Group());
     A.add(mesh(new THREE.CylinderGeometry(R, R, 1.0, 48), cu(), 0, 0.5, 0));
     A.add(mesh(new THREE.CylinderGeometry(R * 0.92, R, 3.6, 48), MAT.paint(0x9aa3ad), 0, 2.8, 0));
@@ -140,8 +212,6 @@ export class ThermCondExperiment {
       controls: () => [
         { type: 'toggle', label: '加热电源', get: () => this.sim.on, set: (v) => { this.sim.on = v; } },
         { type: 'knob', label: '温控设定', get: () => this.sim.set, set: (v) => (this.sim.set = clamp(v, 30, 95)), min: 30, max: 95, step: 0.1, bigStep: 1, perRev: 10, digits: 1, unit: '°C' },
-        { type: 'toggle', label: '样品 B 放在散热盘 P 上', get: () => this.Bon, set: (v) => this.setB(v) },
-        ...(this.Bon ? [{ type: 'knob', label: '推动样品 B（左右）', get: () => this.eB, set: (v) => this.pushB(v), step: 0.1, bigStep: 1, perRev: 5, fmt: () => '用手推' }] : []),
         { type: 'readout', label: '侧面看', get: () => this.alignText },
         { type: 'toggle', label: '发热盘 A 放下（压紧）', get: () => this.Adown, set: (v) => this.setA(v) },
         { type: 'readout', label: '电子天平（散热盘 P）', get: () => `${(this.geo.mP * 1000).toFixed(2)} g` },
@@ -154,7 +224,8 @@ export class ThermCondExperiment {
   update() {
     const s = this.sim, hp = this.geo.hP * 100, hb = this.geo.hB * 100, R = this.geo.RP * 100;
     const yTop = YP + hp;
-    this.B.position.set(this.Bon ? this.eB / 10 : 24, this.Bon ? yTop + hb / 2 : hb / 2, this.Bon ? 0 : 12);
+    const zp = this.app.zones.find((q) => q.id === 'onP');
+    if (zp) { zp.pos.set(this.Bon ? this.eB / 10 : 0, yTop, 0); if (zp.occupant && !(this.app.drag && this.app.drag.comp === zp.occupant)) zp.occupant.root.position.copy(zp.pos); }
     const yA = !this.Adown ? yTop + (this.Bon ? hb : 0) + 9 : this.Bon ? yTop + hb : yTop;
     this.A.position.y = yA; this.arm.position.y = yA + 15;
     this.wA.position.y = yA + 0.5;
@@ -220,15 +291,11 @@ export class ThermCondExperiment {
     return h[n - 1][2] - h[n - 21][2];
   }
 
-  setTool(t) {
-    this.tool = t;
-    const sz = { hB: this.geo.hB * 1000 + this.hBvar[this.hpos], DB: this.geo.RB * 2000, DP: this.geo.RP * 2000, hP: this.geo.hP * 1000 }[t];
-    this.cal.setObject(sz);
-  }
   drawTool() {
     const v = this.tv;
+    if (!this.app.comp('cal').placed) { const g = v.ctx; g.fillStyle = '#20262b'; g.fillRect(0, 0, v.W, v.H); v.foot('台上还没有游标卡尺：从器材柜拿出来'); return; }
     this.cal.draw(v.ctx, v.W, v.H, { assist: this.assist });
-    const nm = { hB: `样品 B 的厚度（位置 ${this.hpos + 1}）`, DB: '样品 B 的直径', DP: '散热盘 P 的直径', hP: '散热盘 P 的厚度' }[this.tool];
+    const nm = { hB: `样品 B 的厚度（位置 ${this.hpos + 1}）`, DB: '样品 B 的直径', DP: '散热盘 P 的直径', hP: '散热盘 P 的厚度' }[this.tool] || '量爪间空着（读零点）';
     const p = this.cal.problem();
     v.foot(p ? `${nm} —— ${p}` : nm);
   }
@@ -236,10 +303,8 @@ export class ThermCondExperiment {
     const a = this.app, rer = () => { a.renderInspector(); a.changed(); };
     const out = [
       { type: 'segment', label: '时间流速', get: () => this.timeScale, set: (v) => (this.timeScale = v), options: [{ label: '×1', value: 1 }, { label: '×10', value: 10 }, { label: '×60', value: 60 }, { label: '×120', value: 120 }] },
-      { type: 'segment', label: '卡尺测量', get: () => this.tool, set: (v) => { this.setTool(v); rer(); }, options: [{ label: '样品厚', value: 'hB' }, { label: '样品径', value: 'DB' }, { label: '铜盘径', value: 'DP' }, { label: '铜盘厚', value: 'hP' }] },
     ];
-    if (this.tool === 'hB') out.push({ type: 'segment', label: '测量位置', get: () => this.hpos, set: (v) => { this.hpos = v; this.setTool('hB'); rer(); }, options: [0, 1, 2].map((i) => ({ label: `位置 ${i + 1}`, value: i })) });
-    out.push(...this.cal.controls(() => a.changed()), { type: 'toggle', label: '读数辅助（卡尺显示读数）', get: () => this.assist, set: (v) => (this.assist = v) });
+    out.push({ type: 'toggle', label: '读数辅助（卡尺显示读数）', get: () => this.assist, set: (v) => (this.assist = v) });
     return out;
   }
 
@@ -268,9 +333,11 @@ export class ThermCondExperiment {
     ];
   }
   recGeo(t) {
-    const a = this.app, p = this.cal.problem();
+    const a = this.app, p = this.cal.problem(), tl = this.tool;
+    if (!a.comp('cal').placed) return a.toast('台上还没有游标卡尺', 'warn');
+    if (!tl) return a.toast('卡尺没有夹在要量的东西上：把卡尺拖到样品或散热盘上', 'warn');
     if (p) a.toast(p, 'warn');
-    const k = this.tool === 'hB' ? `hB${this.hpos + 1}` : this.tool;
+    const k = tl === 'hB' ? `hB${this.hpos + 1}` : this.tool;
     t.set(t.rows.findIndex((r) => r.k === k), 'v', Math.round(this.cal.reading / 0.02) * 0.02);
   }
   recHeat(t) {
@@ -303,7 +370,7 @@ export class ThermCondExperiment {
     return [
       {
         title: '测量样品和散热盘',
-        html: '<p>用游标卡尺测样品 B 的厚度（不同位置测 3 次）和直径，散热盘 P 的直径和厚度；用电子天平称散热盘的质量。</p>',
+        html: '<p>从器材柜拿出样品 B 放在台面上、拿出游标卡尺。拉开尺框，<b>把卡尺拖到样品边缘</b>夹住测厚度（不同位置测 3 次）、拖到样品两侧测直径，再拖到散热盘 P 上测直径和厚度；用电子天平称散热盘的质量。</p>',
         check: () => filled('geo', 'v') >= GEO.length,
         auto: async () => {
           app.showTable(0); app.select(app.comp('rig'));
@@ -311,10 +378,11 @@ export class ThermCondExperiment {
             if (tool === 'm') { await app.record('geo', 1); continue; }
             if (tool === 'hB') this.hpos = +k[2] - 1;
             this.setTool(tool); app.renderInspector();
-            const sz = this.cal.obj; this.cal.open = sz + 4;
+            const sz = this.cal.obj;
             await this.knob(() => this.cal.open, (v) => this.cal.push(v), sz - 0.5, 300);
             await app.record('geo', 0);
           }
+          this.setTool(null);
         },
       },
       {

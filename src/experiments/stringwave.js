@@ -28,11 +28,16 @@ export class StringWaveExperiment {
     this.d = rand(0.296, 0.304) * 1e-3; // 钢丝直径（m）
     this.model = new StringModel({ d: this.d, T: G, L: 0.4, x0: X_DRV / 100, zeta: rand(0.0035, 0.0045) });
     this.muLabel = Math.round(this.model.mu * (1 + gauss(0.0015)) * 1e7) / 1e7; // 标签上的线密度（称 1 m 弦线得到）
-    this.mErr = Object.fromEntries(MASSES.map((m) => [m, 1 + rand(-0.001, 0.001)])); // 砝码的实际质量
-    this.m = 1.0; this.L = 40; this.on = false; this.f = 100; this.drive = 5;
+    // 砝码钩（0.5 kg，一直挂在弦上）和 4 个 0.5 kg 槽码的实际质量
+    this.mHook = 0.5 * (1 + rand(-0.001, 0.001)); this.mPiece = Array.from({ length: 4 }, () => 0.5 * (1 + rand(-0.001, 0.001)));
+    this.L = 40; this.on = false; this.f = 100; this.drive = 5;
     this._key = ''; this.env = new Float64Array(NX + 1);
   }
-  get T() { return this.m * this.mErr[this.m] * G; }
+  /** 砝码钩上的槽码（编号 0–3） */
+  pieces() { const a = this.app; return a.stackOf ? a.stackOf('hanger').map((c) => +c.key.slice(1) - 1) : []; }
+  /** 砝码总质量（标称值，kg） */
+  get m() { return 0.5 + 0.5 * this.pieces().length; }
+  get T() { return (this.mHook + this.pieces().reduce((s, i) => s + this.mPiece[i], 0)) * G; }
   sync() { this.model.T = this.T; this.model.L = this.L / 100; }
   /** 当前共振的程度：0–1（1 为恰好在第 n 个模式的共振峰上） */
   resonance() {
@@ -50,7 +55,7 @@ export class StringWaveExperiment {
   }
   /** 振幅分布（mm）：显示用，超过约 8 mm 时软限幅（大振幅下弦的非线性） */
   envelope() {
-    const key = [this.on, this.f, this.L, this.m, this.drive].join();
+    const key = [this.on, this.f, this.L, this.T, this.drive].join();
     if (key === this._key) return this.env;
     this._key = key; this.sync();
     if (!this.on || this.drive <= 0) { this.env.fill(0); return this.env; }
@@ -90,7 +95,12 @@ export class StringWaveExperiment {
     this.w1 = mesh(new THREE.CylinderGeometry(0.06, 0.06, 1, 6), wire); this.w1.rotation.z = Math.PI / 2; g.add(this.w1);
     this.w2 = mesh(new THREE.CylinderGeometry(0.06, 0.06, 1, 6), wire); this.w2.rotation.z = Math.PI / 2; g.add(this.w2);
     this.w3 = mesh(new THREE.CylinderGeometry(0.06, 0.06, 24, 6), wire, 66.5, Y0 - 2.5 - 12, 0); g.add(this.w3);
-    this.wts = new THREE.Group(); this.wts.position.set(66.5, Y0 - 2.5 - 24, 0); g.add(this.wts);
+    // 砝码钩：挂钩、立杆和托盘（0.5 kg），槽码从器材柜拖上来摞在托盘上
+    const HY = Y0 - 2.5 - 24;
+    g.add(mesh(new THREE.TorusGeometry(0.6, 0.12, 6, 16), MAT.metal(), 66.5, HY + 0.4, 0));
+    g.add(mesh(new THREE.CylinderGeometry(0.25, 0.25, 10, 8), MAT.metal(), 66.5, HY - 5, 0));
+    g.add(mesh(new THREE.CylinderGeometry(2.4, 2.4, 0.6, 24), MAT.metal(), 66.5, HY - 10, 0));
+    for (let i = 0; i < 4; i++) app.addSlot({ id: `sw${i}`, pos: new THREE.Vector3(66.5, HY - 9.7 + i * 1.7, 0), accepts: ['p1', 'p2', 'p3', 'p4'], label: '砝码钩', r: 3, snap: 8, stack: 'hanger', level: i });
     // 振动的弦：半透明“包络带”（400 Hz 的振动看上去是一片模糊的纺锤形）
     const pos = new Float32Array((NX + 1) * 2 * 3), idx = [];
     for (let i = 0; i < NX; i++) { const a = 2 * i, b = a + 1, c = a + 2, d = a + 3; idx.push(a, b, c, b, d, c); }
@@ -103,12 +113,22 @@ export class StringWaveExperiment {
       desc: `钢丝一端固定，跨过劈尖 A、B 和滑轮，下挂砝码提供张力 T = mg。驱动磁钢放在离劈尖 A ${X_DRV} cm 处，信号源的交变电流流过钢丝，在磁场中受安培力而振动。劈尖 B 可沿导轨移动，弦长 L 在米尺上读（零点对准劈尖 A）。弦线标签：μ = ${(this.muLabel * 1e4).toFixed(3)}×10⁻⁴ kg/m（称 1.000 m 弦线的质量得到）。`,
       controls: () => [
         { type: 'knob', label: '劈尖 B 的位置（弦长）', get: () => this.L, set: (v) => { this.L = clamp(v, LMIN, LMAX); app.changed(); }, min: LMIN, max: LMAX, step: 0.02, bigStep: 1, perRev: 2, fmt: () => '看米尺读数' },
-        { type: 'select', label: '砝码（含挂钩）', get: () => this.m, set: (v) => { this.m = +v; app.changed(); }, options: MASSES.map((m) => ({ value: m, label: `${m.toFixed(2)} kg` })) },
+        { type: 'readout', label: '砝码（含 0.5 kg 砝码钩）', get: () => `${this.m.toFixed(2)} kg` },
       ],
     }));
+    const pm = MAT.metal();
+    for (let i = 0; i < 4; i++) {
+      const pg = new THREE.Group(); pg.add(mesh(new THREE.CylinderGeometry(2.2, 2.2, 1.6, 24), pm.clone(), 0, 0.8, 0)); pg.add(mesh(new THREE.BoxGeometry(0.7, 1.62, 2.3), MAT.black(), 0, 0.8, 1.2));
+      app.addComponent(new Component({
+        key: `p${i + 1}`, name: `0.5 kg 槽码 ${i + 1}`, group: '0.5 kg 槽码', zone: 'slot', defaultSlot: 'sw0', object: pg, labelY: 3, showLabel: false,
+        icon: SVG('<rect x="12" y="14" width="40" height="12" rx="2" fill="currentColor"/><rect x="30" y="14" width="4" height="7" fill="#fff"/><text x="32" y="38" font-size="9" text-anchor="middle" fill="currentColor">0.5 kg</text>'),
+        desc: '0.5 kg 槽码（实际质量有约 ±0.1% 的偏差）。拖到弦线末端的砝码钩上增加张力，拖回器材柜就是取下。',
+      }));
+    }
     const gb = (this.genBox = meterBox(20, 10, 12, '低频信号源')); gb.group.position.set(-40, 0, -20);
     app.addComponent(new Component({
-      key: 'gen', name: '低频信号源', zone: 'none', fixed: true, object: gb.group, labelY: 14,
+      key: 'gen', name: '低频信号源', zone: 'none', object: gb.group, labelY: 14,
+      icon: SVG('<rect x="8" y="8" width="48" height="26" rx="3" fill="currentColor"/><path d="M14 21 q4 -8 8 0 t8 0" stroke="#fff" fill="none" stroke-width="2"/>'),
       desc: '输出正弦电流给钢丝，频率 20–1000 Hz，数字显示 0.1 Hz；输出幅度可调。幅度太大时弦的振动不再是小振幅，共振峰会变形。',
       controls: () => [
         { type: 'toggle', label: '电源', get: () => this.on, set: (v) => { this.on = v; app.changed(); } },
@@ -123,7 +143,6 @@ export class StringWaveExperiment {
     this.kB.position.x = xB;
     this.w1.scale.y = XA - (XA - 12); this.w1.position.set(XA - 6, Y0, 0);
     this.w2.scale.y = 64 - xB; this.w2.position.set((64 + xB) / 2, Y0, 0);
-    if (this._m !== this.m) { this._m = this.m; this.wts.clear(); const n = Math.round(this.m / 0.5); for (let k = 0; k < n; k++) this.wts.add(mesh(new THREE.CylinderGeometry(2.2, 2.2, 1.6, 24), MAT.metal(), 0, -1 - k * 1.7, 0)); }
     const env = this.envelope(), p = this.band.geometry.attributes.position.array, S = 0.4; // 3D 中振幅放大 4 倍（mm → cm × 4）
     for (let i = 0; i <= NX; i++) { const x = XA + (this.L * i) / NX, e = env[i] * S; p.set([x, Y0 + e + 0.05, 0, x, Y0 - e - 0.05, 0], i * 6); }
     this.band.geometry.attributes.position.needsUpdate = true; this.band.geometry.computeBoundingSphere();
@@ -212,6 +231,14 @@ export class StringWaveExperiment {
   }
 
   // ======================= 自动操作 =======================
+  /** 自动操作：砝码钩上加、减槽码，使总质量为 m（kg） */
+  onRemove(c) { if (c && c.key === 'gen') this.on = false; }
+  async setMassTo(m) {
+    const a = this.app, k = Math.round((m - 0.5) / 0.5);
+    while (this.pieces().length > k) { a.remove(a.stackOf('hanger').pop()); await a.wait(200); }
+    for (let i = 1; i <= 4 && this.pieces().length < k; i++) if (!a.comp(`p${i}`).placed) await a.autoPut(`p${i}`, 'sw0');
+    a.select(a.comp('rig')); a.changed();
+  }
   async moveTo(L) { const a = this.app; a.select(a.comp('rig')); await a.tween(() => this.L, (v) => (this.L = v), L, 700); this.L = L; a.changed(); await a.wait(300); }
   steps() {
     const app = this.app, rows = (id) => app.table(id).rows.filter((r) => isFinite(r.L) && r.L > 0);
@@ -227,13 +254,13 @@ export class StringWaveExperiment {
     return [
       {
         title: '挂砝码，打开信号源',
-        html: '<p>挂上 1.00 kg 砝码，打开信号源，频率调到 400 Hz 左右，输出幅度适中。</p>',
+        html: '<p>从器材柜拖一个 0.5 kg 槽码到弦线末端的砝码钩上（连同 0.5 kg 的砝码钩共 1.00 kg），打开信号源，频率调到 400 Hz 左右，输出幅度适中。</p>',
         status: () => `${this.on ? `f = ${this.f.toFixed(1)} Hz` : '信号源关'}，砝码 ${this.m.toFixed(2)} kg`,
         check: () => this.on && this.f >= 200 && this.f <= 800 && this.drive > 0.5,
         diagnose: () => { const out = []; if (!this.on) out.push({ msg: '信号源还没打开。' }); if (this.f < 200 || this.f > 800) out.push({ msg: `频率 ${this.f.toFixed(1)} Hz 不合适：太低时半波长超过导轨长度，太高时波腹太密。调到 300–500 Hz。` }); if (this.drive <= 0.5) out.push({ msg: '输出幅度太小。' }); return out.length ? [{ ...out[0], fix: { label: '帮我设好', run: async () => { this.on = true; this.drive = 5; await app.tween(() => this.f, (v) => (this.f = Math.round(v * 10) / 10), 400, 600); this.f = 400; } } }, ...out.slice(1)] : []; },
         auto: async () => {
-          app.select(app.comp('rig')); this.m = 1.0; app.renderInspector();
-          app.select(app.comp('gen')); this.on = true; this.drive = 5; app.renderInspector();
+          await this.setMassTo(1.0);
+          await app.autoPlace('gen'); app.select(app.comp('gen')); this.on = true; this.drive = 5; app.renderInspector();
           await app.tween(() => this.f, (v) => (this.f = Math.round(v * 10) / 10), 400, 700); this.f = 400; app.changed();
         },
       },
@@ -255,7 +282,7 @@ export class StringWaveExperiment {
       },
       {
         title: '改变张力，测 5 组',
-        html: '<p>频率不变，依次换 0.5、1.0、1.5、2.0、2.5 kg 的砝码，每种张力下找一个共振位置（选弦长较长的，相对误差小）。</p>',
+        html: '<p>频率不变，在砝码钩上加减槽码，使砝码总质量依次为 0.5、1.0、1.5、2.0、2.5 kg，每种张力下找一个共振位置（选弦长较长的，相对误差小）。</p>',
         status: () => `已测 ${new Set(rows('ten').map((r) => r.m)).size} / 5 种砝码`,
         check: () => new Set(rows('ten').map((r) => r.m)).size >= 5,
         diagnose: resDiag,
@@ -263,7 +290,7 @@ export class StringWaveExperiment {
           app.showTable(1);
           for (const m of MASSES) {
             if (rows('ten').some((r) => r.m === m)) continue;
-            this.m = m; app.select(app.comp('rig')); app.renderInspector(); app.changed();
+            await this.setMassTo(m);
             let n = 1; while (this.Lres(n + 1) <= 90) n++;
             await this.moveTo(this.Lres(n) + gauss(0.03)); await app.record('ten', 0);
           }

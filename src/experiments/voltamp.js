@@ -269,20 +269,22 @@ export class VoltAmpExperiment {
       const rs = app.table(id).completeRows().filter((r) => r.I > 0);
       if (!rs.length) continue;
       html += `<h3>${nm}</h3><table><tr><th>接法</th><th>组数</th><th>$U/I$ 拟合/Ω</th><th>电表内阻</th><th>修正后 $R_x$/Ω</th></tr>`;
-      for (const mode of ['外接', '内接']) {
+      for (const mode of ['外接', '内接', '接线有误']) {
         const m = rs.filter((r) => r.mode === mode);
-        if (m.length < 2) continue;
+        const bad = mode === '接线有误';
+        if (m.length < (bad ? 1 : 2)) continue;
         const Rm = fit(m);
         const RV = mean(m.map((r) => r.rv)), RA = mean(m.map((r) => r.ra));
-        const Rc = mode === '外接' ? (Rm * RV) / (RV - Rm) : Rm - RA;
+        // 接错线时两只表读的已经不是元件的 U、I：只能照 U/I 算，没有办法修正
+        const Rc = bad ? Rm : mode === '外接' ? (Rm * RV) / (RV - Rm) : Rm - RA;
         res[id + mode] = Rc;
-        html += `<tr><td>${mode}</td><td>${m.length}</td><td>${Rm.toFixed(id === 'rx1' ? 2 : 0)}</td><td>${mode === '外接' ? `R_V = ${RV.toFixed(0)} Ω` : `R_A = ${RA.toFixed(1)} Ω`}</td><td>${Rc.toFixed(id === 'rx1' ? 2 : 0)}</td></tr>`;
+        html += `<tr><td>${mode}</td><td>${m.length}</td><td>${Rm.toFixed(id === 'rx1' ? 2 : 0)}</td><td>${bad ? '—（接线有误，无法修正）' : mode === '外接' ? `R_V = ${RV.toFixed(0)} Ω` : `R_A = ${RA.toFixed(1)} Ω`}</td><td>${Rc.toFixed(id === 'rx1' ? 2 : 0)}</td></tr>`;
         plots.push({ title: `${nm} 的 U–I（${mode}）`, xLabel: 'I / mA', yLabel: 'U / V', series: [{ type: 'scatter', data: m.map((r) => [r.I, r.U]) }, { type: 'line', data: fnData((x) => (Rm * x) / 1000, 0, Math.max(...m.map((r) => r.I)) * 1.05) }] });
       }
       html += '</table>';
-      const v = res[id + best] ?? res[id + (best === '外接' ? '内接' : '外接')];
+      const v = res[id + best] ?? res[id + (best === '外接' ? '内接' : '外接')] ?? res[id + '接线有误'];
       if (v != null) {
-        html += `<div class="result-box">$${nm.replace('x', '_{x')}}=${v.toFixed(id === 'rx1' ? 2 : 0)}\\ \\Omega$（${res[id + best] != null ? best : '另一种接法'}，已修正）</div>`;
+        html += `<div class="result-box">$${nm.replace('x', '_{x')}}=${v.toFixed(id === 'rx1' ? 2 : 0)}\\ \\Omega$（${res[id + best] != null ? best + '，已修正' : res[id + (best === '外接' ? '内接' : '外接')] != null ? '另一种接法，已修正' : '只有接错线时的数据，这个结果不可信'}）</div>`;
         answers.push({ label: `修正后的 $${nm.replace('x', '_{x')}}$`, unit: 'Ω', value: v, digits: id === 'rx1' ? 2 : 0, tolRel: 0.008 });
         res[id] = [v, Rt];
       }

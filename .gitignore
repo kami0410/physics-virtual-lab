@@ -6,3 +6,5 @@ dist-single/
 .mnemon/
 .claude/
 *.pdf
+# 宣传片体积大（30 MB+），不入库，改由 Releases 分发
+promo/*.mp4
