@@ -5,6 +5,7 @@ import '@fontsource/ibm-plex-mono/latin-600.css';
 import './styles.css';
 import { tex } from './core/tex.js';
 import { CATALOG as EXPERIMENTS } from './experiments/catalog.js';
+import { progressSummary } from './core/Progress.js';
 import { michelsonPattern } from './physics/interference.js';
 
 const root = document.getElementById('app');
@@ -74,6 +75,15 @@ async function route() {
   renderHome();
 }
 
+// 做到一半的实验：目录里显示“继续实验”和进度
+function goLabel(id) {
+  const p = progressSummary(id);
+  return p ? `<span class="go cont" title="上次做到一半，进入后接着做">继续 · ${p.done}/${p.total} 步 →</span>` : '<span class="go">进入实验 →</span>';
+}
+
+// 手机上目录不显示右侧一栏：在标题后面标出进度
+function progMark(id) { const p = progressSummary(id); return p ? ` data-prog="继续 ${p.done}/${p.total}"` : ''; }
+
 const PARTS = ['力学', '热学', '电磁学', '光学', '近代物理'];
 const partOf = (E) => E.meta.part || (E.meta.tags.includes('近代物理') ? '近代物理' : E.meta.tags.includes('电学') ? '电磁学' : '光学');
 
@@ -124,9 +134,9 @@ function renderHome() {
       <div class="toc-row" data-id="${E.meta.id}" tabindex="0" role="link">
         <div class="toc-no">实验<b>${String(i + 1).padStart(2, '0')}</b></div>
         <div class="toc-thumb"><canvas data-th="${EXPERIMENTS.indexOf(E)}" width="144" height="144"></canvas></div>
-        <div class="toc-title"><h3>${E.meta.title}</h3><p>${E.meta.subtitle}</p><div class="kw">${E.meta.tags.join(' / ')}</div></div>
+        <div class="toc-title"><h3${progMark(E.meta.id)}>${E.meta.title}</h3><p>${E.meta.subtitle}</p><div class="kw">${E.meta.tags.join(' / ')}</div></div>
         <div class="toc-formula">${E.meta.formula ? `<div class="fx">${splitFormula(E.meta.formula).map((f) => `<span>${tex(f)}</span>`).join('')}</div>` : ''}<small>测量：${(E.meta.measure || '').replace(/([A-Za-zμ])_([A-Za-z0-9]+)/g, '$1<sub>$2</sub>')}</small></div>
-        <div class="toc-meta">${E.meta.level} · 约 ${E.meta.time}<span class="go">进入实验 →</span></div>
+        <div class="toc-meta">${E.meta.level} · 约 ${E.meta.time}${goLabel(E.meta.id)}</div>
       </div>`)).join('')}
     </div>`).join('')}
 

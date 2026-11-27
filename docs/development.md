@@ -82,6 +82,7 @@ export function thumb(ctx, w, h) { … }   // 目录卡片的缩略图（画在 
 | `principle()` | “实验原理”页的内容（HTML + LaTeX） |
 | `onPlace(c)` / `onRemove(c)` | 器材放上 / 取下时 |
 | `toBench()` / `toWave()` | 可选：把当前光路导出到光路设计台 / 衍射工作台 |
+| `saveState()` / `loadState(s)` | 可选：进度保存时存取实验特有的状态（见下） |
 
 写好后在 `src/experiments/catalog.js` 里登记一行（import meta，加进 `CATALOG`），首页就会出现。
 
@@ -91,6 +92,8 @@ export function thumb(ctx, w, h) { … }   // 目录卡片的缩略图（画在 
 - `auto()` 要能从任意状态出发完成本步（学生可能把前面的设置改乱了），一键运行会加速运行，依赖帧更新的状态要在 setter 里同步计算；
 - 学生的误操作造成的损坏用 `app.toast(msg, 'warn')` 提示，`'bad'` 留给程序错误（测试会把它当作失败）；
 - 文件、注释里不要出现个人或学校信息。
+
+**进度保存**（`src/core/Progress.js`）：框架每 3 秒和离开页面时把进度存进 localStorage（`progress:v1:<id>`），下次进入自动恢复。会存：器材摆放与等高共轴偏差、`cir` 这类电路对象的导线、各控件（slider / knob / toggle / select / segment，按标签对应）的值、数据表、步骤完成情况。随机参数不存值，而是存种子：`constructor` 到 `tables()` 这段时间里 `Math.random` 被换成按种子生成的序列，所以**待测样品、仪器误差这些随机量要在构造时生成**，不要拖到放置器材或第一帧时再取随机数，否则恢复后仪器就换了一台。控件以外的状态（例如计数器的累计值）需要保存时写 `saveState()` / `loadState(s)`。步骤标题或数据表的列改了，旧存档自动作废。
 
 ## 测试
 

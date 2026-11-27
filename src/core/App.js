@@ -11,6 +11,7 @@ import { Quality } from './Quality.js';
 import { GPU } from './gpu.js';
 import { Coax } from './Coax.js';
 import { Tutor } from './Tutor.js';
+import { seededRandom, newSeed, loadProgress, clearProgress, snapshot, saveProgress, restore } from './Progress.js';
 
 class AbortRun extends Error {}
 class ReplaySkip extends Error {}
@@ -52,6 +53,12 @@ export class App {
     this.quality = new Quality(this);
     { const qs = this.page.querySelector('[data-a=quality]'); qs.value = this.quality.mode; this.onQuality = (qq) => { qs.options[0].textContent = qq.mode === 'auto' ? `画质 自动·${qq.cfg.name}` : '画质 自动'; qs.title = `画质：自动根据设备性能调节观察窗分辨率和三维像素比
 干涉/衍射图样计算：${GPU.ok ? 'GPU（' + GPU.renderer + '）' : 'CPU'}`; }; this.onQuality(this.quality); }
+    // 进度保存：实验里随机生成的未知量都在构造时产生，用存档里的种子重建，仪器才是上次那一台
+    const saved = loadProgress(this.meta.id);
+    this.seed = saved && Number.isInteger(saved.seed) ? saved.seed >>> 0 : newSeed();
+    const rand0 = Math.random;
+    Math.random = seededRandom(this.seed);
+    try {
     this.exp = new ExpClass(this);
     if (this.exp.toBench || this.exp.toWave) {
       const tb = this.page.querySelector('[data-a=tobench]');
@@ -70,6 +77,7 @@ export class App {
     this.stepDone = this.steps.map(() => false);
     this.openStep = 0;
     for (const spec of this.exp.tables()) this.tables.push(new DataTable(spec, this));
+    } finally { Math.random = rand0; }
     this.renderShelf();
     this.renderPlaceMode();
     this.tutor = new Tutor(this);
@@ -93,6 +101,7 @@ export class App {
       this.stage.controls.target.set(...cams[0].target);
     }
     this.stage.frameFns.add((dt) => this.frame(dt));
+    this.initProgress(saved);
     this._checkTimer = setInterval(() => this.checkSteps(), 200);
     this.changed();
   }
@@ -416,6 +425,7 @@ export class App {
     let { pos, slot, silent } = opts;
     if ((opts.table || opts.exact) && comp.zone !== 'rail' && comp.zone !== 'none') pos = { table: opts.table, exact: opts.exact };
     if (comp.placed) return true;
+    comp._seq = this._placeSeq = (this._placeSeq || 0) + 1;
     if (!silent && this.exp.canPlace) {
       const err = this.exp.canPlace(comp, { pos, slot });
       if (err) { this.toast(err, 'warn'); return false; }
@@ -1273,7 +1283,43 @@ table{border-collapse:collapse;margin:8px 0;font-size:13px} td,th{border:1px sol
     while (this.toastsEl.children.length > 4) this.toastsEl.firstChild.remove();
   }
 
+  // ============================ 进度保存 ============================
+  initProgress(saved) {
+    this._snap0 = JSON.stringify(snapshot(this));
+    this._snapLast = this._snap0;
+    if (saved) {
+      const tutor = this.tutor; this.tutor = null; // 恢复过程不算学生的操作
+      let ok = false;
+      try { ok = restore(this, saved); } catch (err) { console.warn('恢复进度失败', err); } finally { this.tutor = tutor; }
+      if (ok) {
+        this._snapLast = JSON.stringify(snapshot(this));
+        this.renderShelf(); this.renderPlaceMode(); this.updateStepUI(); this.renderInspector(); this.changed();
+        const n = this.stepDone.filter(Boolean).length, rows = this.tables.reduce((k, t) => k + t.rows.length, 0);
+        const d = new Date(saved.t || Date.now()), pad = (x) => String(x).padStart(2, '0');
+        const when = `${d.getMonth() + 1} 月 ${d.getDate()} 日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        setTimeout(() => {
+          if (this._disposed) return;
+          this.modal('已接着上次的进度', `<p>已恢复 ${when} 保存的进度：完成 <b>${n}/${this.steps.length}</b> 步，记录了 <b>${rows}</b> 组数据。器材摆放、接线和旋钮位置都已还原；随时间变化的过程量（温度、计时等）从现在重新开始。</p><p class="muted">进度自动保存在本机浏览器里，换电脑或清除浏览数据后就没有了。</p>`, [
+            { label: '不要，重新开始', cls: 'danger', onClick: (close) => { close(); this.restart(); } },
+          ]);
+        }, 300);
+      } else clearProgress(this.meta.id); // 实验改版后旧存档对不上，作废
+    }
+    this._saveTimer = setInterval(() => this.saveProgress(), 3000);
+    this._onHide = () => { if (document.visibilityState === 'hidden') this.saveProgress(true); };
+    this._onPageHide = () => this.saveProgress(true);
+    document.addEventListener('visibilitychange', this._onHide);
+    window.addEventListener('pagehide', this._onPageHide);
+  }
+  /** 自动演示进行中不定时保存（中间状态）；结束后下一次定时保存会存上 */
+  saveProgress(force = false) {
+    if (this._noSave || this._disposed || this._replay || (this.running && !force)) return;
+    try { saveProgress(this, snapshot(this)); } catch (err) { console.warn('保存进度失败', err); }
+  }
+
   restart() {
+    this._noSave = true;
+    clearProgress(this.meta.id);
     const { root, ExpClass, onExit, onRestart } = this;
     this.dispose();
     const app = new App(root, ExpClass, { onExit, onRestart });
@@ -1283,6 +1329,12 @@ table{border-collapse:collapse;margin:8px 0;font-size:13px} td,th{border:1px sol
   }
   exit() { this.dispose(); this.onExit && this.onExit(); }
   dispose() {
+    if (this._disposed) return;
+    this.saveProgress(true);
+    this._disposed = true;
+    clearInterval(this._saveTimer);
+    document.removeEventListener('visibilitychange', this._onHide);
+    window.removeEventListener('pagehide', this._onPageHide);
     this._abort = true;
     clearInterval(this._checkTimer);
     window.removeEventListener('pointermove', this._mv);
